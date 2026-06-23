@@ -47,8 +47,8 @@ All bindings ship as defaults and are fully overridable (see below).
 | Previous git change (within file) | `Alt+A` | `Alt+A` |
 | Next changed file | `Cmd+Alt+.` | `Ctrl+Alt+.` |
 | Previous changed file | `Cmd+Alt+,` | `Ctrl+Alt+,` |
-| Stage current file + go to next change | `Shift+Alt+.` | `Shift+Alt+.` |
-| Stage current file + go to previous change | `Shift+Alt+,` | `Shift+Alt+,` |
+| Stage current file + next change | `Shift+Alt+.` | `Shift+Alt+.` |
+| Stage current file + previous change | `Shift+Alt+,` | `Shift+Alt+,` |
 | Revert selected change and save | `Alt+Q` | `Alt+Q` |
 | Reveal current file in Explorer | `Alt+R` | `Alt+R` |
 
@@ -74,12 +74,12 @@ whatever feels natural. Open your `keybindings.json`
 [
   // Pick keys that are comfortable on YOUR layout.
   // Example: keep the same *physical* keys QWERTY uses (Dvorak 'w' / 'e' positions):
-  { "key": "alt+w", "command": "go-to-next-change.smart-back" },
-  { "key": "alt+e", "command": "go-to-next-change.smart-forward" }
+  { "key": "alt+w", "command": "better-git-vscode.smart-back" },
+  { "key": "alt+e", "command": "better-git-vscode.smart-forward" }
 
   // ...or pick anything else you like:
-  // { "key": "alt+j", "command": "go-to-next-change.smart-forward" },
-  // { "key": "alt+k", "command": "go-to-next-change.smart-back" }
+  // { "key": "alt+j", "command": "better-git-vscode.smart-forward" },
+  // { "key": "alt+k", "command": "better-git-vscode.smart-back" }
 ]
 ```
 
@@ -91,42 +91,34 @@ with `alt+,` / `alt+.`.
 
 Every default ships from the extension and can be overridden per command. To change one,
 open *Preferences: Open Keyboard Shortcuts*, search for the command (they're all under the
-`go-to-next-change.*` namespace — e.g. `go-to-next-change.smart-forward`), and assign your
+`better-git-vscode.*` namespace — e.g. `better-git-vscode.smart-forward`), and assign your
 own key. To disable a default instead, add a rule prefixed with `-` in `keybindings.json`:
 
 ```jsonc
-{ "key": "alt+.", "command": "-go-to-next-change.smart-forward" }
+{ "key": "alt+.", "command": "-better-git-vscode.smart-forward" }
 ```
 
 > Tip: many people prefer to map **Open & reveal current file in Explorer**
-> (`go-to-next-change.reveal-current-file-in-explorer`) to something like `Shift+Cmd+E`.
+> (`better-git-vscode.reveal-current-file-in-explorer`) to something like `Shift+Cmd+E`.
 > We ship the default as `Option+R` rather than `Shift+Cmd+E` because the latter is already
 > a built-in VS Code shortcut — but you're free to override it to `Shift+Cmd+E` (or anything
 > else) in your own `keybindings.json` if you don't mind reclaiming that combo.
-
-> Note: the command **IDs** are intentionally kept under the `go-to-next-change.*`
-> namespace (the extension's original name) even though the extension is now published as
-> *Better Git VS Code*. This keeps existing keybindings and external tools that reference
-> these command IDs working. A display name that differs from the command namespace is
-> common and expected for VS Code extensions.
 
 ## Settings
 
 A few behaviours are configurable under **Settings → Better Git VS Code**:
 
-- **List vs Tree view** in Source Control (`go-to-next-change.treeView`).
+- **List vs Tree view** in Source Control (`better-git-vscode.treeView`).
 - Whether the Source Control panel opens on navigation (`shouldOpenScmView`).
-- Confirmation prompt before rolling onto the next file (`promptBeforeNextFile`).
-- The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔴).
+- The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥).
 - Experimental staged-file highlighting (`revealStagedInSourceControl`).
 
 ## Credits
 
-Better Git VS Code is a fork of
-[**alfredbirk/go-to-next-change**](https://github.com/alfredbirk/go-to-next-change),
-extended with a stage-and-advance review flow, staged-diff navigation, smart
-forward/back, and the QWERTY `<` / `>` default keys. Thanks to Alfred Birk for the
-original extension.
+Better Git VS Code is a fork of the original git-diff-navigation extension by
+[**Alfred Birk**](https://github.com/alfredbirk), extended with a stage-and-advance
+review flow, staged-diff navigation, smart forward/back, and the QWERTY `<` / `>`
+default keys. Thanks to Alfred Birk for the original extension.
 
 ## License
 

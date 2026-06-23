@@ -1,42 +1,43 @@
 import * as vscode from "vscode";
 
-let isNavigationPromptOpen = false;
+// NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
+// removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
 
 export function activate(context: vscode.ExtensionContext) {
-    let disposable = vscode.commands.registerCommand("go-to-next-change.go-to-next-scm-change", async () => {
+    let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", async () => {
         await goToNextDiff();
     });
 
-    let disposable2 = vscode.commands.registerCommand("go-to-next-change.go-to-previous-scm-change", async () => {
+    let disposable2 = vscode.commands.registerCommand("better-git-vscode.previous-scm-change", async () => {
         await goToPreviousDiff();
     });
 
-    let disposable3 = vscode.commands.registerCommand("go-to-next-change.go-to-next-changed-file", async () => {
+    let disposable3 = vscode.commands.registerCommand("better-git-vscode.next-changed-file", async () => {
         await goToFirstOrNextFile();
     });
 
-    let disposable4 = vscode.commands.registerCommand("go-to-next-change.go-to-previous-changed-file", async () => {
+    let disposable4 = vscode.commands.registerCommand("better-git-vscode.previous-changed-file", async () => {
         await goToLastOrPreviousFile();
     });
 
-    let disposable5 = vscode.commands.registerCommand("go-to-next-change.revert-and-save", async () => {
+    let disposable5 = vscode.commands.registerCommand("better-git-vscode.revert-and-save", async () => {
         await vscode.commands.executeCommand("git.revertSelectedRanges");
         await vscode.commands.executeCommand("workbench.action.files.save");
     });
 
-    let disposable6 = vscode.commands.registerCommand("go-to-next-change.stage-and-go-to-next-changed-file", async () => {
+    let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async () => {
         await stageCurrentFileAndAdvance("next");
     });
 
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
     // PREVIOUS unstaged file instead of the next. Bound to "shift + previous" so it parallels "shift + next".
-    let disposable7 = vscode.commands.registerCommand("go-to-next-change.stage-and-go-to-previous-changed-file", async () => {
+    let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async () => {
         await stageCurrentFileAndAdvance("previous");
     });
 
     // Editor-title button (top-right of the editor, next to the built-in diff/open icons): stage the current
     // file WITHOUT navigating. Contributed to the editor/title menu in package.json so it renders as an icon.
-    let disposable8 = vscode.commands.registerCommand("go-to-next-change.stage-current-file", async () => {
+    let disposable8 = vscode.commands.registerCommand("better-git-vscode.stage-current-file", async () => {
         await stageCurrentFile();
     });
 
@@ -68,10 +69,10 @@ export function activate(context: vscode.ExtensionContext) {
     // years (since ~1.67), but if it's ever unavailable (very old host) the `instanceof` check simply
     // evaluates false and we fall back to plain navigation — a safe default. Any unexpected throw also
     // falls back to plain navigation so a mouse click never becomes a no-op.
-    let disposable9 = vscode.commands.registerCommand("go-to-next-change.smart-forward", async () => {
+    let disposable9 = vscode.commands.registerCommand("better-git-vscode.smart-forward", async () => {
         await smartNavigate("forward");
     });
-    let disposable10 = vscode.commands.registerCommand("go-to-next-change.smart-back", async () => {
+    let disposable10 = vscode.commands.registerCommand("better-git-vscode.smart-back", async () => {
         await smartNavigate("back");
     });
 
@@ -83,7 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
     // is a supported command that reveals any file: uri (microsoft/vscode#94720). So we resolve, then reveal
     // THAT. Bind to cmd+shift+e (when: isInDiffEditor) to make reveal work from staged diffs. Works from
     // unstaged diffs and plain editors too (getActiveFileUri handles all three).
-    let disposable11 = vscode.commands.registerCommand("go-to-next-change.reveal-current-file-in-explorer", async () => {
+    let disposable11 = vscode.commands.registerCommand("better-git-vscode.reveal-current-file-in-explorer", async () => {
         // Capture the cursor + scroll position of the diff you're viewing FIRST (synchronously, before any
         // await), so the working file can open at the SAME spot instead of jumping to the top.
         // vscode.window.activeTextEditor is the diff's focused side: selection.active is the cursor,
@@ -131,7 +132,9 @@ export function activate(context: vscode.ExtensionContext) {
                 // Badge text is configurable (default a colorful emoji for maximum visibility). The Source
                 // Control panel ignores decoration `color` (its renderer forces colors:false), so the emoji's
                 // own color is what makes it pop there; the `color` still applies in the Explorer + editor tabs.
-                const badgeSetting = vscode.workspace.getConfiguration("go-to-next-change").get<string>("currentFileBadge", "🔴");
+                // Default badge is double fire 🔥🔥 (Ethan's preferred default; still user-overridable via the
+                // better-git-vscode.currentFileBadge setting). The package.json config default MUST match this literal.
+                const badgeSetting = vscode.workspace.getConfiguration("better-git-vscode").get<string>("currentFileBadge", "🔥🔥");
                 if (!badgeSetting) {
                     return undefined; // empty setting => badge disabled
                 }
@@ -146,7 +149,7 @@ export function activate(context: vscode.ExtensionContext) {
                 } catch {
                     badge = Array.from(badgeSetting).slice(0, 2).join(""); // fallback by code point if Segmenter is unavailable
                 }
-                return { badge, tooltip: "Go to next change: reviewing this file", color: new vscode.ThemeColor("charts.blue"), propagate: false };
+                return { badge, tooltip: "Better Git VS Code: reviewing this file", color: new vscode.ThemeColor("charts.blue"), propagate: false };
             }
             return undefined;
         },
@@ -259,7 +262,7 @@ const currentReviewFileUri = (): vscode.Uri | undefined => {
 // collator, so the navigation order is IDENTICAL to what the Source Control view shows for file names.
 // BUG FIX: the comparators below previously compared the final filename segment with a naive `a < b`,
 // which diverges from VS Code for numbered files (e.g. item-2 vs item-10, v2 vs v10) and some
-// punctuation. That made "go to next change" jump to a file that wasn't the visually-next row in the
+// punctuation. That made next-change navigation jump to a file that wasn't the visually-next row in the
 // panel (only "sometimes" — exactly when the naive order disagreed with the collator order).
 const fileNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const compareFileNames = (a: string, b: string): number => {
@@ -438,7 +441,7 @@ const getFileChanges = async (): Promise<FileChange[]> => {
     const git = gitExtension.getAPI(1);
     const workspaceUri = vscode.workspace.workspaceFolders?.map((ws) => ws.uri)[0];
     const activeRepo = git.getRepository(workspaceUri?.path) || git.repositories[0];
-    const isTreeView = vscode.workspace.getConfiguration("go-to-next-change").get("treeView");
+    const isTreeView = vscode.workspace.getConfiguration("better-git-vscode").get("treeView");
 
     // Keep the git status alongside the uri for staged entries: openChangeEntry needs it to choose which
     // diff sides exist (a newly-staged INDEX_ADDED file has no HEAD blob; a staged INDEX_DELETED file has no
@@ -468,7 +471,7 @@ const getFileChanges = async (): Promise<FileChange[]> => {
     // does in the Source Control view (once under Staged Changes, once under Changes). The previous code
     // matched the current position by PATH ONLY, which always resolved to the FIRST (staged) copy, while
     // VSCode's git.openChange always opens the WORKING-TREE diff for such a file (getSCMResource prefers
-    // the working tree group). That mismatch made "go to next change" jump to the wrong file or loop.
+    // the working tree group). That mismatch made next-change navigation jump to the wrong file or loop.
     // The fix is NOT to de-duplicate (that reorders the list vs what the user sees); instead we TAG each
     // entry with its side here, then disambiguate by {path, staged} in findCurrentIndex and open the
     // matching side in openChangeEntry. Order mirrors the SCM view exactly: Staged group, then Changes
@@ -583,7 +586,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
         }
         return;
     }
-    // OPT-IN WORKAROUND (go-to-next-change.revealStagedInSourceControl): highlight the staged file in the
+    // OPT-IN WORKAROUND (better-git-vscode.revealStagedInSourceControl): highlight the staged file in the
     // Source Control view. VS Code's built-in `scm.autoReveal` can't do this for staged files because the
     // staged diff opens with a `git:` uri and autoReveal only matches sidebar rows by their `file:` path
     // (there is NO extension API to select an SCM row directly). Trick: briefly make the plain file the
@@ -592,7 +595,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
     // selection on a no-match, so the staged row stays highlighted while the diff is shown. Caveats, which
     // is why this is off by default: a brief flash of the file before the diff, and for a partially-staged
     // (dual-state) file autoReveal picks the working-tree row instead (it scans groups back-to-front).
-    const revealStaged = vscode.workspace.getConfiguration("go-to-next-change").get("revealStagedInSourceControl");
+    const revealStaged = vscode.workspace.getConfiguration("better-git-vscode").get("revealStagedInSourceControl");
     if (revealStaged) {
         try {
             await vscode.window.showTextDocument(entry.uri, { preview: true }); // fires autoReveal -> selects the staged row
@@ -648,7 +651,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
 };
 
 const openFirstFile = async () => {
-    const shouldOpenScmView = vscode.workspace.getConfiguration("go-to-next-change").get("shouldOpenScmView");
+    const shouldOpenScmView = vscode.workspace.getConfiguration("better-git-vscode").get("shouldOpenScmView");
     if (shouldOpenScmView) {
         await vscode.commands.executeCommand("workbench.view.scm");
     }
@@ -662,7 +665,7 @@ const openFirstFile = async () => {
 };
 
 const openLastFile = async () => {
-    const shouldOpenScmView = vscode.workspace.getConfiguration("go-to-next-change").get("shouldOpenScmView");
+    const shouldOpenScmView = vscode.workspace.getConfiguration("better-git-vscode").get("shouldOpenScmView");
     if (shouldOpenScmView) {
         await vscode.commands.executeCommand("workbench.view.scm");
     }
@@ -735,42 +738,6 @@ const openPreviousFile = async () => {
     await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
 };
 
-const getNextFileName = async (): Promise<string | null> => {
-    const fileChanges = await getFileChanges();
-    const active = await getActiveChange();
-    if (!active) {
-        return null;
-    }
-
-    if (fileChanges.length === 0) {
-        return null;
-    }
-    const currentIndex = findCurrentIndex(fileChanges, active);
-    if (currentIndex === -1) {
-        return null; // can't locate current file -> no reliable "next" to show in the confirm prompt
-    }
-    const nextFile = fileChanges[(currentIndex + 1) % fileChanges.length]; // loops to the first at the end
-    return nextFile ? nextFile.uri.path : null;
-};
-
-const getPreviousFileName = async (): Promise<string | null> => {
-    const fileChanges = await getFileChanges();
-    const active = await getActiveChange();
-    if (!active) {
-        return null;
-    }
-
-    if (fileChanges.length === 0) {
-        return null;
-    }
-    const currentIndex = findCurrentIndex(fileChanges, active);
-    if (currentIndex === -1) {
-        return null; // can't locate current file -> no reliable "previous" to show in the confirm prompt
-    }
-    const previousFile = fileChanges[currentIndex === 0 ? fileChanges.length - 1 : currentIndex - 1]; // loops to the last at the start
-    return previousFile ? previousFile.uri.path : null;
-};
-
 const goToNextDiff = async () => {
     var activeEditor = vscode.window.activeTextEditor;
     const currentFilename = await getActiveFilePath();
@@ -784,40 +751,11 @@ const goToNextDiff = async () => {
     const lineAfter = activeEditor?.selection.active.line;
 
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter > lineBefore)) {
-        // Check if prompt is enabled
-        const promptEnabled = vscode.workspace.getConfiguration("go-to-next-change").get("promptBeforeNextFile");
-        
-        if (promptEnabled) {
-            if (isNavigationPromptOpen) {
-                return;
-            }
-
-            // Ask user for confirmation before jumping to next file
-            const nextFile = await getNextFileName();
-
-            isNavigationPromptOpen = true;
-            try {
-                const promptMessage = nextFile
-                    ? `Jump to next file: ${nextFile}?`
-                    : "No next changed file. Close current editor?";
-
-                const confirmJump = await vscode.window.showWarningMessage(
-                    promptMessage,
-                    { modal: true },
-                    "Yes",
-                    "No"
-                );
-
-                if (confirmJump === "Yes") {
-                    await openNextFile();
-                }
-            } finally {
-                isNavigationPromptOpen = false;
-            }
-        } else {
-            // Jump to next file without prompt
-            await openNextFile();
-        }
+        // We've run out of changes in the current file. Jump straight to the next changed file —
+        // NO confirmation prompt, ever. The whole point of this tool is keyboard-fast review; a
+        // "Jump to next file: ...?" modal would defeat that. (The old promptBeforeNextFile setting +
+        // its modal confirmation path were removed entirely — see CHANGELOG v1.0.2.)
+        await openNextFile();
         return;
     }
 };
@@ -835,40 +773,9 @@ const goToPreviousDiff = async () => {
     const lineAfter = activeEditor?.selection.active.line;
 
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter < lineBefore)) {
-        // Check if prompt is enabled
-        const promptEnabled = vscode.workspace.getConfiguration("go-to-next-change").get("promptBeforeNextFile");
-        
-        if (promptEnabled) {
-            if (isNavigationPromptOpen) {
-                return;
-            }
-
-            // Ask user for confirmation before jumping to previous file
-            const previousFile = await getPreviousFileName();
-
-            isNavigationPromptOpen = true;
-            try {
-                const promptMessage = previousFile
-                    ? `Jump to previous file: ${previousFile}?`
-                    : "No previous changed file. Close current editor?";
-
-                const confirmJump = await vscode.window.showWarningMessage(
-                    promptMessage,
-                    { modal: true },
-                    "Yes",
-                    "No"
-                );
-
-                if (confirmJump === "Yes") {
-                    await openPreviousFile();
-                }
-            } finally {
-                isNavigationPromptOpen = false;
-            }
-        } else {
-            // Jump to previous file without prompt
-            await openPreviousFile();
-        }
+        // Out of changes in the current file -> jump straight to the previous changed file, NO prompt.
+        // Same rationale as goToNextDiff: the confirmation modal was removed entirely (see CHANGELOG v1.0.2).
+        await openPreviousFile();
     }
 };
 
@@ -958,7 +865,7 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     // shifted indices. Capturing the target up-front makes where-we-land deterministic. The unstaged list
     // now INCLUDES untracked/new files (see getUnstagedUris) so stage-and-advance lands on a brand-new file
     // too — git.openChange opens them as a diff vs an empty original, so they're navigable like any other.
-    const isTreeView = vscode.workspace.getConfiguration("go-to-next-change").get("treeView");
+    const isTreeView = vscode.workspace.getConfiguration("better-git-vscode").get("treeView");
     const workingTreeChanges = getUnstagedUris(activeRepo, !!isTreeView);
 
     const currentIndex = workingTreeChanges.findIndex(pathMatches);
@@ -1094,11 +1001,11 @@ async function smartNavigate(direction: "forward" | "back") {
     // buttons keep their normal meaning (forward = navigateForward, back = navigateBack). Do not "correct" this.
     if (direction === "forward") {
         await vscode.commands.executeCommand(
-            inDiff ? "go-to-next-change.go-to-previous-scm-change" : "workbench.action.navigateForward"
+            inDiff ? "better-git-vscode.previous-scm-change" : "workbench.action.navigateForward"
         );
     } else {
         await vscode.commands.executeCommand(
-            inDiff ? "go-to-next-change.go-to-next-scm-change" : "workbench.action.navigateBack"
+            inDiff ? "better-git-vscode.next-scm-change" : "workbench.action.navigateBack"
         );
     }
 }
