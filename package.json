@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review \u2014 jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
