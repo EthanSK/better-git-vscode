@@ -59,33 +59,31 @@ All bindings ship as defaults and are fully overridable (see below).
 `Stage current file` is also available as a `+` button in the editor title bar (no key
 needed).
 
-## Dvorak (and other non-QWERTY layouts)
+## Dvorak mode (one toggle)
 
-The `Alt+.` / `Alt+,` defaults are chosen for the **QWERTY** `>` / `<` keycaps. On a
-**Dvorak** layout the `,` and `.` characters sit in completely different physical
-positions (top row, where QWERTY has `w` and `e`), so the "points forward / points back"
-intuition is lost and the keys may feel awkward.
+The in-file change-nav defaults (`Alt+Z` / `Alt+A`) and stage-and-advance defaults
+(`Shift+Alt+.` / `Shift+Alt+,`) are positioned for **QWERTY**. On a **Dvorak** layout
+those keys land under different fingers and feel awkward.
 
-If you're on Dvorak (or Colemak, AZERTY, etc.), remap the two headline commands to
-whatever feels natural. Open your `keybindings.json`
-(`Cmd/Ctrl+Shift+P` → *Preferences: Open Keyboard Shortcuts (JSON)*) and add:
+Flip the single setting **`better-git-vscode.dvorakMode`** (Settings → Better Git VS Code,
+or add `"better-git-vscode.dvorakMode": true` to your `settings.json`) and the navigation
+keys swap to Dvorak-comfortable physical positions:
 
-```jsonc
-[
-  // Pick keys that are comfortable on YOUR layout.
-  // Example: keep the same *physical* keys QWERTY uses (Dvorak 'w' / 'e' positions):
-  { "key": "alt+w", "command": "better-git-vscode.smart-back" },
-  { "key": "alt+e", "command": "better-git-vscode.smart-forward" }
+| Action | QWERTY default | Dvorak mode |
+| --- | --- | --- |
+| Next git change (within file) | `Alt+Z` | `Alt+V` |
+| Previous git change (within file) | `Alt+A` | `Alt+W` |
+| Stage current file + next change | `Shift+Alt+.` | `Shift+Alt+V` |
+| Stage current file + previous change | `Shift+Alt+,` | `Shift+Alt+W` |
 
-  // ...or pick anything else you like:
-  // { "key": "alt+j", "command": "better-git-vscode.smart-forward" },
-  // { "key": "alt+k", "command": "better-git-vscode.smart-back" }
-]
-```
+When the toggle is on, the QWERTY defaults for those four commands are automatically
+disabled and the Dvorak-position keys take over (it uses VS Code's native
+`config.better-git-vscode.dvorakMode` when-clauses — no extension restart trick). Smart
+forward/back (`Alt+.` / `Alt+,`), changed-file nav (`Cmd/Ctrl+Alt+.` / `,`), revert
+(`Alt+Q`) and reveal (`Alt+R`) are **left on their defaults** in both modes.
 
-VS Code resolves keybindings by the character a key *produces* on your active layout, so
-binding to `alt+w` / `alt+e` on Dvorak targets the same physical keys QWERTY users get
-with `alt+,` / `alt+.`.
+> Your own `keybindings.json` entries always win, so you can still hand-tune any of these
+> on top of the toggle (see *Overriding any keybinding* below).
 
 ## Overriding any keybinding
 
@@ -108,6 +106,7 @@ own key. To disable a default instead, add a rule prefixed with `-` in `keybindi
 
 A few behaviours are configurable under **Settings → Better Git VS Code**:
 
+- **Dvorak mode** — swap the navigation keys to Dvorak-comfortable positions with one toggle (`better-git-vscode.dvorakMode`, see the *Dvorak mode* section above).
 - **List vs Tree view** in Source Control (`better-git-vscode.treeView`).
 - Whether the Source Control panel opens on navigation (`shouldOpenScmView`).
 - The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥).
