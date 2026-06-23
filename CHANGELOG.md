@@ -1,5 +1,16 @@
 # Change Log
 
+## [1.0.3] (ethansk fork) — Dvorak mode toggle
+
+- **New `better-git-vscode.dvorakMode` setting (boolean, default false).** Flip it on and the four navigation commands swap from their QWERTY positions to Dvorak-comfortable physical keys — no hand-editing `keybindings.json` required:
+  - `alt+v` → next change (QWERTY default `alt+z`)
+  - `alt+w` → previous change (QWERTY default `alt+a`)
+  - `shift+alt+v` → stage-and-next (QWERTY default `shift+alt+.`)
+  - `shift+alt+w` → stage-and-previous (QWERTY default `shift+alt+,`)
+- Implemented purely with VS Code's native `config.better-git-vscode.dvorakMode` when-clauses: each of those four commands now ships two keybinding entries — the QWERTY default gated `!config.…dvorakMode` and the Dvorak key gated `config.…dvorakMode` — so turning the toggle on disables the old default AND enables the new key in one step (no `-command` minus-entries, no extension restart). This replaces the manual Dvorak override block users (incl. the author) previously kept in their own `keybindings.json`. **User keybindings still take precedence over all defaults.**
+- Smart forward/back (`alt+,`/`alt+.`), changed-file nav (`cmd/ctrl+alt+,`/`.`), revert (`alt+q`) and reveal (`alt+r`) are intentionally **left on their defaults** in both modes.
+- README updated: the old "manually remap on Dvorak" instructions are replaced with the one-toggle approach (with a note that custom keybindings still work).
+
 ## [1.0.2] (ethansk fork) — full rename, no prompt, fire default
 
 - **Command-id rename (this time for real):** the entire command + configuration namespace moved from the old fork slug to **`better-git-vscode.*`**. Every `contributes.commands` / `keybindings` / `configuration` key in `package.json` and every `registerCommand` / `executeCommand` / `getConfiguration` call in `src/extension.ts` now uses the new namespace. The redundant leading verb was also dropped from individual command ids (e.g. `next-changed-file`, `previous-changed-file`, `stage-and-next-changed-file`). Ethan's personal `keybindings.json` was migrated to the new ids; Karabiner is unaffected (it sends f-keys/chords into VS Code, which resolves them through `keybindings.json`, so only the command ids there needed updating).

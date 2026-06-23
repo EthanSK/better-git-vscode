@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review \u2014 jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -112,9 +112,45 @@
           "type": "string",
           "default": "\ud83d\udd25\ud83d\udd25",
           "description": "The badge shown on the file you're currently reviewing, in the Source Control panel (and Explorer/tabs). Max 2 characters \u2014 an emoji renders in colour and is the most visible option (the Source Control panel ignores decoration colours). Default is double fire \ud83d\udd25\ud83d\udd25. Loud choices: \ud83d\udd25 \ud83d\udd34 \ud83d\udea8 \ud83d\udfe5 \u2757 \u2b50 \ud83d\udc49. Tip: two emoji (e.g. \ud83d\udd25\ud83d\udd25) is allowed and renders a bit wider. Set to empty to disable the badge."
+        },
+        "better-git-vscode.dvorakMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Dvorak physical-key positions for navigation: maps next/previous change to alt+v / alt+w (and stage-and-advance to shift+alt+v / shift+alt+w) instead of the QWERTY alt+z / alt+a defaults. Your own keybindings.json entries always take precedence."
         }
       }
     },
+    "_comment_dvorakMode_keybindings": [
+      "DVORAK MODE — how the conditional keybindings below work (package.json is strict JSON,",
+      "so this human-readable explanation lives in this ignored `_comment_*` key; VS Code ignores",
+      "any contributes key it doesn't recognise).",
+      "",
+      "The boolean setting `better-git-vscode.dvorakMode` (declared under contributes.configuration)",
+      "swaps the navigation keys WITHOUT the user having to hand-edit keybindings.json. We use VS Code's",
+      "native `config.<settingId>` when-clause support — for booleans, `when: config.better-git-vscode.dvorakMode`",
+      "is true exactly when the setting is true, and adding `!config.better-git-vscode.dvorakMode` disables a",
+      "binding when the setting is on. No setContext / extension code needed.",
+      "",
+      "For the FOUR swapped commands (next/previous change + stage-and-advance) we ship TWO entries each:",
+      "  1. the original QWERTY default (alt+z / alt+a / shift+alt+z / shift+alt+a) gated with",
+      "     `!config.better-git-vscode.dvorakMode` so it's LIVE only when Dvorak mode is OFF;",
+      "  2. a new Dvorak-position binding (alt+v / alt+w / shift+alt+v / shift+alt+w) gated with",
+      "     `config.better-git-vscode.dvorakMode` so it's LIVE only when Dvorak mode is ON.",
+      "",
+      "Why v / w specifically: on a Dvorak physical keyboard the keys that SIT WHERE Ethan wants",
+      "next/previous fall under the characters v and w, so on Dvorak `alt+v` = next and `alt+w` = previous",
+      "feel natural under the fingers. shift+the-same-key = stage-and-advance, matching the QWERTY scheme",
+      "(shift+next = stage-and-next). This exactly replicates the manual override block Ethan used to keep",
+      "in his keybindings.json (which ADDed alt+v/alt+w + removed the alt+z/alt+a defaults via `-command`",
+      "minus-entries). With the when-clause approach there's no need for the minus-entry trick — the gate",
+      "both adds the new key AND disables the old default. The user's own keybindings.json entries still",
+      "override everything here, exactly as before.",
+      "",
+      "Everything else (smart-back/smart-forward alt+,/alt+. , changed-file nav cmd+alt+,/cmd+alt+. ,",
+      "alt+q revert, alt+r reveal) is LEFT ON ITS DEFAULT regardless of dvorakMode — Ethan's manual block",
+      "never remapped those (his F13/F17/F18/F19 Karabiner mouse-button bindings drive smart-back/forward",
+      "+ stage), so dvorakMode must not touch them."
+    ],
     "keybindings": [
       {
         "command": "better-git-vscode.smart-forward",
@@ -129,12 +165,26 @@
       {
         "command": "better-git-vscode.next-scm-change",
         "key": "alt+z",
-        "mac": "alt+z"
+        "mac": "alt+z",
+        "when": "!config.better-git-vscode.dvorakMode"
+      },
+      {
+        "command": "better-git-vscode.next-scm-change",
+        "key": "alt+v",
+        "mac": "alt+v",
+        "when": "config.better-git-vscode.dvorakMode"
       },
       {
         "command": "better-git-vscode.previous-scm-change",
         "key": "alt+a",
-        "mac": "alt+a"
+        "mac": "alt+a",
+        "when": "!config.better-git-vscode.dvorakMode"
+      },
+      {
+        "command": "better-git-vscode.previous-scm-change",
+        "key": "alt+w",
+        "mac": "alt+w",
+        "when": "config.better-git-vscode.dvorakMode"
       },
       {
         "command": "better-git-vscode.next-changed-file",
@@ -149,12 +199,26 @@
       {
         "command": "better-git-vscode.stage-and-next-changed-file",
         "key": "shift+alt+.",
-        "mac": "shift+alt+."
+        "mac": "shift+alt+.",
+        "when": "!config.better-git-vscode.dvorakMode"
+      },
+      {
+        "command": "better-git-vscode.stage-and-next-changed-file",
+        "key": "shift+alt+v",
+        "mac": "shift+alt+v",
+        "when": "config.better-git-vscode.dvorakMode"
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
         "key": "shift+alt+,",
-        "mac": "shift+alt+,"
+        "mac": "shift+alt+,",
+        "when": "!config.better-git-vscode.dvorakMode"
+      },
+      {
+        "command": "better-git-vscode.stage-and-previous-changed-file",
+        "key": "shift+alt+w",
+        "mac": "shift+alt+w",
+        "when": "config.better-git-vscode.dvorakMode"
       },
       {
         "command": "better-git-vscode.revert-and-save",
