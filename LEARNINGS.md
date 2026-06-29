@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-06-23T13:35:57Z
+**Trigger:** Add Dvorak mode toggle to EthanSK/better-git-vscode
+**Symptom:** Dvorak users had to hand-maintain a keybindings.json override block to remap better-git-vscode nav keys (alt+v/alt+w etc) and disable the QWERTY defaults via -command minus-entries
+**Root cause:** Extension only shipped QWERTY-positioned default keybindings; no built-in layout toggle, so non-QWERTY users patched it manually
+**Fix:** Added boolean setting better-git-vscode.dvorakMode; each of the 4 swapped commands ships two contributes.keybindings entries gated with VS Code native config.<settingId> when-clauses. Toggle disables old + enables new in one step, no -command entries, no setContext, no restart. User keybindings still win.
+**Commit:** d67704f
+**Guard:** _comment_dvorakMode_keybindings block in package.json + CHANGELOG 1.0.3 document the config-when-clause pattern
+---
+
+---
 **Date:** 2026-06-23T13:55:00Z
 **Trigger:** voice note — Ethan ANGRY that old-name references still remained after a prior pass claimed clean
 **Symptom:** After v1.0.1 "rename polish", the old extension name still appeared all over the repo: command/config ids were still in the old namespace, README still documented the old namespace + had the old badge default, package.json still had a command title with the old verb phrase, and the repo itself was still named with the old slug. A confirmation modal also interrupted cross-file navigation. The badge defaulted to a red circle instead of double fire.

@@ -3,7 +3,63 @@ import * as vscode from "vscode";
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
 
+// ──────────────────────────────────────────────────────────────────────────────────────────
+// LAST-STAGED STATUS BAR (v1.1.0)
+//
+// WHY this exists (Ethan's exact problem): he reviews AI-generated changesets file-by-file from the
+// keyboard. `shift+alt+z` (stage-and-next-changed-file) stages the current file and IMMEDIATELY jumps
+// to the next one. He keeps "accidentally staging a file without noticing" — he wasn't looking, or it
+// advanced instantly — and then has no record of what just got staged. This persistent bottom-bar
+// indicator shows the LAST file staged via the extension so he can "go back and remember" what was
+// staged and undo it if it was a mistake.
+//
+// These are MODULE-LEVEL (not inside activate) so the staging helpers below — which are module-scope
+// arrow functions, not closures over activate — can update them, and so the click-command can read the
+// stored URI. The StatusBarItem itself is created in activate() and pushed to context.subscriptions for
+// clean disposal; we keep a module reference so recordLastStaged() can mutate it from anywhere.
+let lastStagedStatusBarItem: vscode.StatusBarItem | undefined; // the bottom-bar item; undefined before activate()
+let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file staged THROUGH this extension
+
+// Reads the live setting that gates the whole feature. Read at update time (not cached) so toggling it
+// in Settings takes effect on the next stage without any restart; activate() ALSO wires an
+// onDidChangeConfiguration listener so flipping it OFF hides the item immediately (and ON re-shows it).
+const showLastStagedEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("showLastStagedInStatusBar", true);
+
+// Records `uri` as the last-staged file and refreshes the status bar item. Called from the SINGLE stage
+// chokepoint (stageThroughExtension) so EVERY stage path the extension performs updates the indicator —
+// a future stage path physically cannot bypass it as long as it stages via that helper. We show the
+// basename only (the bar must stay compact) and put the full workspace-relative path in the tooltip.
+const recordLastStaged = (uri: vscode.Uri): void => {
+    lastStagedUri = uri; // always remember it, even if the bar is currently hidden by the setting
+    if (!lastStagedStatusBarItem || !showLastStagedEnabled()) {
+        return; // item not created yet (pre-activate) or feature disabled -> never show
+    }
+    const basename = uri.path.split("/").pop() ?? uri.fsPath; // bar text: just the file name, keep it short
+    const relPath = vscode.workspace.asRelativePath(uri); // tooltip: workspace-relative full path for context
+    lastStagedStatusBarItem.text = `$(check) Staged: ${basename}`; // $(check) renders VS Code's codicon checkmark
+    lastStagedStatusBarItem.tooltip = `${relPath}\nLast file staged via Better Git — click to reopen its diff`;
+    lastStagedStatusBarItem.show(); // persists for the rest of the session (the whole point: a lasting record)
+};
+
+// THE SINGLE STAGE CHOKEPOINT. Every place the extension stages a file routes through here: it runs the
+// actual `git add` (same as clicking the + in Source Control) and ONLY records the last-staged file if the
+// add() resolved without throwing. Because the await rethrows on failure, a stage that errored (or had
+// nothing to stage) never updates the indicator — so the bar never shows a file that wasn't actually
+// staged. Capture the staged URI here, BEFORE callers advance the active editor, so we record the file we
+// staged rather than whatever the editor switches to after the jump.
+const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> => {
+    await repo.add([uri.fsPath]); // the real stage; throws -> recordLastStaged below is skipped
+    recordLastStaged(uri); // success -> update the status bar with the file we just staged
+};
+
 export function activate(context: vscode.ExtensionContext) {
+    // Create the last-staged status bar item. Left alignment + priority 100 puts it on the left cluster at a
+    // reasonable position. Starts HIDDEN — there's nothing to show until the first stage of the session. Its
+    // .command points at our reveal command (registered below) so a click reopens the staged file's diff.
+    lastStagedStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    lastStagedStatusBarItem.command = "better-git-vscode.reveal-last-staged-file";
+    lastStagedStatusBarItem.hide();
     let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", async () => {
         await goToNextDiff();
     });
@@ -228,9 +284,55 @@ export function activate(context: vscode.ExtensionContext) {
         }
     };
 
+    // CLICK TARGET for the status bar item: reopen the diff of the last file staged via the extension, so
+    // Ethan can review it and unstage it if it was an accident. We REUSE the extension's existing diff
+    // machinery rather than re-deriving diff sides: getFileChanges() builds the same staged/unstaged list the
+    // navigation uses, and openChangeEntry() already knows how to open the correct HEAD↔index diff for any
+    // staged status (incl. the INDEX_ADDED/INDEX_DELETED "file not found" cases — see openChangeEntry). So we
+    // look up the STAGED entry for lastStagedUri in that list and hand it to openChangeEntry. There is NO
+    // extension API to focus a Source Control row, hence opening the diff (which is what lets him unstage) is
+    // the most useful click action. Internal command (registered, but contributed with no keybinding).
+    let disposable13 = vscode.commands.registerCommand("better-git-vscode.reveal-last-staged-file", async () => {
+        if (!lastStagedUri) {
+            return; // nothing staged via the extension yet this session
+        }
+        const target = lastStagedUri.path.toLowerCase();
+        const fileChanges = await getFileChanges();
+        // Prefer the STAGED (index) entry — that's the diff that shows what got staged and lets him unstage it.
+        const stagedEntry = fileChanges.find((c) => c.staged && c.uri.path.toLowerCase() === target);
+        if (stagedEntry) {
+            await openChangeEntry(stagedEntry);
+            return;
+        }
+        // Fallback: the file may no longer be staged (already committed, or unstaged again since), so it's not
+        // in the staged group anymore. Just open the on-disk file so the click is never a dead no-op.
+        try {
+            await vscode.window.showTextDocument(lastStagedUri, { preview: true });
+        } catch {
+            // File gone (e.g. it was a staged deletion that got committed) — nothing sensible to open; ignore.
+        }
+    });
+
+    // Live-react to the feature toggle: flipping better-git-vscode.showLastStagedInStatusBar OFF hides the
+    // item immediately; flipping it back ON re-shows the current last-staged file (if any) without waiting for
+    // the next stage. We react live (rather than only reading at update time) so the bar disappears the moment
+    // Ethan unchecks the setting — less surprising than it lingering until the next stage.
+    let configListener = vscode.workspace.onDidChangeConfiguration((e) => {
+        if (!e.affectsConfiguration("better-git-vscode.showLastStagedInStatusBar") || !lastStagedStatusBarItem) {
+            return;
+        }
+        if (showLastStagedEnabled() && lastStagedUri) {
+            recordLastStaged(lastStagedUri); // re-render + show with the file we last staged
+        } else {
+            lastStagedStatusBarItem.hide();
+        }
+    });
+
     context.subscriptions.push(
         disposable, disposable2, disposable3, disposable4, disposable5, disposable6, disposable7, disposable8,
-        disposable9, disposable10, disposable11, disposable12,
+        disposable9, disposable10, disposable11, disposable12, disposable13,
+        lastStagedStatusBarItem, // disposed cleanly on deactivate
+        configListener,
         reviewDecoEmitter,
         vscode.window.registerFileDecorationProvider(reviewDecorationProvider),
         vscode.window.tabGroups.onDidChangeTabs(() => refreshReviewDecoration()),
@@ -870,7 +972,9 @@ const stageCurrentFile = async () => {
     const git = gitExtension.getAPI(1);
     const activeRepo = git.getRepository(currentUri) || git.repositories[0];
     if (activeRepo) {
-        await activeRepo.add([currentUri.fsPath]); // same as clicking the + next to the file in Source Control
+        // Route through the single stage chokepoint: stages (same as clicking the + in Source Control) AND
+        // records it in the last-staged status bar. No advance here — this command stays on the file.
+        await stageThroughExtension(activeRepo, currentUri);
     }
 };
 
@@ -943,7 +1047,12 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     }
 
     // Stage the whole current file — equivalent to clicking the + next to it in the Source Control view.
-    await activeRepo.add([currentUri.fsPath]);
+    // CRITICAL ORDERING: we stage (and record last-staged) via the chokepoint HERE, BEFORE advancing the
+    // active editor below. We must capture the STAGED file's identity (currentUri, resolved at the top of
+    // this function) now — the advance switches the editor to the NEXT file, so reading the active file
+    // afterwards would record the wrong file. stageThroughExtension only updates the status bar if add()
+    // succeeds, so a no-op/failed stage won't show a file in the bar.
+    await stageThroughExtension(activeRepo, currentUri);
 
     if (!targetUnstagedFile) {
         // Current was the ONLY unstaged file (no next and no previous) — nothing left to review, so close.

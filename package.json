@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review \u2014 jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -83,6 +83,10 @@
       {
         "command": "better-git-vscode.open-change-at-position",
         "title": "Open changes (diff) at current cursor/scroll position"
+      },
+      {
+        "command": "better-git-vscode.reveal-last-staged-file",
+        "title": "Reopen the diff of the last file staged via Better Git"
       }
     ],
     "menus": {
@@ -121,6 +125,11 @@
           "type": "boolean",
           "default": false,
           "description": "Use Dvorak physical-key positions for navigation: maps next/previous change to alt+v / alt+w (and stage-and-advance to shift+alt+v / shift+alt+w) instead of the QWERTY alt+z / alt+a defaults. Your own keybindings.json entries always take precedence."
+        },
+        "better-git-vscode.showLastStagedInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a status bar item (bottom-left) with the last file you staged through this extension (stage-and-advance or the editor-title + button). Useful when stage-and-advance jumps so fast you don't notice what got staged — click the item to reopen that file's staged diff and unstage it if it was a mistake. Turn off to hide the indicator."
         }
       }
     },

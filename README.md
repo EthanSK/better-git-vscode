@@ -113,6 +113,7 @@ own key. To disable a default instead, add a rule prefixed with `-` in `keybindi
 A few behaviours are configurable under **Settings → Better Git VS Code**:
 
 - **Dvorak mode** — swap the navigation keys to Dvorak-comfortable positions with one toggle (`better-git-vscode.dvorakMode`, see the *Dvorak mode* section above).
+- **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
 - **List vs Tree view** in Source Control (`better-git-vscode.treeView`).
 - Whether the Source Control panel opens on navigation (`shouldOpenScmView`).
 - The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥).

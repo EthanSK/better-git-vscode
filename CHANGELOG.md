@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.1.0] (ethansk fork) — last-staged status bar
+
+- **New status bar item showing the last file you staged through the extension.** When you stage-and-advance (`Shift+Alt+.` / `Shift+Alt+,`) the review flies file-to-file so fast it's easy to stage something without noticing. A bottom-left indicator — `$(check) Staged: <filename>` — now persists for the session showing the **last file staged via this extension**, so you can always see (and undo) what just got staged.
+- **Click it to reopen that file's staged diff.** The item is clickable: it reopens the staged (index) diff for the last-staged file via the extension's existing diff machinery (`getFileChanges` + `openChangeEntry`, so it handles newly-added / staged-deleted files too), letting you review and unstage it on the spot. Falls back to opening the file if it's no longer staged.
+- **Updates from a single stage chokepoint.** Every stage path the extension performs — the editor-title `+` button (`stage-current-file`) and both stage-and-advance commands — routes through one helper that records the staged file only *after* `git add` succeeds and *before* the editor advances, so the bar always reflects the file that was actually staged (never a failed/empty stage, never the file you jumped to).
+- **New setting `better-git-vscode.showLastStagedInStatusBar`** (boolean, default `true`) toggles the indicator. Flipping it off hides the item live; flipping it back on re-shows the current last-staged file.
+
 ## [1.0.4] (ethansk fork) — open changes at your position + Ctrl+Shift+G
 
 - **New `better-git-vscode.open-change-at-position` command** — the mirror image of the reveal command. From a plain file editor it opens that file's side-by-side **changes (diff)** view scrolled to the **exact cursor + scroll position you were just viewing**, instead of `git.openChange`'s default of jumping to the file's first change. (It captures your cursor/top-line *before* opening the diff, then re-applies them to the diff's right side, clamped to the diff's length — same clamping the reveal command uses, since a partially-staged file's content can differ.)
