@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-06-29T16:33:14Z
+**Trigger:** voice: show last staged file in bottom bar
+**Symptom:** Stage-and-advance (shift+alt+z) jumps to the next file instantly, so the user often stages a file without noticing and has no record of what was staged to go back and undo
+**Root cause:** The extension had no UI feedback for what it staged; both stage paths just called repo.add() and (for advance) immediately switched the active editor to the next file
+**Fix:** Added a persistent vscode.StatusBarItem (Left, prio 100) showing the last-staged basename; all stage paths route through one stageThroughExtension(repo,uri) chokepoint that records the URI only AFTER add() resolves and BEFORE the editor advances, so the bar reflects the file actually staged, not the one jumped to. Click reopens its staged diff via getFileChanges+openChangeEntry. Gated by better-git-vscode.showLastStagedInStatusBar (default true), reacts live to config changes.
+**Commit:** 433a7be
+**Guard:** Single chokepoint stageThroughExtension means future stage paths can't bypass the indicator; recordLastStaged only runs on add() success; thorough comments at the chokepoint explain the capture-before-advance ordering. CHANGELOG 1.1.0 entry.
+---
+
+---
 **Date:** 2026-06-23T13:35:57Z
 **Trigger:** Add Dvorak mode toggle to EthanSK/better-git-vscode
 **Symptom:** Dvorak users had to hand-maintain a keybindings.json override block to remap better-git-vscode nav keys (alt+v/alt+w etc) and disable the QWERTY defaults via -command minus-entries
