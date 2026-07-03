@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.0] (ethansk fork) — scroll through newly-added files
+
+- **Next/previous-change now scrolls through a fully-added new file instead of skipping it.** When you're reviewing a brand-new file (untracked, staged-new, or intent-to-add — i.e. the whole file is one big new diff), there are no per-hunk changes to jump between, so `next change` / `previous change` used to just fly straight past it to the next file — you never got to actually read the new file. Now, on a fully-added file, those shortcuts step the cursor **down/up 5 lines** so you can page through and review the entire file. When you reach the bottom (or top), they fall through to the next (or previous) changed file exactly as before, so your keyboard review flow is uninterrupted.
+- **Only affects newly-added files.** Modified files still navigate change-to-change via VS Code's diff navigation as before — the new behaviour is gated on the file's git status being a whole-new-file state (`UNTRACKED` / `INDEX_ADDED` / `INTENT_TO_ADD`), detected via the git API.
+- **New setting `better-git-vscode.newFileNavLineJump`** (number, default `5`) controls how many lines each step moves. Bump it up to page faster through big new files, or down to `1` for line-by-line.
+
 ## [1.1.0] (ethansk fork) — last-staged status bar
 
 - **New status bar item showing the last file you staged through the extension.** When you stage-and-advance (`Shift+Alt+.` / `Shift+Alt+,`) the review flies file-to-file so fast it's easy to stage something without noticing. A bottom-left indicator — `$(check) Staged: <filename>` — now persists for the session showing the **last file staged via this extension**, so you can always see (and undo) what just got staged.

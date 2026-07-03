@@ -897,11 +897,84 @@ const openPreviousFile = async () => {
     await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
 };
 
+// NEW-FILE detection (Ethan 2026-07-03): a file is "fully added" when its entire content is one big
+// new-diff — i.e. its git status is a whole-new-file state with NO original side to diff against:
+// untracked (Status.UNTRACKED), staged-new (INDEX_ADDED), or intent-to-add (INTENT_TO_ADD). For those,
+// VS Code's compareEditor.nextChange sees a single file-spanning change and jumps straight past it, so you
+// can't actually read a brand-new file top-to-bottom with next/previous. When true, goToNextDiff/
+// goToPreviousDiff step by a fixed number of lines instead (see the newFileNavLineJump setting).
+// Resolves any diff-side/editor uri to the on-disk path first (via toFilePathUri) so it works whether the
+// new file opened as a PLAIN editor (untracked -> vscode.open, no original) or an empty-original DIFF
+// (staged INDEX_ADDED -> empty-tree vs index).
+const isFullyAddedFile = (uri: vscode.Uri | undefined): boolean => {
+    const fileUri = toFilePathUri(uri);
+    if (!fileUri) {
+        return false;
+    }
+    try {
+        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+        const repo = git?.getRepository(fileUri) ?? git?.repositories?.[0];
+        if (!repo) {
+            return false;
+        }
+        const p = fileUri.path.toLowerCase();
+        const find = (changes: any[]) => (changes ?? []).find((c: any) => c.uri.path.toLowerCase() === p);
+        // Untracked files live in state.untrackedChanges (all UNTRACKED = the whole file is new).
+        if (find(repo.state.untrackedChanges)) {
+            return true;
+        }
+        // Staged-new / intent-to-add appear in indexChanges with a whole-new-file status.
+        const idx = find(repo.state.indexChanges);
+        if (idx && (idx.status === GitStatus.INDEX_ADDED || idx.status === GitStatus.INTENT_TO_ADD)) {
+            return true;
+        }
+        // Depending on the git.untrackedChanges setting, untracked / intent-to-add can also land in workingTreeChanges.
+        const wt = find(repo.state.workingTreeChanges);
+        if (wt && (wt.status === GitStatus.UNTRACKED || wt.status === GitStatus.INTENT_TO_ADD)) {
+            return true;
+        }
+        return false;
+    } catch {
+        return false; // git API not ready / shape changed — fall back to normal change navigation
+    }
+};
+
+// Shared step logic for new-file scroll mode: move the cursor `direction` by newFileNavLineJump lines within
+// a fully-added file so you can page through it. Returns true if it stepped (caller stops), or false if the
+// cursor is already at the edge (caller falls through to the next/previous FILE — matching the normal
+// end-of-changes behaviour so the review flow keeps going).
+const stepThroughNewFile = (editor: vscode.TextEditor, direction: "down" | "up"): boolean => {
+    const step = vscode.workspace.getConfiguration("better-git-vscode").get<number>("newFileNavLineJump", 5);
+    const cur = editor.selection.active.line;
+    const last = Math.max(0, editor.document.lineCount - 1);
+    const atEdge = direction === "down" ? cur >= last : cur <= 0;
+    if (atEdge) {
+        return false;
+    }
+    const target = direction === "down" ? Math.min(cur + step, last) : Math.max(cur - step, 0);
+    const pos = new vscode.Position(target, 0);
+    editor.selection = new vscode.Selection(pos, pos);
+    editor.revealRange(new vscode.Range(target, 0, target, 0), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    return true;
+};
+
 const goToNextDiff = async () => {
     var activeEditor = vscode.window.activeTextEditor;
     const currentFilename = await getActiveFilePath();
     if (!activeEditor && !currentFilename) {
         await openFirstFile();
+        return;
+    }
+
+    // NEW-FILE SCROLL MODE: for a fully-added new file (whole file is one new-diff), compareEditor.nextChange
+    // can only jump past the single file-spanning change — so instead step DOWN newFileNavLineJump lines to
+    // page through the new file. When we hit the bottom, fall through to the next changed file (same as
+    // running out of changes normally).
+    if (activeEditor && isFullyAddedFile(currentReviewFileUri() ?? activeEditor.document.uri)) {
+        if (stepThroughNewFile(activeEditor, "down")) {
+            return;
+        }
+        await openNextFile();
         return;
     }
 
@@ -924,6 +997,16 @@ const goToPreviousDiff = async () => {
     const currentFilename = await getActiveFilePath();
     if (!activeEditor && !currentFilename) {
         await openLastFile();
+        return;
+    }
+
+    // NEW-FILE SCROLL MODE (mirror of goToNextDiff): step UP newFileNavLineJump lines through a fully-added
+    // file; at the top, fall through to the previous changed file.
+    if (activeEditor && isFullyAddedFile(currentReviewFileUri() ?? activeEditor.document.uri)) {
+        if (stepThroughNewFile(activeEditor, "up")) {
+            return;
+        }
+        await openPreviousFile();
         return;
     }
 
