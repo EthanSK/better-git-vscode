@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.10] (ethansk fork) — fix tall-hunk stepping getting STUCK near the bottom + debug logging
+
+- **Fixed: stepping DOWN through a tall hunk got permanently stuck a few lines short of the bottom** and never advanced to the next file. On a hunk whose last lines are near end-of-file, the final down-step asked VS Code to put a near-EOF line at the *top* of the viewport — which it can't do (it clamps the scroll, since there aren't a screenful of lines below it). The viewport silently stopped moving, but the "have I reached the bottom?" check still said "no", so every further next-change press was a dead no-op: the last few changed lines never scrolled on screen and it never rolled to the next change/file. (`Alt+,` up-stepping was unaffected and already worked.)
+- **The fix guarantees the tail is seen AND that it advances.** The final down-step now reveals the hunk's **last line at the BOTTOM** of the viewport (a downward scroll, which is never EOF-clamped) instead of trying to place an unreachable line at the top — so the tail lines always show — and parks the caret on that last line. The very next press sees the caret at the hunk end and definitively advances to the next change/file. No more no-op loop, no skipped tail.
+- **New: a "Better Git" output channel with optional debug logging** (setting `better-git-vscode.debugLogging`, default off). When enabled, each tall-hunk step logs the direction, viewport height, hunk extent, top/bottom visible lines, caret line, computed target, remaining lines, and the decision taken (stepped / advanced / reached-end). Open it via View → Output → "Better Git". Off by default so there's zero noise in normal use — flip it on to diagnose any future stepping issue instantly.
+
 ## [1.2.9] (ethansk fork) — edge-case audit: every entry point inherits every guard
 
 Broad correctness pass making the **mouse buttons, the `+` button, and the keyboard** behave identically across every file-state, by routing each broken entry point through the ONE shared function instead of a divergent per-case branch.
