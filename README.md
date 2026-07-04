@@ -90,8 +90,14 @@ All bindings ship as defaults and are fully overridable (see below).
 > scroll position you were viewing first, then show Source Control. Override it like any other
 > binding if you want the original behaviour back.
 
-`Stage current file` is also available as a `+` button in the editor title bar (no key
-needed).
+The **`+` button in the editor title bar** now **stages the current file _and_ advances** to the
+next change — in whatever direction you last navigated. Jump forward through changes (`>` / `Alt+.`)
+and the `+` advances forward; jump backward (`<` / `Alt+,`) and it advances backward. So you can run
+the whole review-and-stage flow with the mouse alone — click `+` to stage-and-jump instead of
+clicking `+` then reaching for the keyboard. It calls the exact same logic as the `Shift+Alt+.` /
+`Shift+Alt+,` keyboard shortcuts (same staging, same advance target, same cross-file rollover). A
+fresh session with no navigation yet defaults to advancing *forward*. The plain, no-advance
+`Stage current file` command is still registered if you'd rather bind that to a key.
 
 ## Dvorak mode (one toggle)
 

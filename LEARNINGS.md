@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-04T20:14:11Z
+**Trigger:** Ethan 2026-07-04: 'it should call the exact same function ... as if we held shift and alt and greater-than or less-than ... based on whatever the last jump was, if I went next or previous.'
+**Symptom:** Editor-title '+' button only STAGED the current file — Ethan then had to grab the keyboard to jump to the next change, breaking the mouse-only review flow.
+**Root cause:** The editor/title menu pointed at better-git-vscode.stage-current-file (stage, no navigate); there was no mouse path that both staged and advanced, and no memory of which direction (next/previous) he was reviewing in.
+**Fix:** src/extension.ts: added module-level lastNavDirection ('next'|'previous', default 'next') set by next/previous-scm-change, next/previous-changed-file, and stage-and-next/previous (NOT the smart mouse cmds — their in-diff direction is intentionally flipped). New command better-git-vscode.stage-current-file-and-advance calls the SAME stageCurrentFileAndAdvance(lastNavDirection) that the Shift+Alt+./,keyboard shortcuts use. package.json editor/title menu repointed from stage-current-file to stage-current-file-and-advance (kept $(add) icon + gitOpenRepositoryCount!=0 when-clause). stage-current-file stays registered for anyone who bound it.
+**Commit:** pending-on-branch
+**Guard:** stageCurrentFileAndAdvance's isChangedFile guard makes the button a safe no-op on non-change editors (never errors). Both keyboard cmds and the button share one function (no fork). Thorough comments at the lastNavDirection decl + each nav command + the new command registration. lint+tsc+package green.
+---
+
+---
 **Date:** 2026-07-04T19:57:11Z
 **Trigger:** Ethan voice note 2026-07-04: 'do it in stages... but obviously get the UX right for this... same with going to previous change... I'm currently having to get my fingers off the keyboard quite often.'
 **Symptom:** Tall hunks (taller than the viewport) forced Ethan off the keyboard: next-change landed at the hunk TOP, the rest ran off the bottom, so he had to manually scroll then press next again. Wanted next/prev-change to step through a tall hunk in stages.

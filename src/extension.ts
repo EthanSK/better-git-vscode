@@ -4,6 +4,30 @@ import * as vscode from "vscode";
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
+// LAST NAVIGATION DIRECTION (v1.2.7 — mouse-only stage-and-advance)
+//
+// WHY this exists (Ethan's exact problem): he wants to run the WHOLE review-and-stage flow with just the
+// mouse. He clicks the editor-title "+" button to stage the current file, but then has to grab the
+// keyboard to jump to the next change. The fix: make the "+" button stage AND advance — calling the EXACT
+// same logic as the keyboard Shift+Alt+. / Shift+Alt+, (stageCurrentFileAndAdvance) — in whatever direction
+// he was last navigating. So we remember the direction of his most recent "jump".
+//
+// WHICH commands count as "the last jump": his primary change-navigation keys — next/previous-scm-change
+// (Alt+. / Alt+, on QWERTY, the headline > / < review keys) — plus the changed-FILE nav
+// (next/previous-changed-file) and the stage-and-next/previous commands themselves. Rationale: from Ethan's
+// POV "the last jump" is any deliberate forward-vs-backward move through the changeset, whether it stepped
+// by hunk or by whole file; folding all of them in means the "+" button always advances the way he's
+// currently working (top-to-bottom vs bottom-to-top) regardless of which nav key he last pressed. We do NOT
+// track the smart mouse buttons here — their in-diff direction is intentionally FLIPPED (see smartNavigate)
+// so their raw "forward"/"back" label doesn't map cleanly to review direction, and mixing them in would
+// make the "+" advance the wrong way.
+//
+// Module-level (not inside activate) so both the nav command handlers and the new
+// stage-current-file-and-advance command can read/write it. Defaults to "next" — a fresh session with no
+// nav yet advances forward (top-to-bottom), which is the overwhelmingly common review order.
+let lastNavDirection: "next" | "previous" = "next";
+
+// ──────────────────────────────────────────────────────────────────────────────────────────
 // LAST-STAGED STATUS BAR (v1.1.0)
 //
 // WHY this exists (Ethan's exact problem): he reviews AI-generated changesets file-by-file from the
@@ -337,19 +361,25 @@ export function activate(context: vscode.ExtensionContext) {
     lastStagedStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     lastStagedStatusBarItem.command = "better-git-vscode.reveal-last-staged-file";
     lastStagedStatusBarItem.hide();
+    // Every forward nav command records lastNavDirection = "next"; every backward one records "previous".
+    // This is what the editor-title "+" button reads to decide which way to advance after staging (v1.2.7).
     let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", async () => {
+        lastNavDirection = "next"; // he just jumped FORWARD through changes -> "+" should advance forward
         await goToNextDiff();
     });
 
     let disposable2 = vscode.commands.registerCommand("better-git-vscode.previous-scm-change", async () => {
+        lastNavDirection = "previous"; // he just jumped BACKWARD -> "+" should advance backward
         await goToPreviousDiff();
     });
 
     let disposable3 = vscode.commands.registerCommand("better-git-vscode.next-changed-file", async () => {
+        lastNavDirection = "next";
         await goToFirstOrNextFile();
     });
 
     let disposable4 = vscode.commands.registerCommand("better-git-vscode.previous-changed-file", async () => {
+        lastNavDirection = "previous";
         await goToLastOrPreviousFile();
     });
 
@@ -358,20 +388,36 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.commands.executeCommand("workbench.action.files.save");
     });
 
+    // The keyboard stage-and-advance commands also count as a "jump" — pressing shift+alt+. means Ethan is
+    // reviewing top-to-bottom, so the "+" button should keep advancing forward after this, and vice versa.
     let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async () => {
+        lastNavDirection = "next";
         await stageCurrentFileAndAdvance("next");
     });
 
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
     // PREVIOUS unstaged file instead of the next. Bound to "shift + previous" so it parallels "shift + next".
     let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async () => {
+        lastNavDirection = "previous";
         await stageCurrentFileAndAdvance("previous");
     });
 
-    // Editor-title button (top-right of the editor, next to the built-in diff/open icons): stage the current
-    // file WITHOUT navigating. Contributed to the editor/title menu in package.json so it renders as an icon.
+    // Legacy command: stage the current file WITHOUT navigating. Kept registered so anyone who bound it keeps
+    // that behaviour, but as of v1.2.7 it is NO LONGER what the editor-title "+" button runs — the button now
+    // runs stage-current-file-and-advance (disposable15 below) for the mouse-only review flow.
     let disposable8 = vscode.commands.registerCommand("better-git-vscode.stage-current-file", async () => {
         await stageCurrentFile();
+    });
+
+    // Editor-title "+" button (v1.2.7): stage the current file AND advance to the next/previous change in
+    // whatever direction Ethan last navigated (lastNavDirection). This lets him run the whole review-and-stage
+    // flow with the mouse alone — click "+" to stage-and-jump instead of clicking "+" then reaching for the
+    // keyboard. It calls the EXACT SAME stageCurrentFileAndAdvance() that Shift+Alt+. / Shift+Alt+, use, so
+    // behaviour (staging, advance target, cross-file rollover, last-staged status bar) is byte-identical to the
+    // keyboard shortcut. On a non-diff / non-change editor stageCurrentFileAndAdvance safely no-ops (its
+    // isChangedFile guard), so the button never errors even when "advance" is meaningless.
+    let disposable15 = vscode.commands.registerCommand("better-git-vscode.stage-current-file-and-advance", async () => {
+        await stageCurrentFileAndAdvance(lastNavDirection);
     });
 
     // Manual trigger for collapsing the worktree/repository section headers (see the big comment block
@@ -630,7 +676,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         disposable, disposable2, disposable3, disposable4, disposable5, disposable6, disposable7, disposable8,
-        disposable9, disposable10, disposable11, disposable12, disposable13, disposable14,
+        disposable9, disposable10, disposable11, disposable12, disposable13, disposable14, disposable15,
         lastStagedStatusBarItem, // disposed cleanly on deactivate
         configListener,
         reviewDecoEmitter,
