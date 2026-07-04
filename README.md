@@ -31,6 +31,21 @@ When you open a *staged* file, what you see is a frozen, read-only snapshot of w
 
 `Option+R` — open & reveal the real file *(remap to anything you like; see overrides below)*.
 
+### Read every line of brand-new files, too
+
+Reviewing an AI changeset that adds whole new files? A brand-new file is one big new-diff with no per-change hunks to jump between, so change-navigation used to fly straight past it — you never actually read it. Now, on a fully-added file (untracked / staged-new), the next/previous-change keys **step the cursor a few lines at a time** so you page through and review the entire file, then roll on to the next change as usual. Tune the step with `better-git-vscode.newFileNavLineJump` (default 5). Modified files are never affected — they always navigate change-to-change.
+
+## Tidy worktrees: auto-collapse the extras, keep your main repo open
+
+If you work with **git worktrees** (or several repos in one window), VS Code's Source Control panel shows each as its own collapsible section and renders them **all expanded** on every window open / reload — noisy once you have a few. This extension folds them for you shortly after the window loads, so the panel stays tidy.
+
+**Your primary / main repository stays expanded.** Only the *other* worktrees collapse — the repo at the top (your main working copy, the one you're actually working in) is left open. It's detected as the repository matching your first workspace folder; linked worktrees (which live elsewhere on disk) are the ones that fold.
+
+- **Setting `better-git-vscode.collapseWorktreesOnStartup`** (boolean, default **on**) toggles the whole behaviour. It only acts when there are 2+ repositories open. Turn it off to leave the sections however VS Code renders them.
+- **Command `Better Git: Collapse all worktree / repository sections in Source Control`** (`better-git-vscode.collapse-worktrees`) folds them on demand from the Command Palette any time they've crept back open — also keeping the primary expanded. Bind it to a key if you like.
+
+> **How it works, and its honest limits.** VS Code has no API to collapse/expand a *single* repository (its built-ins collapse or expand them all at once), and no way to persist the collapsed state. So the extension collapses everything, then re-expands just the primary by leveraging VS Code's own `scm.autoReveal`. Consequences: it relies on `scm.autoReveal` being on (VS Code default) — with it off, the primary collapses too; re-expanding opens one of the primary repo's changed files in a *preview tab*; and if the primary has no changes there's nothing to re-expand toward. It's a best-effort workaround for the missing native "remember collapsed state", timing-dependent by nature, and it briefly focuses the Source Control panel when it fires.
+
 ## Keybindings
 
 The headline navigation keys are `Alt+.` and `Alt+,`. On a standard **QWERTY** keyboard
@@ -114,6 +129,8 @@ A few behaviours are configurable under **Settings → Better Git VS Code**:
 
 - **Dvorak mode** — swap the navigation keys to Dvorak-comfortable positions with one toggle (`better-git-vscode.dvorakMode`, see the *Dvorak mode* section above).
 - **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
+- **Auto-collapse extra worktrees** — fold the other worktree/repository sections on window open while keeping your main repo expanded (`better-git-vscode.collapseWorktreesOnStartup`, default on — see *Tidy worktrees* above).
+- **New-file line step** — how many lines the change keys step through a brand-new file (`better-git-vscode.newFileNavLineJump`, default 5).
 - **List vs Tree view** in Source Control (`better-git-vscode.treeView`).
 - Whether the Source Control panel opens on navigation (`shouldOpenScmView`).
 - The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥).
