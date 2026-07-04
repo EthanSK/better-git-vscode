@@ -1,5 +1,13 @@
 # Change Log
 
+## [1.2.7] (ethansk fork) — the editor-title `+` button now stages **and advances**
+
+- **The `+` button in the editor title bar now stages the current file AND jumps to the next change** — in whatever direction you last navigated. Before, clicking `+` only staged the file and left you sitting on it, so you had to reach for the keyboard to move on. Now the whole review-and-stage flow works with the **mouse alone**: click `+` to stage-and-advance, again and again, sweeping through the changeset without touching the keyboard.
+- **It follows your last-navigated direction.** If you last jumped *forward* through changes (`>` / `Alt+.` / next-changed-file), `+` advances forward to the next unstaged file; if you last jumped *backward* (`<` / `Alt+,` / previous-changed-file), `+` advances backward. A fresh session with no navigation yet defaults to advancing **forward** (top-to-bottom, the common case).
+- **Identical to the keyboard shortcut.** The button runs the **exact same** underlying function as `Shift+Alt+.` / `Shift+Alt+,` (stage-and-next / stage-and-previous) — same staging, same advance target, same cross-file rollover, same "last staged" status-bar record. Both the keyboard commands and the button share one `stageCurrentFileAndAdvance(direction)` implementation, so they can never drift apart.
+- **Safe on non-diff editors.** If there's nothing stageable under the cursor, the button quietly does nothing (never an error) — its change-detection guard is the same one the keyboard shortcuts use.
+- The plain, no-advance `Stage current file` command is still registered (bind it to a key if you preferred the old button behaviour); it's just no longer what the `+` button runs.
+
 ## [1.2.6] (ethansk fork) — step through TALL hunks in stages (stage-scrolling)
 
 - **New: a hunk taller than your screen now steps through in stages using the same next/previous-change keys.** Before, one press of next-change landed you at the *top* of a tall hunk and the rest ran off the bottom — so you had to take your hands off the keyboard, scroll manually, then press next again. Now: next-change lands at the top of a tall hunk; pressing next **again scrolls down about a screenful within that same hunk**; repeat until the bottom is on screen; the *next* press then advances to the next hunk. `previous-change` mirrors it — it steps **up** through a tall hunk in stages, and once the top is visible the next press goes to the previous hunk. Reversing direction mid-scroll feels natural (pressing previous while stepping down a hunk steps back up — it never teleports).

@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review \u2014 jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -77,6 +77,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "better-git-vscode.stage-current-file-and-advance",
+        "category": "Better Git",
+        "title": "Stage current file and advance in last-navigated direction",
+        "icon": "$(add)"
+      },
+      {
         "command": "better-git-vscode.smart-forward",
         "category": "Better Git",
         "title": "Smart forward (next change in a diff, else navigate forward)"
@@ -110,7 +116,7 @@
     "menus": {
       "editor/title": [
         {
-          "command": "better-git-vscode.stage-current-file",
+          "command": "better-git-vscode.stage-current-file-and-advance",
           "group": "navigation",
           "when": "gitOpenRepositoryCount != 0"
         }
