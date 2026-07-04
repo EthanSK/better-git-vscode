@@ -369,6 +369,18 @@ const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void =
             clearInterval(timer);
             // Collapse the OTHER worktrees but keep the primary/main repo expanded (v1.2.4).
             await collapseWorktreesKeepingPrimaryExpanded();
+            // v1.2.11 — RELIABLE COLLAPSE ON EXTENSION-HOST RESTART. activate() re-runs on "Developer: Restart
+            // Extension Host", so this routine already fires then — BUT on a restart the SCM view is
+            // simultaneously re-rendering from its persisted state and can RE-EXPAND the sections a beat after
+            // our single collapse lands, silently undoing it (Ethan: "on restart of extensions also make it run
+            // the collapse"). Fix: re-fire the collapse a few times over the first ~1.6s to win that race so the
+            // fold sticks. Re-collapsing already-collapsed sections is a harmless no-op, and the Bug-12
+            // review-in-flight guard inside collapseWorktreesKeepingPrimaryExpanded still prevents any diff
+            // hijack on the re-expand step, so these repeats can't yank a diff out from under a mid-review user.
+            for (const delayMs of [300, 800, 1600]) {
+                const t = setTimeout(() => void collapseWorktreesKeepingPrimaryExpanded(), delayMs);
+                context.subscriptions.push(new vscode.Disposable(() => clearTimeout(t)));
+            }
         } else if (polls >= MAX_POLLS) {
             clearInterval(timer); // timed out — no multi-worktree situation, nothing to do
         }

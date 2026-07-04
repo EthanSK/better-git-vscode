@@ -1,5 +1,8 @@
 # Change Log
 
+## [1.2.11] (ethansk fork) — reliably collapse worktrees on extension-host restart
+
+- **Fixed: auto-collapse of the extra worktree/repository sections now fires reliably on an extension-host restart** ("Developer: Restart Extension Host"), not only on a fresh window open. On a restart the Source Control view re-renders from its saved state at the same instant the extension re-activates, so the single collapse could be undone a beat later. The startup collapse now re-fires a few times over the first ~1.6s to win that race. No-op if already collapsed; the review-in-flight guard still prevents any diff hijack.
 ## [1.2.10] (ethansk fork) — fix tall-hunk stepping getting STUCK near the bottom + debug logging
 
 - **Fixed: stepping DOWN through a tall hunk got permanently stuck a few lines short of the bottom** and never advanced to the next file. On a hunk whose last lines are near end-of-file, the final down-step asked VS Code to put a near-EOF line at the *top* of the viewport — which it can't do (it clamps the scroll, since there aren't a screenful of lines below it). The viewport silently stopped moving, but the "have I reached the bottom?" check still said "no", so every further next-change press was a dead no-op: the last few changed lines never scrolled on screen and it never rolled to the next change/file. (`Alt+,` up-stepping was unaffected and already worked.)

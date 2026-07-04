@@ -1,8 +1,8 @@
 {
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
-  "description": "Fast keyboard-driven git diff review \u2014 jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.10",
+  "description": "Fast keyboard-driven git diff review — jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
+  "version": "1.2.11",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -142,8 +142,8 @@
         },
         "better-git-vscode.currentFileBadge": {
           "type": "string",
-          "default": "\ud83d\udd25\ud83d\udd25",
-          "description": "The badge shown on the file you're currently reviewing, in the Source Control panel (and Explorer/tabs). Max 2 characters \u2014 an emoji renders in colour and is the most visible option (the Source Control panel ignores decoration colours). Default is double fire \ud83d\udd25\ud83d\udd25. Loud choices: \ud83d\udd25 \ud83d\udd34 \ud83d\udea8 \ud83d\udfe5 \u2757 \u2b50 \ud83d\udc49. Tip: two emoji (e.g. \ud83d\udd25\ud83d\udd25) is allowed and renders a bit wider. Set to empty to disable the badge."
+          "default": "🔥🔥",
+          "description": "The badge shown on the file you're currently reviewing, in the Source Control panel (and Explorer/tabs). Max 2 characters — an emoji renders in colour and is the most visible option (the Source Control panel ignores decoration colours). Default is double fire 🔥🔥. Loud choices: 🔥 🔴 🚨 🟥 ❗ ⭐ 👉. Tip: two emoji (e.g. 🔥🔥) is allowed and renders a bit wider. Set to empty to disable the badge."
         },
         "better-git-vscode.dvorakMode": {
           "type": "boolean",
@@ -341,7 +341,12 @@
         "command": "runCommands",
         "key": "ctrl+shift+g",
         "mac": "ctrl+shift+g",
-        "args": { "commands": ["better-git-vscode.open-change-at-position", "workbench.view.scm"] }
+        "args": {
+          "commands": [
+            "better-git-vscode.open-change-at-position",
+            "workbench.view.scm"
+          ]
+        }
       }
     ]
   },
