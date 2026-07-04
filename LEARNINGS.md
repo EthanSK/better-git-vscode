@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-04T22:30:52Z
+**Trigger:** Mini keyboard-emulation test on v1.2.9, evidence /tmp/better-git-vscode-tall-hunk-evidence-129/ (2026-07-04)
+**Symptom:** Tall-hunk staging (next-scm-change stepping DOWN through a hunk taller than the viewport) got permanently STUCK a few lines short of the bottom (e.g. Ln 202 on a 240-line hunk, visible ~197-235): repeated Alt+. no-op'd, never revealed the tail lines 236-240, never advanced to the next file. Alt+, (up) worked fine.
+**Root cause:** The final down-step in stepTallHunk computed a target top of hunk.end-visLines+1 and revealed it with revealRange(AtTop). Near end-of-file VS Code CANNOT place that line at the top of the viewport (it clamps the scroll — no screenful of lines below it), so the viewport silently didn't move. But remainingBelow = hunk.end - bottom was computed from the (unclamped) geometry and stayed > 0, so the press kept trying to step and never hit the 'reached bottom -> advance' branch. Infinite no-op. UP was unaffected: AtTop of a line near the TOP of the doc (hunk.start) is always reachable.
+**Fix:** src/extension.ts stepTallHunk down-branch: (1) if caret >= hunk.end -> return false (definitively advance; the final step parks caret at hunk.end). (2) the FINAL down-step (top+step >= maxTop where maxTop=hunk.end-visLines+1) now reveals hunk.end at the BOTTOM via new revealBottomAndPinCursor (RevealType.Default scrolls DOWN, never EOF-clamped) instead of AtTop-an-unreachable-line — guaranteeing the tail shows — and pins caret to hunk.end so signal (1) advances on the next press. Normal (non-final) steps still AtTop as before. Added 'Better Git' OutputChannel + better-git-vscode.debugLogging setting (default false) logging every step decision.
+**Commit:** PENDING
+**Guard:** debugLogging output channel makes the next stuck case diagnosable instantly (logs direction/viewport/hunk/caret/target/remaining/decision). Fix is layered on the existing span<=threshold and remainingBelow<=0 guards; non-final steps unchanged; UP direction unchanged. lint+tsc+package green.
+---
+
+---
 **Date:** 2026-07-04T21:38:14Z
 **Trigger:** Ethan edge-case-audit ship dispatch 2026-07-04 (Codex authorized)
 **Symptom:** Codex review of the v1.2.9 edge-case-audit batch found 4 residual holes where merge-conflict / binary-image review views still diverged from the keyboard: (1) openChangeEntry's silent-no-op verifier only recognized diff/plain-text tabs, so a correctly-opened merge editor or binary/image custom editor was mistaken for a failed open and REPLACED with the raw file via showTextDocument; (2) backward new-file rollover ran isFullyAddedFile for staged-new INDEX_ADDED targets (which open as side-by-side diffs, not plain editors) — wasted the 8x30ms newFileScrollEditor retry then skipped the compareEditor.previousChange landing, reintroducing land-at-top-then-skip; (3) currentReviewFileUri had no TabInputCustom branch so binary/image tabs were invisible to repo-selection + late-collapse; (4) plain merge conflicts (default git.mergeEditor=false open as a plain file: editor, in mergeChanges) were missed by isChangeFileUri and smartNavigate, so mouse fell through to browser nav

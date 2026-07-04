@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review \u2014 jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.9",
+  "version": "1.2.10",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -188,6 +188,11 @@
           "default": 4,
           "minimum": 0,
           "description": "How many lines of overlap to keep on screen between consecutive tall-hunk steps, so reading context carries across each step (a blind full-page jump loses your place). Default 4. Used by the AUTO step size (viewport minus this overlap) and to decide when the remaining tail of a hunk is too small to bother stepping (it just advances to the next hunk instead). Only applies when Tall-hunk staging is enabled."
+        },
+        "better-git-vscode.debugLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log tall-hunk stepping decisions to the 'Better Git' output channel (View → Output → pick 'Better Git' from the dropdown). Each next/previous-change press logs the direction, viewport height, hunk extent, top/bottom visible lines, caret line, computed target, remaining lines, and the decision taken (stepped / advanced / reached-end). Off by default (no noise); turn on only when diagnosing a stepping issue."
         }
       }
     },

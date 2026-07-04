@@ -4,6 +4,44 @@ import * as vscode from "vscode";
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
+// DEBUG LOGGING — "Better Git" OutputChannel (v1.2.10)
+//
+// WHY this exists: the tall-hunk stepping logic (stepTallHunk) makes a viewport-derived decision on every
+// next/previous-change press, and when it gets it wrong (e.g. the v1.2.9 stuck-near-the-bottom-of-a-tall-hunk
+// bug) there was NO way to see WHY without re-deriving the geometry by hand from screenshots. This channel logs
+// every step decision — direction, viewport height, hunk extent, top/bottom visible lines, caret, computed
+// target, remaining lines, and the DECISION taken — so the NEXT stuck case is diagnosable instantly instead of
+// guessed. Open it via View → Output → pick "Better Git" from the dropdown.
+//
+// Gated behind the `better-git-vscode.debugLogging` setting (default false) so it's silent for normal use and
+// only writes when Ethan flips it on to diagnose something. The channel itself is created lazily on first log
+// (so we don't allocate an Output channel for users who never enable logging) and reused thereafter.
+let betterGitOutputChannel: vscode.OutputChannel | undefined;
+
+// True only when the user has turned on verbose logging. Read live (not cached) so toggling the setting takes
+// effect on the very next press without a reload.
+const debugLoggingEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("debugLogging", false);
+
+// Append one timestamped line to the "Better Git" output channel, but ONLY when debug logging is enabled.
+// Lazily creates the channel on first use. Never throws (logging must never break navigation) — a failure to
+// log is swallowed. Pass a short tag (e.g. "tall-hunk") + the human-readable message.
+const debugLog = (tag: string, message: string): void => {
+    try {
+        if (!debugLoggingEnabled()) {
+            return;
+        }
+        if (!betterGitOutputChannel) {
+            betterGitOutputChannel = vscode.window.createOutputChannel("Better Git");
+        }
+        const ts = new Date().toISOString().split("T")[1]?.replace("Z", "") ?? "";
+        betterGitOutputChannel.appendLine(`[${ts}] [${tag}] ${message}`);
+    } catch {
+        // logging is best-effort telemetry — never let it interfere with the actual command
+    }
+};
+
+// ──────────────────────────────────────────────────────────────────────────────────────────
 // LAST NAVIGATION DIRECTION (v1.2.7 — mouse-only stage-and-advance)
 //
 // WHY this exists (Ethan's exact problem): he wants to run the WHOLE review-and-stage flow with just the
@@ -1877,6 +1915,27 @@ const revealTopAndPinCursor = (editor: vscode.TextEditor, topLine: number): void
     editor.revealRange(new vscode.Range(clamped, 0, clamped, 0), vscode.TextEditorRevealType.AtTop);
 };
 
+// Scroll `editor` so `bottomLine` is brought into view at the BOTTOM of the viewport, and pin the caret THERE.
+//
+// WHY this is the key to the v1.2.10 stuck-near-the-bottom fix: `revealRange(..., AtTop)` CANNOT place a line
+// near end-of-file at the TOP of the viewport — VS Code clamps the scroll (there aren't a viewport's worth of
+// lines below it to fill the screen). So the final down-step of a tall hunk that ENDS near EOF asked to put an
+// unreachable line at the top, the viewport silently didn't move, yet `remainingBelow` (computed from the
+// caret/geometry) still said "not at the bottom" → the press became a no-op and repeated forever, never
+// revealing the last few changed lines and never advancing (the exact Ln-202 stuck report on the 240-line
+// hunk). Revealing a line at the BOTTOM (RevealType.Default scrolls DOWN to bring an off-screen-below line
+// into view) is NEVER EOF-clamped — the line exists, so it always becomes visible. That guarantees the hunk's
+// tail lines are shown. We pin the caret to `bottomLine` (the hunk's last line): on the NEXT press stepTallHunk
+// sees caret >= hunk.end and definitively advances — no dependence on exact viewport-bottom render slack.
+const revealBottomAndPinCursor = (editor: vscode.TextEditor, bottomLine: number): void => {
+    const clamped = Math.max(0, Math.min(bottomLine, Math.max(0, editor.document.lineCount - 1)));
+    const pos = new vscode.Position(clamped, 0);
+    editor.selection = new vscode.Selection(pos, pos); // caret parked on the hunk's last line
+    // Default reveal brings the range into view with minimal scroll; for a line below the viewport that lands
+    // it at the bottom edge. This direction is unclamped (unlike AtTop near EOF), so the tail always shows.
+    editor.revealRange(new vscode.Range(clamped, 0, clamped, 0), vscode.TextEditorRevealType.Default);
+};
+
 // THE INTERPOSER. Given the per-press context and which key was pressed, decide whether this press should
 // be consumed as an IN-HUNK SCROLL STEP (return true) or fall through to plain hunk-to-hunk navigation
 // (return false). Fully live: reads the viewport + caret fresh, so reversing direction / moving the caret /
@@ -1884,52 +1943,88 @@ const revealTopAndPinCursor = (editor: vscode.TextEditor, topLine: number): void
 const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Promise<boolean> => {
     const vp = readViewport(ctx.editor);
     if (!vp) {
+        debugLog("tall-hunk", `${direction}: no viewport (editor not laid out) -> defer to plain nav`);
         return false; // editor not laid out -> let built-in handle it
     }
     const { top, bottom, visLines } = vp;
     const caret = ctx.editor.selection.active.line;
     const hunk = hunkContainingLine(ctx.hunks, caret);
     if (!hunk) {
+        debugLog(
+            "tall-hunk",
+            `${direction}: caret L${caret + 1} not inside any hunk (top=L${top + 1} bottom=L${bottom + 1} vis=${visLines}) -> defer to plain nav (advance)`,
+        );
         return false; // caret isn't inside a hunk (between changes / moved away) -> plain navigation
     }
     const { threshold, step } = hunkStagingConfig(visLines); // overlap only feeds `step` now (BUG 8 removed TINY_TAIL)
     const span = hunk.end - hunk.start + 1;
+    // Shared context line for EVERY decision below — 1-based line numbers so it matches the editor's gutter,
+    // which is what Ethan reads off the screenshots. hunk shown as its 1-based start..end.
+    const base =
+        `${direction}: hunk L${hunk.start + 1}-L${hunk.end + 1} (span=${span}) | ` +
+        `viewport top=L${top + 1} bottom=L${bottom + 1} vis=${visLines} | caret=L${caret + 1} | step=${step} threshold=${threshold}`;
     if (span <= threshold) {
+        debugLog("tall-hunk", `${base} | DECISION: hunk fits on screen (span<=threshold) -> defer to plain nav`);
         return false; // hunk fits on one screen (or under the override threshold) -> behave EXACTLY as today
     }
     // BUG 8 FIX (v1.2.9): advance only when the far edge is FULLY on screen (remaining <= 0), not when a
-    // "tiny tail" of up to overlap(=4) CHANGED lines is still off screen. The old guard `remaining <= TINY_TAIL`
-    // (TINY_TAIL = max(2, overlap), default 4) skipped the last up-to-4 changed lines of a tall hunk unseen
-    // before advancing — silently hiding genuine changes in exactly the review flow this tool exists for.
-    // Stepping to the exact edge instead reuses the SAME reveal + clamp path below (Math.min/Math.max already
-    // land precisely at hunk.end-visLines+1 / hunk.start, never over-scrolling into unchanged code), so no
-    // divergent branch is added. Loop-safe: after the final step `remaining` becomes 0, so the NEXT press
-    // cleanly advances to the next/prev hunk. This ALSO fixes BUG 7 (the up-direction mid-hunk "bounce"):
-    // previously a barely-tall hunk (1..4 lines taller than the viewport) hit `remainingAbove <= TINY_TAIL`
-    // on the first 'previous' press after landing and fell straight through to compareEditor.previousChange
-    // with the caret pinned MID-hunk (top of viewport = hunk.end-visLines+1). previousChange from inside a
-    // change region lands on that SAME hunk's start (above the mid-hunk caret), which the lineAfter<lineBefore
-    // check misreads as an advance, re-landing the same hunk — a bounce that never reached the previous hunk.
-    // With `remainingAbove <= 0`, that first press now does a real step UP to hunk.start (the change-region
-    // boundary), so the following press's compareEditor.previousChange starts from the boundary and correctly
-    // reaches the PREVIOUS hunk. (Down never bounced: nextChange from a mid-hunk caret looks forward/below the
-    // caret and finds the NEXT hunk, so no equivalent fix is needed there.)
+    // "tiny tail" of up to overlap(=4) CHANGED lines is still off screen. (See the long history note that
+    // used to be here; kept short now.) The v1.2.10 fix below is layered on top of that guard.
+    //
+    // ── BUG 14 FIX (v1.2.10) — the "stuck near the bottom of a tall hunk" dead-end ──
+    // Symptom (reproduced on the Mini, v1.2.9): stepping DOWN a 240-line hunk stuck at ~Ln 202 showing the
+    // final screenful minus the last few lines — repeated next-change did nothing, the tail (236-240) never
+    // showed, and it never advanced to the next file. Root cause: the final down-step computed a target `top`
+    // of `hunk.end - visLines + 1` and revealed it with `AtTop`, but VS Code CANNOT put a near-EOF line at the
+    // TOP of the viewport (it clamps the scroll — there aren't a viewport's worth of lines below it). So the
+    // viewport silently didn't move, while `remainingBelow = hunk.end - bottom` stayed > 0 → the press became
+    // an infinite no-op. Two-part fix:
+    //   (1) When the caret is already parked AT (or past) the hunk's last line, we've shown the tail on a
+    //       previous press (the final step pins the caret to hunk.end). Advance now — a definitive
+    //       "reached the bottom" signal that can't be fooled by a few lines of EOF render slack.
+    //   (2) The FINAL down-step (whose normal target would reach/exceed the last-line-at-bottom position)
+    //       reveals the hunk's END at the BOTTOM (RevealType.Default, which scrolls DOWN and is NEVER
+    //       EOF-clamped) instead of an unreachable line at the top — guaranteeing the tail is seen — and pins
+    //       the caret to hunk.end so signal (1) fires on the next press. UP is unaffected: AtTop of a line
+    //       near the TOP of the document (hunk.start) is always reachable, so it never clamps.
     if (direction === "down") {
+        // Signal (1): caret already parked at/after the hunk end from a prior final step -> definitively advance.
+        if (caret >= hunk.end) {
+            debugLog("tall-hunk", `${base} | DECISION: caret at hunk end (tail already shown) -> advance to next change/file`);
+            return false;
+        }
         const remainingBelow = hunk.end - bottom; // lines of the hunk still below the viewport
         if (remainingBelow <= 0) {
+            debugLog("tall-hunk", `${base} | remainingBelow=${remainingBelow} | DECISION: hunk bottom on screen -> advance to next change/file`);
             return false; // bottom of the hunk is fully on screen -> advance to next hunk
         }
-        // Scroll down ~one screenful (minus overlap), but never past the point where the hunk's last line
-        // sits at the bottom of the viewport (no scrolling into unchanged code below the hunk).
-        let newTop = Math.min(top + step, hunk.end - visLines + 1);
+        // The top position where the hunk's LAST line sits at the bottom of the viewport. Never below hunk.start.
+        const maxTop = Math.max(hunk.start, hunk.end - visLines + 1);
+        // FINAL STEP: a normal screenful-minus-overlap step would reach or pass maxTop, i.e. this press should
+        // land on the hunk's tail. Reveal the END at the bottom (unclamped) rather than AtTop-an-unreachable-line.
+        if (top + step >= maxTop) {
+            revealBottomAndPinCursor(ctx.editor, hunk.end); // shows [maxTop..hunk.end]; caret parked at hunk.end
+            debugLog(
+                "tall-hunk",
+                `${base} | remainingBelow=${remainingBelow} maxTop=L${maxTop + 1} | DECISION: FINAL step -> reveal hunk end L${hunk.end + 1} at bottom, caret parked at end (next press advances)`,
+            );
+            return true;
+        }
+        // NORMAL step: scroll down ~one screenful (minus overlap), never past maxTop. AtTop is safe here
+        // because we're still far enough from EOF that the target line CAN be placed at the top.
+        let newTop = Math.min(top + step, maxTop);
         if (newTop <= top) {
             newTop = top + step; // guarantee forward progress even in odd geometry
         }
         revealTopAndPinCursor(ctx.editor, newTop);
+        debugLog("tall-hunk", `${base} | remainingBelow=${remainingBelow} maxTop=L${maxTop + 1} | DECISION: step DOWN, newTop=L${newTop + 1}`);
         return true;
     } else {
+        // UP direction unchanged from v1.2.9 (no EOF-clamp problem going up — hunk.start is near the top of the
+        // document, always reachable by AtTop). BUG 7/8 fix: advance only when the hunk top is fully on screen.
         const remainingAbove = top - hunk.start; // lines of the hunk still above the viewport
         if (remainingAbove <= 0) {
+            debugLog("tall-hunk", `${base} | remainingAbove=${remainingAbove} | DECISION: hunk top on screen -> advance to previous change/file`);
             return false; // top of the hunk is fully on screen -> advance to previous hunk
         }
         let newTop = Math.max(top - step, hunk.start);
@@ -1937,6 +2032,7 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
             newTop = top - step; // guarantee backward progress
         }
         revealTopAndPinCursor(ctx.editor, newTop);
+        debugLog("tall-hunk", `${base} | remainingAbove=${remainingAbove} | DECISION: step UP, newTop=L${newTop + 1}`);
         return true;
     }
 };
@@ -1962,9 +2058,11 @@ const revealHunkOnLanding = (ctx: HunkStageContext, caretLine: number, direction
     }
     if (direction === "down") {
         revealTopAndPinCursor(ctx.editor, hunk.start); // land at the top of the tall hunk
+        debugLog("tall-hunk", `landing(down): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed at its top`);
     } else {
         // Land showing the bottom portion so subsequent 'previous' presses step UP through the hunk.
         revealTopAndPinCursor(ctx.editor, Math.max(hunk.start, hunk.end - visLines + 1));
+        debugLog("tall-hunk", `landing(up): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed showing its bottom`);
     }
 };
 
@@ -2018,6 +2116,7 @@ const goToNextDiff = async () => {
         // NO confirmation prompt, ever. The whole point of this tool is keyboard-fast review; a
         // "Jump to next file: ...?" modal would defeat that. (The old promptBeforeNextFile setting +
         // its modal confirmation path were removed entirely — see CHANGELOG v1.0.2.)
+        debugLog("nav", `next: no forward change in file (before=L${(lineBefore ?? -1) + 1} after=L${(lineAfter ?? -1) + 1}) -> openNextFile()`);
         await openNextFile();
         return;
     }
