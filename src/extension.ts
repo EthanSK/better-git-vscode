@@ -96,6 +96,11 @@ const SCM_COLLAPSE_ALL_REPOS_COMMAND = "workbench.scm.action.collapseAllReposito
 // command. Returns true if the collapse command was dispatched without throwing. Fully defensive: any
 // failure (command missing on an old host, view not resolvable) is swallowed so it can never break
 // startup or a manual invocation.
+//
+// NOTE: this is the LOW-LEVEL primitive — it collapses EVERY repository/worktree header, INCLUDING the
+// primary/main one. The user-facing behaviour (keep the primary expanded, collapse only the OTHER
+// worktrees) is layered on top in collapseWorktreesKeepingPrimaryExpanded() below, which calls this and
+// then re-expands just the primary. Kept separate so the "collapse all" step has a single definition.
 const collapseScmRepositories = async (): Promise<boolean> => {
     try {
         // Must make SCM the active sidebar container first, otherwise the view action can't resolve its
@@ -107,6 +112,140 @@ const collapseScmRepositories = async (): Promise<boolean> => {
     } catch {
         // Old VS Code without this command id, or the view wasn't resolvable — do nothing, safely.
         return false;
+    }
+};
+
+// ──────────────────────────────────────────────────────────────────────────────────────────
+// KEEP THE PRIMARY / MAIN REPO EXPANDED, COLLAPSE ONLY THE OTHER WORKTREES (v1.2.4)
+//
+// WHY (Ethan's exact request): the repository at the TOP of the Source Control view is his main working
+// copy — the one he's actively working in — and should stay EXPANDED. Only the ADDITIONAL linked worktrees
+// below it (e.g. ~/Documents/claude-worktrees/<project>-<name>) should fold away.
+//
+// THE API LIMITATION (verified against the shipped VS Code bundle, src/vs/workbench/contrib/scm/):
+// there is NO command that collapses (or expands) a SINGLE, specific repository. The only two repo-level
+// commands both operate on ALL of them at once:
+//   • workbench.scm.action.collapseAllRepositories — iterates scmViewService.visibleRepositories, collapses each
+//   • workbench.scm.action.expandAllRepositories   — same, but expands each
+// The per-node tree.collapse()/tree.expand() calls those wrap are INTERNAL to the SCM view and unreachable
+// from an extension. So "collapse all except the primary" is not directly expressible.
+//
+// HOW WE ACHIEVE IT ANYWAY — collapse everything, then RE-EXPAND just the primary via SCM auto-reveal:
+// the Source Control view has a built-in behaviour, `scm.autoReveal` (default ON), whose handler is
+// SCMView.onDidActiveEditorChange. When the active editor changes, it looks up the SCM resource whose
+// sourceUri matches the editor's file and calls `tree.expandTo(resource)` — which expands ALL ancestor
+// nodes of that resource, INCLUDING its repository/worktree header. (Confirmed in the bundle:
+// `await this.tree.expandTo(s); this.tree.reveal(s); ...`.) So if, right after collapsing all repos, we
+// make a file that belongs to the PRIMARY repo the active editor, the SCM view re-expands the primary's
+// header for us — and leaves every other worktree collapsed. This is model-driven (keys off the active
+// editor + the repo's own change list), which makes it far more deterministic than trying to drive the
+// tree's transient keyboard focus with list.* commands.
+//
+// HONEST LIMITATIONS (documented, not faked):
+//   1. It relies on `scm.autoReveal` being enabled (VS Code default true). If the user turned it off, we
+//      skip the re-expand — the primary stays collapsed like the rest. We check the setting and bail cleanly.
+//   2. To trigger auto-reveal we OPEN one of the primary repo's changed files in a PREVIEW tab (preview +
+//      preserveFocus, so keyboard focus stays on the Source Control panel and no pinned tab is disturbed).
+//      That is a visible side effect: on reload, the primary repo's first change is shown. For a git-diff
+//      REVIEW tool that's a reasonable landing spot, but it IS an extra tab — the tradeoff of the missing
+//      "expand one repo" API.
+//   3. If the primary repo has NO changes at all, there's no resource to reveal, so it stays collapsed
+//      (nothing to expand toward). Not a problem in practice — an unchanged primary has nothing to review.
+//   4. Timing still applies: the repos must have populated (handled by the startup poll below).
+
+// Case-insensitive (mac/win filesystems) comparison of two uris' on-disk roots, trailing separators
+// stripped, so a repo's rootUri can be matched against a workspace folder uri regardless of a trailing slash.
+const sameRootPath = (a: vscode.Uri, b: vscode.Uri): boolean =>
+    a.fsPath.replace(/[\/\\]+$/, "").toLowerCase() === b.fsPath.replace(/[\/\\]+$/, "").toLowerCase();
+
+// Identify the PRIMARY / main repository — the workspace's main working copy, the one that renders at the
+// TOP of the Source Control view. Robust detection: it's the repo whose rootUri equals the FIRST workspace
+// folder (vscode.workspace.workspaceFolders[0]). Linked worktrees live OUTSIDE the workspace folder (their
+// rootUri points elsewhere, e.g. ~/Documents/claude-worktrees/…), so they won't match folder[0]. If that
+// can't be resolved (no folders, or none matches — e.g. the main repo root isn't itself a workspace folder),
+// fall back to git.repositories[0], the first repository the git extension discovered, which is the closest
+// available "primary" proxy. Returns undefined only when there are no repositories at all.
+const getPrimaryRepository = (): any | undefined => {
+    try {
+        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+        const repos: any[] = git?.repositories ?? [];
+        if (repos.length === 0) {
+            return undefined;
+        }
+        const firstFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (firstFolder) {
+            // The main working copy's root == the primary workspace folder. Match on that.
+            const match = repos.find((r) => r?.rootUri && sameRootPath(r.rootUri as vscode.Uri, firstFolder));
+            if (match) {
+                return match;
+            }
+        }
+        return repos[0]; // fallback: first-discovered repo is the closest proxy for "primary"
+    } catch {
+        return undefined; // git API not ready / shape changed — caller treats undefined as "can't re-expand"
+    }
+};
+
+// Pick a file: uri belonging to `repo` that we can open to trigger SCM auto-reveal (which then re-expands
+// that repo's header). We prefer a working-tree change (on-disk, always openable), then an untracked file,
+// then a merge-conflict file, then a staged (index) change. We deliberately try working-tree/untracked
+// FIRST because a staged entry could be a staged DELETION whose file no longer exists on disk (showTextDocument
+// would throw — harmless, we catch it, but it's a wasted attempt). Returns the change's `.uri` (the working
+// file path), which is exactly the `sourceUri` the SCM auto-reveal matcher compares against.
+const firstOpenableChangeUri = (repo: any): vscode.Uri | undefined => {
+    // Order matters: working-tree + untracked are real on-disk files; index/merge are best-effort fallbacks.
+    const groups: any[][] = [
+        repo?.state?.workingTreeChanges ?? [],
+        repo?.state?.untrackedChanges ?? [],
+        repo?.state?.mergeChanges ?? [],
+        repo?.state?.indexChanges ?? [],
+    ];
+    for (const group of groups) {
+        const first = group[0];
+        if (first?.uri) {
+            return first.uri as vscode.Uri;
+        }
+    }
+    return undefined;
+};
+
+// THE user-facing behaviour: collapse every repository/worktree header, then re-expand ONLY the primary.
+// Used by BOTH the startup auto-collapse and the manual command, because Ethan always wants the main repo
+// he's working in left open. See the big comment block above for the mechanism + honest limitations.
+const collapseWorktreesKeepingPrimaryExpanded = async (): Promise<void> => {
+    // Step 1 — collapse ALL repo headers (this also collapses the primary; we re-open it in step 2).
+    const collapsed = await collapseScmRepositories();
+    if (!collapsed) {
+        return; // collapse command unavailable / view not resolvable — nothing more we can do
+    }
+
+    // Step 2 — re-expand just the primary by nudging SCM auto-reveal onto one of its changed files.
+    const primary = getPrimaryRepository();
+    if (!primary) {
+        return; // no repositories — nothing to keep expanded
+    }
+    // If the user disabled scm.autoReveal, the expandTo mechanism won't fire — honestly bail (primary stays
+    // collapsed with the rest) rather than pretend. This is limitation #1 in the block above.
+    const autoRevealOn = vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true);
+    if (!autoRevealOn) {
+        return;
+    }
+    const revealUri = firstOpenableChangeUri(primary);
+    if (!revealUri) {
+        return; // primary has no changes -> no resource to reveal toward -> leave it collapsed (limitation #3)
+    }
+    try {
+        // Let the collapse settle on the SCM view's internal tree-operation sequencer before we queue the
+        // reveal, so the expandTo from auto-reveal lands AFTER the collapse (otherwise a race could collapse
+        // the primary right back). A short delay is enough — both run on the same microtask-ish queue.
+        await new Promise((r) => setTimeout(r, 120));
+        // Open a primary-repo change as the ACTIVE editor to fire SCMView.onDidActiveEditorChange -> expandTo.
+        // preview:true reuses the ephemeral preview tab (doesn't pile up pinned tabs); preserveFocus:true keeps
+        // keyboard focus on the Source Control panel we just revealed, so the user isn't yanked into the editor.
+        await vscode.window.showTextDocument(revealUri, { preview: true, preserveFocus: true });
+    } catch {
+        // File couldn't be opened (e.g. a staged deletion we fell through to) — the primary just stays
+        // collapsed. Never throw: this must not break startup or a manual invocation.
     }
 };
 
@@ -153,7 +292,8 @@ const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void =
         if (getOpenRepositoryCount() >= MIN_REPOS_TO_COLLAPSE) {
             done = true;
             clearInterval(timer);
-            await collapseScmRepositories();
+            // Collapse the OTHER worktrees but keep the primary/main repo expanded (v1.2.4).
+            await collapseWorktreesKeepingPrimaryExpanded();
         } else if (polls >= MAX_POLLS) {
             clearInterval(timer); // timed out — no multi-worktree situation, nothing to do
         }
@@ -179,7 +319,8 @@ const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void =
                     clearTimeout(reCollapseTimer);
                 }
                 reCollapseTimer = setTimeout(() => {
-                    void collapseScmRepositories();
+                    // Late worktree opened -> re-fold the others, still keeping the primary expanded (v1.2.4).
+                    void collapseWorktreesKeepingPrimaryExpanded();
                 }, 600);
             });
             context.subscriptions.push(sub);
@@ -233,12 +374,14 @@ export function activate(context: vscode.ExtensionContext) {
         await stageCurrentFile();
     });
 
-    // Manual trigger for collapsing all SCM repository/worktree section headers (see the big comment block
+    // Manual trigger for collapsing the worktree/repository section headers (see the big comment block
     // above `activate`). Ethan can bind this to a key or run it from the palette any time the worktree
-    // sections have crept back open. Unlike the auto-on-startup path this has NO ≥2-repo gate — if you ask
-    // for it explicitly, we collapse whatever's there.
+    // sections have crept back open. Like the startup path it keeps the PRIMARY/main repo expanded (v1.2.4)
+    // and folds only the other worktrees — that matches his intent (always leave the one he's working in
+    // open). Unlike the auto-on-startup path this has NO ≥2-repo gate — if you ask for it explicitly, we
+    // act on whatever's there.
     let disposable14 = vscode.commands.registerCommand("better-git-vscode.collapse-worktrees", async () => {
-        await collapseScmRepositories();
+        await collapseWorktreesKeepingPrimaryExpanded();
     });
 
     // ──────────────────────────────────────────────────────────────────────────────────────────
