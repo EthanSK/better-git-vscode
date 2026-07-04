@@ -2059,37 +2059,66 @@ const getActiveFileUri = async (): Promise<vscode.Uri | null> => {
 // smart-back command registrations for the full rationale on why we detect the review view via the active
 // tab's input type rather than the `isInDiffEditor` keybinding context.
 //
-// A review view is EITHER a side-by-side diff (modified file) OR a new/untracked file's plain editor
-// (detected by reusing newFileScrollEditor()); both route to the scm-change commands. See the body.
+// A review view is ANY of the shapes the keyboard next/previous-scm-change handle — a side-by-side diff
+// (modified/renamed), a new/untracked file's plain editor, or a deleted file's HEAD-blob plain editor —
+// each detected by REUSING the extension's existing predicates so the mouse is a thin wrapper over the
+// same nav functions. All route to the scm-change commands; everything else -> browser nav. See the body.
 //
 // direction === "forward":  review -> PREVIOUS SCM change (intentionally flipped) | otherwise -> navigateForward
 // direction === "back":     review -> NEXT SCM change (intentionally flipped)     | otherwise -> navigateBack
 async function smartNavigate(direction: "forward" | "back") {
-    // "In review" = the active tab is a change-review view that the scm-change commands know how to drive.
-    // There are TWO such views and BOTH must route to next/previous-scm-change:
-    //   1. A side-by-side text DIFF tab (TabInputTextDiff) — a MODIFIED file being reviewed.
-    //   2. A brand-new / UNTRACKED ("U") file's PLAIN editor (TabInputText). A whole-new file has no original
-    //      side, so VS Code opens it as an ordinary editor, NOT a diff — this is the exact view the v1.2.x
-    //      new-file 5-line-scroll feature pages through. Because it's a plain editor, the old
-    //      `instanceof TabInputTextDiff` check was false for it, so the mouse buttons fell through to plain
-    //      browser navigation and never engaged change-nav (no 5-line scroll, no advance to the next file).
-    //      That was THE BUG: keyboard alt+,/alt+. (bound straight to next/previous-scm-change) worked on new
-    //      files, but the mouse F13/F17 smart buttons silently did nothing / did browser-history nav instead.
-    // We detect view #2 by REUSING newFileScrollEditor() — the SAME single-source-of-truth structural gate that
-    // next/previous-scm-change themselves use to decide "is this a new-file scroll view?" (plain TabInputText +
-    // file: scheme + isFullyAddedFile git-status check + a visible editor). No divergent second predicate: if
-    // that gate says "new file", the scm-change command WILL do the 5-line scroll, so routing there is correct.
+    // "In review" = the active tab is a change-review view that next/previous-scm-change know how to drive.
+    // GENERAL PRINCIPLE (Ethan 2026-07-04): the mouse buttons must be THIN WRAPPERS over the SAME nav
+    // functions the keyboard uses, so EVERY edge case the keyboard's next/previous-scm-change handle works via
+    // the mouse automatically — not by patching one file-state at a time. So this gate must recognise ALL the
+    // review views the keyboard handles, and route them to next/previous-scm-change. There are THREE shapes VS
+    // Code opens a reviewed git change in — we recognise each by REUSING the extension's existing predicates
+    // (no divergent per-case checks), and everything else falls through to plain browser back/forward:
+    //
+    //   1. MODIFIED / RENAMED file  -> a side-by-side text DIFF tab (TabInputTextDiff). This is what
+    //      git.openChange opens when an original side exists. Routing here gives hunk navigation, cross-file
+    //      rollover, AND the v1.2.6 tall-hunk staging (all live inside next/previous-scm-change) for free.
+    //
+    //   2. NEW / UNTRACKED ("U") / staged-new file  -> a PLAIN file: editor (TabInputText). A whole-new file
+    //      has NO original side, so VS Code opens an ordinary editor, not a diff. Detected by REUSING
+    //      newFileScrollEditor() — the SAME single-source-of-truth gate next/previous-scm-change use for the
+    //      5-line new-file scroll (plain TabInputText + file: scheme + isFullyAddedFile git-status + visible
+    //      editor). CRUCIAL: because that gate requires isFullyAddedFile, a MODIFIED file that the user opened
+    //      as a plain editor to EDIT (not review — its review view is the DIFF, case 1) is NOT matched here, so
+    //      we never hijack browser back/forward while they're just editing a changed file.
+    //
+    //   3. DELETED file  -> a PLAIN editor of the HEAD blob under a git: uri (TabInputText, git: scheme). It has
+    //      no on-disk file: side, so newFileScrollEditor() (file:-only) correctly skips it. On the keyboard,
+    //      next-scm-change on a deleted file falls straight through to the next changed file (openNextFile); the
+    //      mouse must do the same. Detected by resolving the git: uri back to its on-disk path (toFilePathUri)
+    //      and confirming it is an ACTUAL current change (isChangeFileUri) — the SAME shared predicate the tab
+    //      badge + stageCurrentFile use — so a random HEAD/history view of a clean file is NOT treated as review.
+    //
+    // Before v1.2.8 the gate was case 1 ONLY (`instanceof TabInputTextDiff`), so on every non-diff review view
+    // (new/untracked/deleted files) the mouse fell through to browser history and did nothing useful — while the
+    // keyboard alt+,/alt+. worked, because they call next/previous-scm-change directly. This is that fix, made
+    // general so future review shapes are covered by the shared predicates rather than another one-off patch.
     let inReview = false;
     try {
         // FOCUS-INDEPENDENT detection: read the active tab of the active group, not the focused editor. This is
         // what makes the mouse buttons "just work" even when focus is in the SCM panel during review.
         const tab = vscode.window.tabGroups.activeTabGroup?.activeTab;
-        // instanceof is safe even if `input` is undefined or some other type.
-        const isDiff = tab?.input instanceof vscode.TabInputTextDiff;
-        // newFileScrollEditor() returns a TextEditor only when the active tab is a genuine new/untracked-file
-        // review view (else undefined). Its own body is fully guarded; call it only when NOT already a diff.
+        const input = tab?.input;
+        // Case 1 — modified/renamed diff. instanceof is safe even if `input` is undefined or some other type.
+        const isDiff = input instanceof vscode.TabInputTextDiff;
+        // Case 2 — new/untracked/staged-new plain file: editor. newFileScrollEditor() returns a TextEditor only
+        // for a genuine whole-new-file review view (else undefined); its own body is fully guarded.
         const isNewFileView = !isDiff && newFileScrollEditor() !== undefined;
-        inReview = isDiff || isNewFileView;
+        // Case 3 — deleted file's HEAD-blob plain editor (git: scheme). Only a plain TabInputText tab can be one;
+        // resolve to the on-disk path and require it to be an actual change so we don't match arbitrary git:
+        // history views. (file:-scheme plain editors are handled by case 2, which correctly excludes modified
+        // files being edited — so we deliberately restrict case 3 to the git: scheme.)
+        let isDeletedFileView = false;
+        if (!isDiff && !isNewFileView && input instanceof vscode.TabInputText && input.uri.scheme === "git") {
+            const resolved = toFilePathUri(input.uri); // git: uri -> on-disk file: path (path lives in the query)
+            isDeletedFileView = resolved ? isChangeFileUri(resolved) : false;
+        }
+        inReview = isDiff || isNewFileView || isDeletedFileView;
     } catch {
         // Defensive fallback: on a very old host where TabInputTextDiff doesn't exist (or newFileScrollEditor
         // throws) the lines above could throw. Fall back to the legacy heuristic — treat it as review only if
