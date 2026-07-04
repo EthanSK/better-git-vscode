@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.8] (ethansk fork) — mouse Forward/Back buttons now navigate **new/untracked files** too
+
+- **Fixed: the smart mouse Forward/Back buttons (`smart-forward` / `smart-back`) did nothing on newly-added / untracked ("U") files** — they only navigated inside modified-file diffs. On a brand-new file the buttons fell through to plain browser back/forward history instead of engaging change navigation, so the new-file 5-line scroll never fired and you couldn't advance to the next change with the mouse. The keyboard `Alt+,` / `Alt+.` worked fine on new files, so mouse and keyboard behaved inconsistently.
+- **Root cause:** the smart commands decided "am I in a review view?" by checking only for a side-by-side diff tab (`TabInputTextDiff`). A whole-new file has no original side, so VS Code opens it as an **ordinary plain editor** (`TabInputText`), not a diff — that check was false for it, and the buttons routed to browser navigation.
+- **Fix:** the smart commands now recognise **both** review views — a modified-file diff **and** a new/untracked file's plain editor — and route both to `next-scm-change` / `previous-scm-change`. The new-file view is detected by reusing the **exact same** internal gate (`newFileScrollEditor`) that the `next/previous-scm-change` commands and the new-file scroll feature already use, so there's one source of truth and no divergent "is this a new file?" logic.
+- **Direction semantics unchanged.** Forward/Back go exactly the same way they did before — only the *engagement* on new files is fixed. Genuine non-review editors (a normal source file you're just editing) still get plain browser back/forward history navigation, untouched.
+
 ## [1.2.7] (ethansk fork) — the editor-title `+` button now stages **and advances**
 
 - **The `+` button in the editor title bar now stages the current file AND jumps to the next change** — in whatever direction you last navigated. Before, clicking `+` only staged the file and left you sitting on it, so you had to reach for the keyboard to move on. Now the whole review-and-stage flow works with the **mouse alone**: click `+` to stage-and-advance, again and again, sweeping through the changeset without touching the keyboard.

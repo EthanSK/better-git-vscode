@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-04T20:31:06Z
+**Trigger:** Ethan 2026-07-04: mouse back/forward don't navigate on U/new files but keyboard does; 'they call the exact same function'.
+**Symptom:** smart mouse Forward/Back buttons (F13->smart-back, F17->smart-forward) did NOT navigate on untracked/new ('U') files — no 5-line new-file scroll, no advance; worked on modified files. Keyboard alt+,/alt+. DID work on new files (mouse/keyboard inconsistency).
+**Root cause:** smartNavigate() decided 'in review?' by checking ONLY tab.input instanceof vscode.TabInputTextDiff. A whole-new/untracked file has no original side so VS Code opens it as a PLAIN TabInputText editor, not a diff -> check was false -> buttons fell through to workbench.action.navigateForward/Back (browser history) instead of next/previous-scm-change. next/previous-scm-change (bound to the keyboard keys) handle new files via newFileScrollEditor(), which the mouse path never reached.
+**Fix:** src/extension.ts smartNavigate(): renamed inDiff -> inReview; inReview = isDiff || (!isDiff && newFileScrollEditor() !== undefined). Reuses the EXISTING single-source-of-truth new-file gate newFileScrollEditor() (plain TabInputText + file: scheme + isFullyAddedFile git-status + visible editor) — the SAME predicate next/previous-scm-change use for the 5-line scroll, so no divergent 'is new file' check. Both review views (diff + new-file) route to previous/next-scm-change with the SAME intentionally-flipped mouse direction (unchanged). Kept try/catch + activeTextEditor fallback; genuine non-review editors still get browser nav.
+**Commit:** pending
+**Guard:** newFileScrollEditor() is the shared gate (also used at ~L1765/1821 by next/previous-scm-change) so mouse + keyboard can't diverge on what counts as a new file. isDiff short-circuits so the modified-file diff path is byte-unchanged. Codex xhigh review: no correctness issues. lint+tsc+package green. Thorough comments explaining new files are plain editors not diffs.
+---
+
+---
 **Date:** 2026-07-04T20:14:11Z
 **Trigger:** Ethan 2026-07-04: 'it should call the exact same function ... as if we held shift and alt and greater-than or less-than ... based on whatever the last jump was, if I went next or previous.'
 **Symptom:** Editor-title '+' button only STAGED the current file — Ethan then had to grab the keyboard to jump to the next change, breaking the mouse-only review flow.

@@ -2056,44 +2056,65 @@ const getActiveFileUri = async (): Promise<vscode.Uri | null> => {
 };
 
 // Shared implementation for the smart mouse buttons. See the big comment at the smart-forward /
-// smart-back command registrations for the full rationale on why we detect the diff via the active
-// tab's input type (TabInputTextDiff) rather than the `isInDiffEditor` keybinding context.
+// smart-back command registrations for the full rationale on why we detect the review view via the active
+// tab's input type rather than the `isInDiffEditor` keybinding context.
 //
-// direction === "forward":  diff -> PREVIOUS SCM change (intentionally flipped) | otherwise -> navigateForward
-// direction === "back":     diff -> NEXT SCM change (intentionally flipped)     | otherwise -> navigateBack
+// A review view is EITHER a side-by-side diff (modified file) OR a new/untracked file's plain editor
+// (detected by reusing newFileScrollEditor()); both route to the scm-change commands. See the body.
+//
+// direction === "forward":  review -> PREVIOUS SCM change (intentionally flipped) | otherwise -> navigateForward
+// direction === "back":     review -> NEXT SCM change (intentionally flipped)     | otherwise -> navigateBack
 async function smartNavigate(direction: "forward" | "back") {
-    let inDiff = false;
+    // "In review" = the active tab is a change-review view that the scm-change commands know how to drive.
+    // There are TWO such views and BOTH must route to next/previous-scm-change:
+    //   1. A side-by-side text DIFF tab (TabInputTextDiff) — a MODIFIED file being reviewed.
+    //   2. A brand-new / UNTRACKED ("U") file's PLAIN editor (TabInputText). A whole-new file has no original
+    //      side, so VS Code opens it as an ordinary editor, NOT a diff — this is the exact view the v1.2.x
+    //      new-file 5-line-scroll feature pages through. Because it's a plain editor, the old
+    //      `instanceof TabInputTextDiff` check was false for it, so the mouse buttons fell through to plain
+    //      browser navigation and never engaged change-nav (no 5-line scroll, no advance to the next file).
+    //      That was THE BUG: keyboard alt+,/alt+. (bound straight to next/previous-scm-change) worked on new
+    //      files, but the mouse F13/F17 smart buttons silently did nothing / did browser-history nav instead.
+    // We detect view #2 by REUSING newFileScrollEditor() — the SAME single-source-of-truth structural gate that
+    // next/previous-scm-change themselves use to decide "is this a new-file scroll view?" (plain TabInputText +
+    // file: scheme + isFullyAddedFile git-status check + a visible editor). No divergent second predicate: if
+    // that gate says "new file", the scm-change command WILL do the 5-line scroll, so routing there is correct.
+    let inReview = false;
     try {
-        // FOCUS-INDEPENDENT diff detection: read the active tab of the active group, not the focused editor.
-        // This is what makes the mouse buttons "just work" even when focus is in the SCM panel during review.
+        // FOCUS-INDEPENDENT detection: read the active tab of the active group, not the focused editor. This is
+        // what makes the mouse buttons "just work" even when focus is in the SCM panel during review.
         const tab = vscode.window.tabGroups.activeTabGroup?.activeTab;
-        // TabInputTextDiff is the input type VS Code uses for any side-by-side text diff tab (which is exactly
-        // what `vscode.diff` opens). instanceof is safe even if `input` is undefined or some other type.
-        inDiff = tab?.input instanceof vscode.TabInputTextDiff;
+        // instanceof is safe even if `input` is undefined or some other type.
+        const isDiff = tab?.input instanceof vscode.TabInputTextDiff;
+        // newFileScrollEditor() returns a TextEditor only when the active tab is a genuine new/untracked-file
+        // review view (else undefined). Its own body is fully guarded; call it only when NOT already a diff.
+        const isNewFileView = !isDiff && newFileScrollEditor() !== undefined;
+        inReview = isDiff || isNewFileView;
     } catch {
-        // Defensive fallback: on a very old host where TabInputTextDiff doesn't exist the line above could
-        // throw. Fall back to the legacy heuristic — treat it as a diff only if there's no plain active text
-        // editor (a side-by-side diff has no single activeTextEditor in the classic sense). Worst case we
-        // mis-route to plain navigation, which is the harmless default. TabInputTextDiff has been stable for
-        // years so this branch should never actually run.
-        inDiff = !vscode.window.activeTextEditor;
+        // Defensive fallback: on a very old host where TabInputTextDiff doesn't exist (or newFileScrollEditor
+        // throws) the lines above could throw. Fall back to the legacy heuristic — treat it as review only if
+        // there's no plain active text editor (a side-by-side diff has no single activeTextEditor in the classic
+        // sense). Worst case we mis-route to plain navigation, which is the harmless default. Never a dead click.
+        inReview = !vscode.window.activeTextEditor;
     }
 
-    // NOTE: the DIFF branch is INTENTIONALLY flipped relative to the navigation branch (Ethan's preference,
+    // NOTE: the REVIEW branch is INTENTIONALLY flipped relative to the navigation branch (Ethan's preference,
     // 2026-06-20: "the diff one should be flipped, I know it's weird"). So the FORWARD button goes to the
-    // PREVIOUS change while reviewing a diff, and the BACK button goes to the NEXT change. Outside a diff the
-    // buttons keep their normal meaning (forward = navigateForward, back = navigateBack). Do not "correct" this.
+    // PREVIOUS change while reviewing, and the BACK button goes to the NEXT change. This flip now covers BOTH
+    // review views (diff + new-file) identically — Ethan confirmed 2026-07-04 the mouse direction "feels
+    // perfect", so we only fixed that new files ENGAGE change-nav; the direction semantics are unchanged.
+    // Outside a review view the buttons keep their normal meaning (forward = navigateForward, back = navigateBack).
     // The flip is a MOUSE-BUTTON preference only. It must never leak onto keyboard keys again: that's the
     // v1.2.5 QWERTY bug — these commands held the default alt+./alt+, (physical >/<) keyboard keys, so QWERTY
     // users got reversed >/< navigation while Dvorak (whose >/< keys type v/w -> next/previous-scm-change)
     // stayed correct. Keyboard >/< now binds the canonical scm-change commands directly in package.json.
     if (direction === "forward") {
         await vscode.commands.executeCommand(
-            inDiff ? "better-git-vscode.previous-scm-change" : "workbench.action.navigateForward"
+            inReview ? "better-git-vscode.previous-scm-change" : "workbench.action.navigateForward"
         );
     } else {
         await vscode.commands.executeCommand(
-            inDiff ? "better-git-vscode.next-scm-change" : "workbench.action.navigateBack"
+            inReview ? "better-git-vscode.next-scm-change" : "workbench.action.navigateBack"
         );
     }
 }
