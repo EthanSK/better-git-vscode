@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review \u2014 jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -37,59 +37,73 @@
     "commands": [
       {
         "command": "better-git-vscode.next-scm-change",
+        "category": "Better Git",
         "title": "Next git change"
       },
       {
         "command": "better-git-vscode.previous-scm-change",
+        "category": "Better Git",
         "title": "Previous git change"
       },
       {
         "command": "better-git-vscode.next-changed-file",
+        "category": "Better Git",
         "title": "Next changed file"
       },
       {
         "command": "better-git-vscode.previous-changed-file",
+        "category": "Better Git",
         "title": "Previous changed file"
       },
       {
         "command": "better-git-vscode.revert-and-save",
+        "category": "Better Git",
         "title": "Revert selected changes and save"
       },
       {
         "command": "better-git-vscode.stage-and-next-changed-file",
+        "category": "Better Git",
         "title": "Stage current file and advance to next unstaged change"
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
+        "category": "Better Git",
         "title": "Stage current file and advance to previous unstaged change"
       },
       {
         "command": "better-git-vscode.stage-current-file",
+        "category": "Better Git",
         "title": "Stage current file",
         "icon": "$(add)"
       },
       {
         "command": "better-git-vscode.smart-forward",
+        "category": "Better Git",
         "title": "Smart forward (next change in a diff, else navigate forward)"
       },
       {
         "command": "better-git-vscode.smart-back",
+        "category": "Better Git",
         "title": "Smart back (previous change in a diff, else navigate back)"
       },
       {
         "command": "better-git-vscode.reveal-current-file-in-explorer",
+        "category": "Better Git",
         "title": "Open & reveal current file in Explorer (works from staged diffs)"
       },
       {
         "command": "better-git-vscode.open-change-at-position",
+        "category": "Better Git",
         "title": "Open changes (diff) at current cursor/scroll position"
       },
       {
         "command": "better-git-vscode.reveal-last-staged-file",
+        "category": "Better Git",
         "title": "Reopen the diff of the last file staged via Better Git"
       },
       {
         "command": "better-git-vscode.collapse-worktrees",
+        "category": "Better Git",
         "title": "Collapse all worktree / repository sections in Source Control"
       }
     ],

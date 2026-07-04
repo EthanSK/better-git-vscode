@@ -1,5 +1,9 @@
 # Change Log
 
+## [1.2.3] (ethansk fork) — "Better Git" category in the Command Palette
+
+- **All commands now carry the `Better Git` category**, so the Command Palette shows them as "Better Git: Next git change", "Better Git: Collapse all worktree / repository sections in Source Control", etc. Typing "Better Git" groups every command of the extension together instead of them being scattered by title. Titles themselves are unchanged, so muscle memory and existing keybindings are unaffected.
+
 ## [1.2.2] (ethansk fork) — collapse worktree / repository sections on startup
 
 - **New: worktree / repository sections in Source Control now collapse automatically on window open / reload.** When you work with multiple git worktrees or repositories in one window, VS Code's Source Control panel shows each as its own collapsible section and renders them **all expanded** every time the window loads — noisy once you have a few worktrees (VS Code has no reliable way to persist the collapsed state, upstream [microsoft/vscode#322318](https://github.com/microsoft/vscode/issues/322318)). The extension now folds them for you shortly after the window loads.
