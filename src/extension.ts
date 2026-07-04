@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 // LAST-STAGED STATUS BAR (v1.1.0)
 //
 // WHY this exists (Ethan's exact problem): he reviews AI-generated changesets file-by-file from the
-// keyboard. `shift+alt+z` (stage-and-next-changed-file) stages the current file and IMMEDIATELY jumps
+// keyboard. stage-and-next-changed-file (shift+alt+. on QWERTY, shift+alt+v in Dvorak mode) stages the current file and IMMEDIATELY jumps
 // to the next one. He keeps "accidentally staging a file without noticing" — he wasn't looking, or it
 // advanced instantly — and then has no record of what just got staged. This persistent bottom-bar
 // indicator shows the LAST file staged via the extension so he can "go back and remember" what was
@@ -388,7 +388,15 @@ export function activate(context: vscode.ExtensionContext) {
     // SMART MOUSE-BUTTON COMMANDS (smart-forward / smart-back)
     //
     // These are bound to Ethan's mouse Forward/Back buttons (via Karabiner -> F13/F17 -> these
-    // commands). They give ONE pair of keys a dual meaning that depends on what's on screen:
+    // commands). MOUSE-ONLY since v1.2.5: they used to ALSO hold the default QWERTY keyboard keys
+    // alt+. / alt+, (the physical >/< keys), which silently inherited the intentional mouse-direction
+    // flip below (commit 6043d05) — so on QWERTY keyboards ">" went BACKWARD through diff changes and
+    // "<" went FORWARD, while Dvorak keyboards were fine (their physical >/< type v/w, which hit
+    // next/previous-scm-change directly). v1.2.5 gave the QWERTY >/< keys back to the canonical
+    // next/previous-scm-change commands (see _comment_dvorakMode_keybindings in package.json); these
+    // smart commands now have no default QWERTY keyboard binding (alt+./alt+, remain only under
+    // dvorakMode, where those characters live on different physical keys, to keep Ethan's working
+    // Dvorak setup untouched). They give ONE pair of buttons a dual meaning depending on what's on screen:
     //   - When a side-by-side DIFF editor is the active tab  -> next/previous SCM change (review flow)
     //   - Anywhere else                                      -> classic editor back/forward navigation
     //
@@ -873,7 +881,7 @@ interface FileChange {
 // path. IGNORED files (status 8) are dropped. git.openChange opens an untracked file as a diff against an
 // empty original (same as clicking its row), so untracked files navigate like any other entry.
 // BUG FIX: the old code filtered untracked out everywhere (status !== 7), so a brand-new file was never
-// navigated to or advanced to by shift+alt+z — it "wasn't even considered". New files are first-class now.
+// navigated to or advanced to by stage-and-next — it "wasn't even considered". New files are first-class now.
 const getUnstagedUris = (repo: any, isTreeView: boolean): vscode.Uri[] => {
     const working: any[] = repo.state.workingTreeChanges ?? [];
     const untracked: any[] = repo.state.untrackedChanges ?? [];
@@ -1473,7 +1481,7 @@ const goToLastOrPreviousFile = async () => {
     await openPreviousFile();
 };
 
-// FEATURE (shift+alt+z): stage the whole current file, then jump straight to the next UNSTAGED file so
+// FEATURE (stage-and-next-changed-file — shift+alt+. QWERTY / shift+alt+v Dvorak): stage the whole current file, then jump straight to the next UNSTAGED file so
 // you can review-and-stage without reaching for the mouse to click the + each time.
 // Stages the current file and stays put (no navigation) — backs the editor-title "Stage current file" button.
 // Reuses getActiveFileUri (tab-aware, so it works from a diff or a plain editor) and isChangeFileUri as the
@@ -1622,7 +1630,7 @@ const getActiveFileUri = async (): Promise<vscode.Uri | null> => {
     // TAB but leaves keyboard focus on the panel — so activeTextEditor stays undefined or stale (the
     // previously focused editor) and never registers the click. The tab-based lookup reflects the file you
     // actually clicked, keeping stage-and-advance in sync with it. BUG this fixes: click an unstaged file
-    // then press shift+alt+z and it jumped to the FIRST unstaged file instead of the one after the click —
+    // then press stage-and-next and it jumped to the FIRST unstaged file instead of the one after the click —
     // because getActiveFileUri read activeTextEditor, so the clicked file wasn't found in the list (-1 ->
     // workingTreeChanges[0] top fallback). currentReviewFileUri already resolves a staged git: side to its
     // on-disk file: path, so this also handles a clicked staged row.
@@ -1680,6 +1688,10 @@ async function smartNavigate(direction: "forward" | "back") {
     // 2026-06-20: "the diff one should be flipped, I know it's weird"). So the FORWARD button goes to the
     // PREVIOUS change while reviewing a diff, and the BACK button goes to the NEXT change. Outside a diff the
     // buttons keep their normal meaning (forward = navigateForward, back = navigateBack). Do not "correct" this.
+    // The flip is a MOUSE-BUTTON preference only. It must never leak onto keyboard keys again: that's the
+    // v1.2.5 QWERTY bug — these commands held the default alt+./alt+, (physical >/<) keyboard keys, so QWERTY
+    // users got reversed >/< navigation while Dvorak (whose >/< keys type v/w -> next/previous-scm-change)
+    // stayed correct. Keyboard >/< now binds the canonical scm-change commands directly in package.json.
     if (direction === "forward") {
         await vscode.commands.executeCommand(
             inDiff ? "better-git-vscode.previous-scm-change" : "workbench.action.navigateForward"

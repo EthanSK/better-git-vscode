@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-04T16:24:01Z
+**Trigger:** Ethan voice/message 2026-07: '> and < next and prev are fukt on qwerty ... did u just patch the dvorak one?? ... the extra dvorak mode should be a thin wrapper on top of actual working behaviour, not redefining the functionality.'
+**Symptom:** better-git-vscode: next/previous SCM change (the headline > and < keys, alt+. / alt+,) were BROKEN on QWERTY — > navigated BACKWARD through diff changes, < navigated FORWARD, and outside a diff they did editor history navigation instead of change navigation. Dvorak layout was PERFECT (source of truth).
+**Root cause:** The QWERTY physical >/< keys (alt+./alt+,) were bound to smart-forward/smart-back — the MOUSE-button commands (Karabiner F13/F17) whose in-diff direction was INTENTIONALLY REVERSED for thumb-buttons in commit 6043d05 (v0.8.3, 'the diff one should be flipped, I know it's weird'). The keyboard keys silently inherited that mouse flip. Dvorak was immune because its physical >/< keys type v/w, bound alt+v/alt+w straight to the canonical next-scm-change/previous-scm-change commands. So the working Dvorak path was never touched by the mouse flip — it was the correct reference all along.
+**Fix:** package.json contributes.keybindings: bound QWERTY alt+. -> next-scm-change and alt+, -> previous-scm-change (gated !config.better-git-vscode.dvorakMode), i.e. the SAME canonical commands Dvorak's alt+v/alt+w run — one behaviour, defined once, Dvorak is now purely a character-remap of the same physical keys (thin wrapper, not a fork). Dropped legacy QWERTY alt+z/alt+a defaults (alt+z shadowed VS Code built-in Toggle Word Wrap). smart-forward/smart-back are mouse-only now: NO default QWERTY keyboard binding; they keep alt+./alt+, ONLY under dvorakMode (those chars sit on different physical keys there) so the Dvorak setup is byte-identical to v1.2.4 (verified by simulating both when-clause states). Dvorak bindings/behaviour completely unchanged.
+**Commit:** pending-PR
+**Guard:** Simulate live keybindings per dvorakMode state (python/node over contributes.keybindings) — BOTH modes must have ZERO key collisions AND dvorakMode=true must be byte-identical to the prior release. The reversed-direction flip in smartNavigate() is MOUSE-ONLY and must never hold a keyboard default again (comments at both the smart command registration and smartNavigate() in extension.ts, plus _comment_dvorakMode_keybindings in package.json, document this). CHANGELOG 1.2.5 records the root cause.
+---
+
+---
 **Date:** 2026-07-04T12:31:45Z
 **Trigger:** Ethan request 2026-07: keep main worktree expanded, collapse others
 **Symptom:** Want to keep the primary/main SCM repository expanded while collapsing only the other git worktrees in VS Code's Source Control view

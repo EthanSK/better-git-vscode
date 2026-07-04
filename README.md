@@ -56,10 +56,8 @@ All bindings ship as defaults and are fully overridable (see below).
 
 | Action | macOS | Windows / Linux |
 | --- | --- | --- |
-| **Next change** (smart forward) | `Alt+.` | `Alt+.` |
-| **Previous change** (smart back) | `Alt+,` | `Alt+,` |
-| Next git change (within file) | `Alt+Z` | `Alt+Z` |
-| Previous git change (within file) | `Alt+A` | `Alt+A` |
+| **Next change** | `Alt+.` | `Alt+.` |
+| **Previous change** | `Alt+,` | `Alt+,` |
 | Next changed file | `Cmd+Alt+.` | `Ctrl+Alt+.` |
 | Previous changed file | `Cmd+Alt+,` | `Ctrl+Alt+,` |
 | Stage current file + next change | `Shift+Alt+.` | `Shift+Alt+.` |
@@ -68,9 +66,18 @@ All bindings ship as defaults and are fully overridable (see below).
 | Reveal current file in Explorer | `Alt+R` | `Alt+R` |
 | Open changes at cursor/scroll + Source Control | `Ctrl+Shift+G` | `Ctrl+Shift+G` |
 
-> **Smart forward / back** means: if you're in a diff, move to the next/previous change
-> within it; otherwise navigate forward/back through changed files. It's the one binding
-> you need for most reviews.
+> **Next / previous change** walks hunk-to-hunk through the current diff, pages through
+> brand-new files a few lines at a time, and rolls over to the next/previous changed file
+> at either end. It's the one pair of keys you need for most reviews. (Before v1.2.5 these
+> keys pointed at the *smart forward/back* mouse commands, whose in-diff direction is
+> deliberately reversed for mouse thumb-buttons — which made keyboard `>` / `<` navigate
+> backwards on QWERTY. Fixed: they now run the real change-navigation commands.)
+
+> **Smart forward / back** (`better-git-vscode.smart-forward` / `.smart-back`) are
+> **mouse-button commands** with no default keyboard key: in a diff they go to the
+> previous/next change (direction intentionally reversed for thumb-buttons), elsewhere
+> they do normal editor back/forward. Bind them to your mouse's Forward/Back buttons
+> (e.g. via Karabiner → F13/F17 → `keybindings.json`).
 
 > **`Ctrl+Shift+G`** is remapped from VS Code's stock "show Source Control" chord (which only
 > opened the panel) to *also* open the current file's changes (diff) at the exact cursor and
@@ -82,26 +89,30 @@ needed).
 
 ## Dvorak mode (one toggle)
 
-The in-file change-nav defaults (`Alt+Z` / `Alt+A`) and stage-and-advance defaults
-(`Shift+Alt+.` / `Shift+Alt+,`) are positioned for **QWERTY**. On a **Dvorak** layout
-those keys land under different fingers and feel awkward.
+The change-nav defaults live on the **physical `>` and `<` keys**. On QWERTY those keys
+type `.` and `,`; on **Dvorak** the *same physical keys* type `v` and `w`, so the QWERTY
+character bindings would land under the wrong fingers.
 
 Flip the single setting **`better-git-vscode.dvorakMode`** (Settings → Better Git VS Code,
-or add `"better-git-vscode.dvorakMode": true` to your `settings.json`) and the navigation
-keys swap to Dvorak-comfortable physical positions:
+or add `"better-git-vscode.dvorakMode": true` to your `settings.json`) and the bindings
+swap to the Dvorak characters for the *same physical keys* — same commands, same
+behaviour, same finger positions, different keycap labels. Dvorak mode is a thin key
+remap over the one canonical navigation behaviour; it never changes what the commands do:
 
-| Action | QWERTY default | Dvorak mode |
+| Action (physical key) | QWERTY default | Dvorak mode |
 | --- | --- | --- |
-| Next git change (within file) | `Alt+Z` | `Alt+V` |
-| Previous git change (within file) | `Alt+A` | `Alt+W` |
-| Stage current file + next change | `Shift+Alt+.` | `Shift+Alt+V` |
-| Stage current file + previous change | `Shift+Alt+,` | `Shift+Alt+W` |
+| Next change (`>` key) | `Alt+.` | `Alt+V` |
+| Previous change (`<` key) | `Alt+,` | `Alt+W` |
+| Stage current file + next change (`Shift+>`) | `Shift+Alt+.` | `Shift+Alt+V` |
+| Stage current file + previous change (`Shift+<`) | `Shift+Alt+,` | `Shift+Alt+W` |
 
 When the toggle is on, the QWERTY defaults for those four commands are automatically
-disabled and the Dvorak-position keys take over (it uses VS Code's native
-`config.better-git-vscode.dvorakMode` when-clauses — no extension restart trick). Smart
-forward/back (`Alt+.` / `Alt+,`), changed-file nav (`Cmd/Ctrl+Alt+.` / `,`), revert
-(`Alt+Q`) and reveal (`Alt+R`) are **left on their defaults** in both modes.
+disabled and the Dvorak-character keys take over (it uses VS Code's native
+`config.better-git-vscode.dvorakMode` when-clauses — no extension restart trick).
+Changed-file nav (`Cmd/Ctrl+Alt+.` / `,`), revert (`Alt+Q`) and reveal (`Alt+R`) are
+**left on their defaults** in both modes. In Dvorak mode the freed-up `Alt+.` / `Alt+,`
+characters additionally map to the smart forward/back mouse commands (they sit on
+different physical keys there, so nothing collides).
 
 > Your own `keybindings.json` entries always win, so you can still hand-tune any of these
 > on top of the toggle (see *Overriding any keybinding* below).
@@ -114,7 +125,7 @@ open *Preferences: Open Keyboard Shortcuts*, search for the command (they're all
 own key. To disable a default instead, add a rule prefixed with `-` in `keybindings.json`:
 
 ```jsonc
-{ "key": "alt+.", "command": "-better-git-vscode.smart-forward" }
+{ "key": "alt+.", "command": "-better-git-vscode.next-scm-change" }
 ```
 
 > Tip: many people prefer to map **Open & reveal current file in Explorer**
