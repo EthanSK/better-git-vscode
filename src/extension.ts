@@ -487,12 +487,15 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Manual trigger for collapsing the worktree/repository section headers (see the big comment block
     // above `activate`). Ethan can bind this to a key or run it from the palette any time the worktree
-    // sections have crept back open. Like the startup path it keeps the PRIMARY/main repo expanded (v1.2.4)
-    // and folds only the other worktrees — that matches his intent (always leave the one he's working in
-    // open). Unlike the auto-on-startup path this has NO ≥2-repo gate — if you ask for it explicitly, we
-    // act on whatever's there.
+    // sections have crept back open. v1.2.13: this is now a PLAIN collapse-all — it folds EVERY repo section
+    // (including the primary/main one) and does NOT re-expand the primary afterward. Ethan explicitly asked
+    // for this ("just do the normal collapse"): the old keep-primary-expanded behaviour re-opened the
+    // primary's first change in a PREVIEW TAB to re-reveal it, and that tab popping open was annoying. A
+    // plain collapse has none of that. (The auto-on-startup path still keeps the primary expanded for anyone
+    // who turns collapseWorktreesOnStartup on — only this explicit command is a plain collapse.) No ≥2-repo
+    // gate — if you ask for it explicitly, we act on whatever's there.
     let disposable14 = vscode.commands.registerCommand("better-git-vscode.collapse-worktrees", async () => {
-        await collapseWorktreesKeepingPrimaryExpanded();
+        await collapseScmRepositories();
     });
 
     // ──────────────────────────────────────────────────────────────────────────────────────────

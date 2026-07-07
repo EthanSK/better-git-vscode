@@ -1,5 +1,8 @@
 # Change Log
 
+## [1.2.13] (ethansk fork) — collapse command does a plain collapse-all (no re-open primary)
+
+- **The `Collapse all worktree / repository sections` command now does a PLAIN collapse-all** — it folds every repo section including the primary/main one, and no longer re-expands the primary afterward. The old behaviour re-opened the primary's first change in a preview tab to keep it expanded, which was an annoying pop-up; now it just collapses everything. (The auto-on-startup path is unchanged for anyone who enables `collapseWorktreesOnStartup`.)
 ## [1.2.12] (ethansk fork) — fix tall-hunk UP-stepping looping back to the bottom + collapse-worktrees off by default
 
 - **Fixed: stepping UP through a tall hunk (`Alt+,`) looped back to the BOTTOM of the same hunk at the top instead of going to the previous change.** This is the exact mirror of the v1.2.10 down-direction fix, which was only ever applied to the bottom edge. Going up, the code decided "top reached → advance to previous change" purely from the viewport geometry (`remainingAbove <= 0`), with no caret-based signal. When a line or two of viewport render slack left that check just shy of zero, the press re-entered the step path (and could even scroll above the hunk); when the built-in advance did fire it could re-land inside the same hunk and the on-landing reposition re-showed that hunk's bottom — an infinite within-hunk loop that never reached the previous change.
