@@ -336,16 +336,18 @@ const getOpenRepositoryCount = (): number => {
     }
 };
 
-// The auto-on-startup routine. Gated by the `collapseWorktreesOnStartup` setting (default true) and by
-// there being ≥2 repositories (a single repo isn't the "lots of expanded worktrees" annoyance, and we
-// don't want to steal focus / hide the only repo's changes for it). Because repos populate async, we
-// POLL for them, then collapse. We ALSO briefly watch `onDidOpenRepository` so worktrees that finish
-// opening AFTER our first collapse still get folded — but only within a short startup window, so opening
-// a repo later in the session (deliberately) never yanks its section closed under the user.
+// The auto-on-startup routine. Gated by the `collapseWorktreesOnStartup` setting (default FALSE — opt-in;
+// changed from true in v1.2.12) and by there being ≥2 repositories (a single repo isn't the "lots of expanded
+// worktrees" annoyance, and we don't want to steal focus / hide the only repo's changes for it). Because repos
+// populate async, we POLL for them, then collapse. We ALSO briefly watch `onDidOpenRepository` so worktrees
+// that finish opening AFTER our first collapse still get folded — but only within a short startup window, so
+// opening a repo later in the session (deliberately) never yanks its section closed under the user.
 const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void => {
+    // Fallback matches the package.json default (false): off by default, opt-in only. The manual
+    // 'collapse-worktrees' command still works regardless of this setting.
     const enabled = vscode.workspace
         .getConfiguration("better-git-vscode")
-        .get<boolean>("collapseWorktreesOnStartup", true);
+        .get<boolean>("collapseWorktreesOnStartup", false);
     if (!enabled) {
         return; // user opted out — never auto-collapse, but the manual command still works
     }
@@ -2032,19 +2034,58 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
         debugLog("tall-hunk", `${base} | remainingBelow=${remainingBelow} maxTop=L${maxTop + 1} | DECISION: step DOWN, newTop=L${newTop + 1}`);
         return true;
     } else {
-        // UP direction unchanged from v1.2.9 (no EOF-clamp problem going up — hunk.start is near the top of the
-        // document, always reachable by AtTop). BUG 7/8 fix: advance only when the hunk top is fully on screen.
+        // ── UP direction — the EXACT MIRROR of the down branch above (BUG 15 FIX, v1.2.12) ──
+        // Symmetry contract (must not drift again): down guards the BOTTOM edge with a caret signal
+        // (caret >= hunk.end) + a final step that reveals hunk.end at the BOTTOM; up guards the TOP edge with
+        // the mirrored caret signal (caret <= hunk.start) + a final step that reveals hunk.start at the TOP.
+        // Same three-stage shape in both branches: (1) caret-at-far-edge -> advance; (2) far edge already fully
+        // on screen -> advance; (3) final step reveals the far edge and parks the caret there; else normal step.
+        //
+        // BUG 15 (v1.2.11, Ethan report — "stepping UP a tall hunk, at the TOP it loops back to the BOTTOM
+        // instead of going to the previous change"): the OLD up branch relied SOLELY on the viewport-derived
+        // `remainingAbove <= 0` to decide "top reached -> advance", with NO caret-derived signal — the exact
+        // asymmetry the v1.2.10 down fix removed for the bottom edge. When render slack / the built-in nav left
+        // `top` a hair off hunk.start, `remainingAbove` never cleanly hit <= 0, so the press re-entered the step
+        // path (its `newTop = top - step` fallback could even scroll ABOVE the hunk), and when the built-in
+        // advance DID fire it could re-land inside the SAME merged hunk — then revealHunkOnLanding re-showed the
+        // hunk's BOTTOM. Net effect: an infinite within-hunk loop that never reached the previous change.
+        // Fix: mirror the bottom edge exactly.
+        //   (1) Caret already parked AT (or above) the hunk's first line -> the top was shown on a prior press
+        //       (the final step pins the caret to hunk.start). Advance now — a definitive "reached the top"
+        //       signal that can't be fooled by a line or two of viewport render slack (mirror of caret>=hunk.end).
+        //   (2) The FINAL up-step reveals hunk.start at the TOP (AtTop of a line near the TOP of the document is
+        //       ALWAYS reachable — never clamps, unlike AtTop near EOF going down) and pins the caret to
+        //       hunk.start so signal (1) fires on the next press. Normal steps scroll up ~one screenful.
+        // Signal (1): caret already parked at/before the hunk start from a prior final step -> definitively advance.
+        if (caret <= hunk.start) {
+            debugLog("tall-hunk", `${base} | DECISION: caret at hunk start (top already shown) -> advance to previous change/file`);
+            return false;
+        }
         const remainingAbove = top - hunk.start; // lines of the hunk still above the viewport
         if (remainingAbove <= 0) {
             debugLog("tall-hunk", `${base} | remainingAbove=${remainingAbove} | DECISION: hunk top on screen -> advance to previous change/file`);
             return false; // top of the hunk is fully on screen -> advance to previous hunk
         }
-        let newTop = Math.max(top - step, hunk.start);
+        // The top position where the hunk's FIRST line sits at the top of the viewport. Mirror of `maxTop`
+        // (which put the LAST line at the viewport bottom); here the far edge going up is simply hunk.start.
+        const minTop = hunk.start;
+        // FINAL STEP: a normal screenful-minus-overlap step would reach or pass minTop, i.e. this press should
+        // land on the hunk's head. Reveal the START at the top (AtTop near doc-top never clamps) and park caret.
+        if (top - step <= minTop) {
+            revealTopAndPinCursor(ctx.editor, hunk.start); // shows [hunk.start..]; caret parked at hunk.start
+            debugLog(
+                "tall-hunk",
+                `${base} | remainingAbove=${remainingAbove} minTop=L${minTop + 1} | DECISION: FINAL step -> reveal hunk start L${hunk.start + 1} at top, caret parked at start (next press advances)`,
+            );
+            return true;
+        }
+        // NORMAL step: scroll up ~one screenful (minus overlap), never past minTop. Mirror of the down clamp.
+        let newTop = Math.max(top - step, minTop);
         if (newTop >= top) {
-            newTop = top - step; // guarantee backward progress
+            newTop = top - step; // guarantee upward progress even in odd geometry
         }
         revealTopAndPinCursor(ctx.editor, newTop);
-        debugLog("tall-hunk", `${base} | remainingAbove=${remainingAbove} | DECISION: step UP, newTop=L${newTop + 1}`);
+        debugLog("tall-hunk", `${base} | remainingAbove=${remainingAbove} minTop=L${minTop + 1} | DECISION: step UP, newTop=L${newTop + 1}`);
         return true;
     }
 };
@@ -2054,7 +2095,12 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
 // start, so the NEXT press steps down); going UP we land showing its BOTTOM portion (so the next press
 // steps UP toward the top). Short hunks are left exactly where the built-in put them (don't disturb today's
 // feel). Best-effort: no context / no matching hunk -> leave the built-in's own reveal untouched.
-const revealHunkOnLanding = (ctx: HunkStageContext, caretLine: number, direction: "down" | "up"): void => {
+const revealHunkOnLanding = (
+    ctx: HunkStageContext,
+    caretLine: number,
+    direction: "down" | "up",
+    avoidHunk?: ModifiedHunk, // the hunk we were stepping in BEFORE the built-in advance (loop guard)
+): void => {
     const vp = readViewport(ctx.editor);
     if (!vp) {
         return;
@@ -2062,6 +2108,18 @@ const revealHunkOnLanding = (ctx: HunkStageContext, caretLine: number, direction
     const { visLines } = vp;
     const hunk = hunkContainingLine(ctx.hunks, caretLine);
     if (!hunk) {
+        return;
+    }
+    // ANTI-LOOP GUARD (BUG 15, v1.2.12): if the built-in advance re-landed the caret inside the SAME hunk we
+    // were just stepping through (can happen when our merged "+ run" hunk spans multiple VS Code change stops),
+    // re-revealing it would bounce the viewport back to that hunk's far edge — the exact "loops back to the
+    // bottom" symptom, and its downward twin. Leave the viewport where the built-in put it instead of looping.
+    // Identity compare is valid: both come from the same once-parsed ctx.hunks array.
+    if (avoidHunk && hunk === avoidHunk) {
+        debugLog(
+            "tall-hunk",
+            `landing(${direction}): built-in advance re-landed inside the SAME hunk L${hunk.start + 1}-L${hunk.end + 1} -> loop guard, leaving viewport as-is`,
+        );
         return;
     }
     const { threshold } = hunkStagingConfig(visLines);
@@ -2120,6 +2178,10 @@ const goToNextDiff = async () => {
     // compare meaningless (always "didn't move" -> premature file jumps, or missed jumps).
     const navEditor = visibleEditorForActiveTab() ?? activeEditor;
     const lineBefore = navEditor?.selection.active.line;
+    // Loop guard input: which hunk (if any) the caret sat in BEFORE the advance, so revealHunkOnLanding can
+    // detect a built-in advance that re-landed inside the same hunk and refuse to re-reveal it (see BUG 15).
+    const hunkBefore =
+        stageCtx && lineBefore !== undefined ? hunkContainingLine(stageCtx.hunks, lineBefore) : undefined;
     await vscode.commands.executeCommand("workbench.action.compareEditor.nextChange");
     const lineAfter = navEditor?.selection.active.line; // TextEditor.selection is live — same object, post-command state
 
@@ -2137,7 +2199,7 @@ const goToNextDiff = async () => {
     // screenful shows it from the start and the next press steps down through it (staging). Short hunks are
     // left exactly where the built-in reveal put them. stageCtx.hunks is still valid (same file).
     if (stageCtx && lineAfter !== undefined) {
-        revealHunkOnLanding(stageCtx, lineAfter, "down");
+        revealHunkOnLanding(stageCtx, lineAfter, "down", hunkBefore);
     }
 };
 
@@ -2173,6 +2235,10 @@ const goToPreviousDiff = async () => {
     // Hunk navigation — tab-derived editor for the before/after compare, same rationale as goToNextDiff.
     const navEditor = visibleEditorForActiveTab() ?? activeEditor;
     const lineBefore = navEditor?.selection.active.line;
+    // Loop guard input (mirror of goToNextDiff): the hunk the caret sat in before the built-in advance, so we
+    // never re-reveal the same hunk's bottom after advancing up — the exact BUG 15 "loops back to bottom" fix.
+    const hunkBefore =
+        stageCtx && lineBefore !== undefined ? hunkContainingLine(stageCtx.hunks, lineBefore) : undefined;
     await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
     const lineAfter = navEditor?.selection.active.line; // live selection — post-command state
 
@@ -2186,7 +2252,7 @@ const goToPreviousDiff = async () => {
     // Advanced to a previous hunk within this file. If it's tall, land showing its BOTTOM portion so
     // subsequent 'previous' presses step UP through it toward the top (the mirror of the next-change flow).
     if (stageCtx && lineAfter !== undefined) {
-        revealHunkOnLanding(stageCtx, lineAfter, "up");
+        revealHunkOnLanding(stageCtx, lineAfter, "up", hunkBefore);
     }
 };
 

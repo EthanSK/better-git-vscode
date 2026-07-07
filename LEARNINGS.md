@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-07T13:09:30Z
+**Trigger:** Ethan report 2026-07-07: 'go prev change in a large block, at the TOP of that hunk it LOOPS BACK TO THE BOTTOM instead of going to the previous change'
+**Symptom:** Stepping UP through a tall hunk (Alt+, previous-scm-change): on reaching the TOP of the hunk it looped back to the BOTTOM of the same hunk instead of advancing to the previous change — an infinite within-hunk loop, could never reach the previous change. (Down direction was fixed in v1.2.10; the up branch never got the symmetric treatment.)
+**Root cause:** stepTallHunk UP branch relied SOLELY on viewport-derived remainingAbove<=0 to decide 'top reached -> advance', with NO caret-derived signal — the exact asymmetry the v1.2.10 down fix removed for the bottom edge (which added caret>=hunk.end). When render slack/built-in nav left top a hair off hunk.start, remainingAbove never cleanly hit <=0, so the press re-entered the step path (its newTop=top-step fallback could scroll ABOVE the hunk); and when the built-in advance did fire it could re-land inside the same merged '+ run' hunk (which can span multiple VS Code change stops), then revealHunkOnLanding(up) re-showed that hunk's bottom -> loop.
+**Fix:** src/extension.ts stepTallHunk up-branch made the EXACT mirror of down: (1) caret<=hunk.start -> return false (definitively advance; final step pins caret to hunk.start); (2) remainingAbove<=0 -> advance; (3) FINAL up-step (top-step<=minTop, minTop=hunk.start) reveals hunk.start at the TOP via revealTopAndPinCursor (AtTop near doc-top never clamps, unlike AtTop near EOF going down) and parks caret at hunk.start so signal (1) fires next press; else normal step max(top-step,minTop). PLUS belt-and-braces anti-loop guard: revealHunkOnLanding takes avoidHunk (the hunk caret was in before the built-in advance); if the advance re-landed in the SAME hunk (identity compare on once-parsed ctx.hunks) it skips the reveal so the viewport can't bounce back to that hunk's far edge. Both goToNextDiff/goToPreviousDiff pass hunkBefore. Symmetry documented in-code so it can't drift again.
+**Commit:** pending-on-branch-fix/tall-hunk-up-loop
+**Guard:** Down and up branches now provably symmetric (same 3-stage shape, mirrored edges), commented as a symmetry contract. debugLogging output channel logs every up/down decision (caret/viewport/hunk/minTop/maxTop/remaining) so any future stick/loop is diagnosable instantly. Anti-loop guard covers ALL four entry points (keyboard Alt+./Alt+,, smart mouse fwd/back via smartNavigate->goToNext/PreviousDiff, stage buttons). lint+tsc+package green. new-file 5-line scroll already symmetric+loop-free (both edges return false to defer).
+---
+
+---
 **Date:** 2026-07-04T22:30:52Z
 **Trigger:** Mini keyboard-emulation test on v1.2.9, evidence /tmp/better-git-vscode-tall-hunk-evidence-129/ (2026-07-04)
 **Symptom:** Tall-hunk staging (next-scm-change stepping DOWN through a hunk taller than the viewport) got permanently STUCK a few lines short of the bottom (e.g. Ln 202 on a 240-line hunk, visible ~197-235): repeated Alt+. no-op'd, never revealed the tail lines 236-240, never advanced to the next file. Alt+, (up) worked fine.
