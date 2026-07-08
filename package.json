@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review — jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.13",
+  "version": "1.2.14",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -111,6 +111,11 @@
         "command": "better-git-vscode.collapse-worktrees",
         "category": "Better Git",
         "title": "Collapse all worktree / repository sections in Source Control"
+      },
+      {
+        "command": "better-git-vscode.add-current-worktree-to-workspace",
+        "category": "Better Git",
+        "title": "Add current file's git worktree to workspace"
       }
     ],
     "menus": {
@@ -118,6 +123,12 @@
         {
           "command": "better-git-vscode.stage-current-file-and-advance",
           "group": "navigation",
+          "when": "gitOpenRepositoryCount != 0"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "better-git-vscode.add-current-worktree-to-workspace",
           "when": "gitOpenRepositoryCount != 0"
         }
       ]

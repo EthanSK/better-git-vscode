@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-08T14:27:54Z
+**Trigger:** Ethan request 2026-07-08: add current file's git worktree to workspace
+**Symptom:** Feature request: add the git worktree of the currently-open file to the VS Code workspace as a workspace folder, from the editor
+**Root cause:** No such command existed; needed to (a) resolve the file under review reliably even when focus is in the SCM panel, (b) map that file to its WORKTREE root (not the shared main clone), and (c) handle the ext-host restart when a single-folder window becomes multi-root
+**Fix:** src/extension.ts: new command better-git-vscode.add-current-worktree-to-workspace. File resolved via shared currentReviewFileUri() ?? activeTextEditor (then toFilePathUri to normalise git: sides). Worktree root via resolveWorktreeRootUri(): PRIMARY = git ext API git.getRepository(fileUri).rootUri (each linked worktree is its OWN Repository so rootUri IS the worktree root); FALLBACK = walk parent dirs for a .git marker (dir for clone, FILE for worktree). Dedupe against workspaceFolders via shared sameRootPath. Add via vscode.workspace.updateWorkspaceFolders(len,0,{uri,name}) as the LAST statement.
+**Commit:** pending-on-branch-feat/add-current-worktree-to-workspace
+**Guard:** Ext-host-restart caveat handled: single->multi-root transition (folders.length===1 && !workspaceFile) restarts the host so the add is the handler's last action + return value only trusted when no restart expected; try/catch never throws; not-in-repo shows info msg not error. lint+tsc+package green. commandPalette guarded when gitOpenRepositoryCount!=0.
+---
+
+---
 **Date:** 2026-07-07T13:09:30Z
 **Trigger:** Ethan report 2026-07-07: 'go prev change in a large block, at the TOP of that hunk it LOOPS BACK TO THE BOTTOM instead of going to the previous change'
 **Symptom:** Stepping UP through a tall hunk (Alt+, previous-scm-change): on reaching the TOP of the hunk it looped back to the BOTTOM of the same hunk instead of advancing to the previous change — an infinite within-hunk loop, could never reach the previous change. (Down direction was fixed in v1.2.10; the up branch never got the symmetric treatment.)

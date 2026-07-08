@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.14] (ethansk fork) — add current file's git worktree to the workspace
+
+- **New command: `Better Git: Add current file's git worktree to workspace`.** Adds the git worktree that the currently-open (or under-review) file lives in to your VS Code workspace as a workspace folder — so you can pull a worktree into your sidebar without leaving the editor. It resolves the worktree root via the git extension's repository model (each linked worktree is its own repository, so its root is the worktree root), with a filesystem `.git`-walk fallback. If the file isn't in a git repo it shows an info message (no error); if the worktree is already a workspace folder it says so and does nothing.
+- **Caveat handled:** adding the first extra folder to a single-folder window converts it to a multi-root workspace, which restarts the extension host. The command does the add as its last action (and briefly warns you about the reload) so nothing is lost to the restart. Available from the Command Palette when a git repository is open.
+
 ## [1.2.13] (ethansk fork) — collapse command does a plain collapse-all (no re-open primary)
 
 - **The `Collapse all worktree / repository sections` command now does a PLAIN collapse-all** — it folds every repo section including the primary/main one, and no longer re-expands the primary afterward. The old behaviour re-opened the primary's first change in a preview tab to keep it expanded, which was an annoying pop-up; now it just collapses everything. (The auto-on-startup path is unchanged for anyone who enables `collapseWorktreesOnStartup`.)

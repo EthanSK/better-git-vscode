@@ -1,4 +1,9 @@
 import * as vscode from "vscode";
+// fs + path are only used by resolveWorktreeRootUri's FALLBACK path (the filesystem `.git` walk used when the
+// git extension API can't tell us which worktree owns a file). Node built-ins are available in the extension
+// host — safe to import at top level.
+import * as fs from "fs";
+import * as path from "path";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -498,6 +503,74 @@ export function activate(context: vscode.ExtensionContext) {
         await collapseScmRepositories();
     });
 
+    // ADD-CURRENT-WORKTREE-TO-WORKSPACE (v1.2.14). Pull the git worktree that the currently-open/under-review
+    // file lives in into the VS Code workspace as a workspace folder, so Ethan can bring a worktree into his
+    // sidebar without leaving the editor. Handler flow is: resolve the file -> resolve its worktree root ->
+    // dedupe against existing folders -> add. See the ext-host-restart caveat at the add call (it MUST be last).
+    let disposable16 = vscode.commands.registerCommand("better-git-vscode.add-current-worktree-to-workspace", async () => {
+        // 1. Which file are we acting on? Prefer the SHARED "file under review" predicate (currentReviewFileUri
+        //    handles diff / merge / new-file / deleted / binary review tabs, and — crucially for Ethan's flow —
+        //    still resolves when keyboard focus is in the SCM panel so activeTextEditor is stale/undefined). Fall
+        //    back to the focused text editor for a plainly-opened file.
+        const fileUri = currentReviewFileUri() ?? vscode.window.activeTextEditor?.document.uri;
+        if (!fileUri) {
+            vscode.window.showInformationMessage("Better Git: No active file to resolve a git worktree from.");
+            return;
+        }
+        // Normalise any diff-side / git: uri to the on-disk file path before we look up its repo.
+        const onDiskUri = toFilePathUri(fileUri);
+        if (!onDiskUri) {
+            vscode.window.showInformationMessage("Better Git: Couldn't resolve the current file to a path on disk.");
+            return;
+        }
+        // 2. Resolve the worktree root the file belongs to (git API primary, .git-walk fallback). Not in any git
+        //    repo -> info message + return (NOT an error — this is a valid, expected situation).
+        const worktreeRoot = resolveWorktreeRootUri(onDiskUri);
+        if (!worktreeRoot) {
+            vscode.window.showInformationMessage("Better Git: The current file isn't inside a git repository / worktree.");
+            return;
+        }
+        const name = path.basename(worktreeRoot.fsPath) || worktreeRoot.fsPath;
+        // 3. Already a workspace folder? Don't add a duplicate. Compare on normalised on-disk paths (case-
+        //    insensitive, trailing separators stripped) via the shared sameRootPath helper.
+        const folders = vscode.workspace.workspaceFolders ?? [];
+        if (folders.some((f) => sameRootPath(f.uri, worktreeRoot))) {
+            vscode.window.showInformationMessage(`Better Git: "${name}" is already in the workspace.`);
+            return;
+        }
+        // 4. Add it as a workspace folder — THE LAST THING THIS HANDLER DOES (see caveat below).
+        //
+        // ── EXTENSION-HOST-RESTART CAVEAT (VS Code docs for workspace.updateWorkspaceFolders) ────────────────
+        // Adding the FIRST extra folder to a SINGLE-FOLDER window transitions it to a MULTI-ROOT workspace,
+        // which RESTARTS the extension host. When that happens updateWorkspaceFolders() may return BEFORE any
+        // code after it runs (the host is being torn down), so the add MUST be the LAST statement in this
+        // handler and we must NOT depend on its return value in that transition. We DO still honour the return
+        // value in the non-transition case (adding to an already-multi-root workspace does NOT restart the host,
+        // so `false` there genuinely means the add failed). `willBecomeMultiRoot` distinguishes the two: exactly
+        // one existing folder AND no .code-workspace file open == the single→multi transition that restarts.
+        const willBecomeMultiRoot = folders.length === 1 && !vscode.workspace.workspaceFile;
+        if (willBecomeMultiRoot) {
+            // Brief heads-up so the imminent window reload isn't a surprise (the ext host restarts on transition).
+            vscode.window.showInformationMessage(
+                `Better Git: Adding worktree "${name}" — this window becomes a multi-root workspace (quick reload).`
+            );
+        }
+        try {
+            // Insert at the END of the current folder list (index = folders.length), delete 0, add this worktree.
+            const ok = vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: worktreeRoot, name });
+            // `ok` is only reliable when NO restart is expected. In the single→multi transition the host may
+            // already be restarting, so a falsy return there is not a real failure — only report failure when we
+            // did NOT expect a restart to swallow the rest of this handler.
+            if (!ok && !willBecomeMultiRoot) {
+                vscode.window.showErrorMessage(`Better Git: Failed to add worktree "${name}" to the workspace.`);
+            }
+        } catch (e) {
+            // updateWorkspaceFolders should not throw, but never let a command surface an unhandled error.
+            vscode.window.showErrorMessage(`Better Git: Failed to add worktree to the workspace: ${e}`);
+        }
+        // NOTHING AFTER THIS POINT — the ext-host restart (single→multi transition) can cut the handler off here.
+    });
+
     // ──────────────────────────────────────────────────────────────────────────────────────────
     // SMART MOUSE-BUTTON COMMANDS (smart-forward / smart-back)
     //
@@ -745,6 +818,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         disposable, disposable2, disposable3, disposable4, disposable5, disposable6, disposable7, disposable8,
         disposable9, disposable10, disposable11, disposable12, disposable13, disposable14, disposable15,
+        disposable16, // add-current-worktree-to-workspace (v1.2.14)
         lastStagedStatusBarItem, // disposed cleanly on deactivate
         configListener,
         reviewDecoEmitter,
@@ -825,6 +899,46 @@ const toFilePathUri = (uri: vscode.Uri | undefined): vscode.Uri | undefined => {
         }
     }
     return uri.path ? vscode.Uri.file(uri.path) : undefined;
+};
+
+// Resolve the git WORKTREE ROOT that a given on-disk file belongs to, returned as a folder file: uri (v1.2.14).
+//
+// PRIMARY path — the git extension's Repository model. `git.getRepository(uri)` returns the Repository whose
+// working tree contains `uri`, and the git extension treats EACH linked worktree as its OWN Repository — so
+// `repo.rootUri` IS that worktree's root directory (NOT the shared/main clone). That's exactly what "add the
+// worktree this file lives in" means, so we prefer it. This is the SAME git API + getRepository lookup that
+// isChangeFileUri/isMergeConflictFileUri already use, so we stay consistent with how the rest of the extension
+// maps a file to its repo.
+//
+// FALLBACK — if the git extension isn't ready yet, or doesn't yet know about this file's repo, walk UP the
+// directory tree from the file until we hit a `.git` marker. Note a linked worktree's marker is a `.git` FILE
+// (containing `gitdir: …/.git/worktrees/<name>`), not a directory — `fs.existsSync` matches either, and we
+// return the directory that CONTAINS the marker (that dir is the worktree root). Returns undefined only when
+// the file is inside no git repository at all (caller then shows an info message, never an error).
+const resolveWorktreeRootUri = (fileUri: vscode.Uri): vscode.Uri | undefined => {
+    // PRIMARY — ask the git extension which repository/worktree owns this file.
+    try {
+        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+        const repo = git?.getRepository(fileUri);
+        if (repo?.rootUri) {
+            return repo.rootUri as vscode.Uri; // each worktree is its own Repository -> rootUri = worktree root
+        }
+    } catch {
+        // git API not ready / shape changed — fall through to the filesystem walk below.
+    }
+    // FALLBACK — walk parent dirs looking for a `.git` marker (a dir for a normal clone, a FILE for a worktree).
+    try {
+        let dir = path.dirname(fileUri.fsPath);
+        // Loop guard: stop when dirname stops changing (we've hit the filesystem root and can climb no further).
+        for (let prev = ""; dir && dir !== prev; prev = dir, dir = path.dirname(dir)) {
+            if (fs.existsSync(path.join(dir, ".git"))) {
+                return vscode.Uri.file(dir); // this dir contains the .git marker -> it's the worktree root
+            }
+        }
+    } catch {
+        // fs error (permissions etc.) — give up; caller treats undefined as "not in a git repo".
+    }
+    return undefined;
 };
 
 // SHARED merge-editor predicate (v1.2.9). A 3-way MERGE editor (git conflict) is a TabInputTextMerge tab.

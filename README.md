@@ -52,6 +52,14 @@ If you work with **git worktrees** (or several repos in one window), VS Code's S
 
 > **How it works, and its honest limits.** VS Code has no API to collapse/expand a *single* repository (its built-ins collapse or expand them all at once), and no way to persist the collapsed state. So the extension collapses everything, then re-expands just the primary by leveraging VS Code's own `scm.autoReveal`. Consequences: it relies on `scm.autoReveal` being on (VS Code default) — with it off, the primary collapses too; re-expanding opens one of the primary repo's changed files in a *preview tab*; and if the primary has no changes there's nothing to re-expand toward. It's a best-effort workaround for the missing native "remember collapsed state", timing-dependent by nature, and it briefly focuses the Source Control panel when it fires.
 
+## Pull a worktree into your sidebar without leaving the editor
+
+Reviewing a file that lives in another git **worktree** and want it in your workspace? Run **`Better Git: Add current file's git worktree to workspace`** (`better-git-vscode.add-current-worktree-to-workspace`) from the Command Palette. It finds the worktree the current (or under-review) file belongs to and adds that worktree's root as a workspace folder, so it shows up in your Explorer / Source Control sidebar.
+
+- Works from a diff, a plain editor, or while focus is in the Source Control panel — it uses the same "file under review" detection as the navigation commands.
+- If the file isn't inside any git repository, it just tells you so (no error). If the worktree is already a workspace folder, it says so and does nothing.
+- **Note:** if your window currently has a single folder open, adding the first extra folder turns it into a *multi-root* workspace, which triggers a quick window reload (VS Code restarts the extension host on that transition). The command warns you and performs the add as its very last step, so nothing is lost.
+
 ## Keybindings
 
 The headline navigation keys are `Alt+.` and `Alt+,`. On a standard **QWERTY** keyboard
