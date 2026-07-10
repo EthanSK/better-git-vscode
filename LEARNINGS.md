@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-10T17:24:03Z
+**Trigger:** Ethan 2026-07-10: went to previous change on a new untracked file at the top, clicked NEXT, expected +5 down but it went to the bottom
+**Symptom:** New untracked file that looked like it was at the TOP: pressing NEXT shot past the whole file to the bottom/next file instead of scrolling +5 down. Also: first few NEXT presses on a tall new file showed no visible scroll.
+**Root cause:** stepThroughNewFile decided the edge (cur>=last / cur<=0) AND the step target purely from the CARET line, never the viewport. Caret and viewport decouple: backward rollover into a new file (openPreviousFile) pins the caret at the file's LAST line while a short file renders from its TOP -> user sees top, NEXT reads caret>=last -> atEdge -> rolls to next file. Codex xhigh confirmed caret math alone can never reach EOF from the top, so the bottom jump could only come from a caret already at the bottom. revealRange InCenter also gave no visible scroll for the first presses of a tall file (near-top target clamps to top). openLastFile had the same skip-the-file asymmetry as the old openPreviousFile BUG 5.
+**Fix:** src/extension.ts: rewrote stepThroughNewFile to be VIEWPORT-derived (mirror of tall-hunk stepTallHunk): readViewport + revealTopAndPinCursor. DOWN advances to next file ONLY when bottom>=last; else scroll viewport top down by step (AtTop, immediate) + pin caret to new top. UP mirrors (advance only when top<=0). Edge detection keys off viewport BOTTOM (unaffected by AtTop near-EOF clamp) so final down-step never sticks (v1.2.10 lesson). Factored the backward-rollover new-file bottom-landing into shared landNewFileTargetAtBottom() reused by openPreviousFile AND openLastFile (openLastFile is backward-only entry). openPreviousFile new-file landing now uses revealBottomAndPinCursor (Default reveal, never EOF-clamped) instead of InCenter(lastLine).
+**Commit:** 400d90e
+**Guard:** Viewport-derived means reversing direction / short files / exactly-viewport-height files all recompute live per press (no caret-vs-viewport drift possible). Debug logging ('Better Git' output channel, better-git-vscode.debugLogging) now logs every new-file scroll decision (top/bottom/last/step/advance-vs-step). Smart-mouse forward->goToPreviousDiff flip intentional + untouched; fix lives in shared goToNextDiff/goToPreviousDiff path so keyboard+mouse both get it. tsc+eslint+webpack green. Published v1.2.15.
+---
+
+---
 **Date:** 2026-07-08T14:27:54Z
 **Trigger:** Ethan request 2026-07-08: add current file's git worktree to workspace
 **Symptom:** Feature request: add the git worktree of the currently-open file to the VS Code workspace as a workspace folder, from the editor
