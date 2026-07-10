@@ -1480,6 +1480,57 @@ const openLastFile = async () => {
     }
 
     await openChangeEntry(fileChanges[fileChanges.length - 1]);
+    // Symmetric with openPreviousFile (v1.2.15): openLastFile is only ever reached via a BACKWARD entry
+    // (pressing previous when nothing is under review wraps to the LAST file — see goToPreviousDiff /
+    // goToLastOrPreviousFile). If that last file is a genuinely-new plain-editor file, land at its BOTTOM so the
+    // NEXT 'previous' press steps UP through it instead of seeing top<=0 and skipping the whole file unseen (the
+    // exact BUG 5 class of bug, previously only fixed for openPreviousFile — Codex xhigh flagged the asymmetry).
+    await landNewFileTargetAtBottom(fileChanges[fileChanges.length - 1]);
+};
+
+// Shared backward-rollover landing (v1.2.15): when a BACKWARD navigation opens a genuinely-new, UNSTAGED,
+// plain-editor file, scroll it to show its BOTTOM (and pin the caret at the last line) so the subsequent
+// 'previous' press steps UP through it. Factored out of openPreviousFile so openLastFile can reuse the exact
+// same retry+landing logic (Codex xhigh: "factor the retry/landing block into one small helper").
+//
+// WHY the bottom landing (BUG 5, v1.2.9): a MODIFIED file lands at its LAST hunk on backward rollover (via
+// compareEditor.previousChange), so subsequent 'previous' presses step UP through it. But that command is a
+// NO-OP on a genuinely-new file's PLAIN editor (no diff hunks), leaving the view at the TOP — and since
+// stepThroughNewFile is now viewport-derived (v1.2.15), a viewport at the top means the next 'previous' press
+// sees top<=0 and advances to the file BEFORE it, skipping the new file's content unseen. Landing at the bottom
+// makes the next 'previous' start stepping up from the end.
+//
+// WHY the !staged gate (Codex fix 2026-07-04): isFullyAddedFile is also true for a STAGED-new file
+// (INDEX_ADDED), but openChangeEntry opens a staged entry as a side-by-side DIFF, not a plain new-file editor —
+// so newFileScrollEditor() would never resolve; we'd burn the retry loop for nothing then swallow the
+// compareEditor.previousChange landing. Gating on !staged keeps this to the plain-editor (untracked/unstaged-new)
+// case; a staged-new target returns false so the caller falls through to its diff landing.
+//
+// Returns true if the target was recognised as a new-file (plain-editor) target — the caller must then NOT run
+// compareEditor.previousChange. Returns false for a non-new / staged target so the caller handles it normally.
+const landNewFileTargetAtBottom = async (entry: FileChange): Promise<boolean> => {
+    if (entry.staged || !isFullyAddedFile(entry.uri)) {
+        return false; // modified / deleted / staged-new target -> caller takes the normal diff path
+    }
+    // The plain editor may not register in visibleTextEditors synchronously after openChangeEntry, so retry the
+    // gate for a few short ticks. Reuses newFileScrollEditor() (plain file: tab + genuinely-new status + visible
+    // editor) — the exact gate the in-file new-file stepping uses.
+    let newFileEditor: vscode.TextEditor | undefined;
+    for (let i = 0; i < 8 && !newFileEditor; i++) {
+        newFileEditor = newFileScrollEditor();
+        if (!newFileEditor) {
+            await new Promise((r) => setTimeout(r, 30)); // wait one short tick for the editor to become visible
+        }
+    }
+    if (newFileEditor) {
+        // revealBottomAndPinCursor uses RevealType.Default, which brings an off-screen-below line into view at
+        // the BOTTOM and is NEVER EOF-clamped (unlike InCenter on the last line), so the bottom shows reliably.
+        const lastLine = Math.max(0, newFileEditor.document.lineCount - 1);
+        revealBottomAndPinCursor(newFileEditor, lastLine);
+    }
+    // If the editor never resolved (rare race) we still return true (it IS a new-file target) — the view stays
+    // at the top, the same no-op the old unconditional compareEditor.previousChange produced on a plain new file.
+    return true;
 };
 
 const openNextFile = async () => {
@@ -1552,35 +1603,10 @@ const openPreviousFile = async () => {
     // through the whole file. IMPORTANT: only do the (retried) new-file landing when the TARGET is actually a
     // new file; a modified/deleted target takes the immediate compareEditor.previousChange path with NO delay
     // (the retry loop must never add latency to the common backward-diff rollover).
-    // CODEX FIX 2026-07-04 (Medium): additionally require the target to be UNSTAGED (!staged). isFullyAddedFile
-    // returns true for a STAGED-new file (INDEX_ADDED) too, but openChangeEntry opens a staged entry as a
-    // side-by-side DIFF, not a plain new-file editor — so newFileScrollEditor() below would never resolve, we'd
-    // burn the 8×30ms retry loop for nothing, then `return` and SKIP the compareEditor.previousChange landing,
-    // reintroducing exactly the "land at top then previous skips the file" bug for staged-new diffs. Gating on
-    // !staged restricts this new-file landing to the plain-editor case (untracked / unstaged-new); a staged-new
-    // target correctly falls through to the compareEditor.previousChange path below.
-    if (!fileChanges[prevIndex].staged && isFullyAddedFile(fileChanges[prevIndex].uri)) {
-        // The plain editor may not register in visibleTextEditors synchronously after openChangeEntry, so retry
-        // the gate for a few short ticks. Reuses newFileScrollEditor() (plain file: tab + genuinely-new status +
-        // visible editor) — the exact gate goToPreviousDiff's own new-file stepping uses.
-        let newFileEditor: vscode.TextEditor | undefined;
-        for (let i = 0; i < 8 && !newFileEditor; i++) {
-            newFileEditor = newFileScrollEditor();
-            if (!newFileEditor) {
-                await new Promise((r) => setTimeout(r, 30)); // wait one short tick for the editor to become visible
-            }
-        }
-        if (newFileEditor) {
-            // Land the caret at the LAST line so the next 'previous' steps UP through the new file (mirrors how a
-            // modified file lands at its last hunk on backward rollover). Same selection+reveal pattern as
-            // stepThroughNewFile so behaviour is consistent with in-file new-file stepping.
-            const lastLine = Math.max(0, newFileEditor.document.lineCount - 1);
-            const pos = new vscode.Position(lastLine, 0);
-            newFileEditor.selection = new vscode.Selection(pos, pos);
-            newFileEditor.revealRange(new vscode.Range(lastLine, 0, lastLine, 0), vscode.TextEditorRevealType.InCenter);
-        }
-        // If the editor never resolved (rare race), leave it at the top — same no-op the old unconditional
-        // compareEditor.previousChange produced on a plain new-file editor, so no regression.
+    // v1.2.15: the retry + bottom-landing logic (and the !staged gate rationale) now lives in the shared
+    // landNewFileTargetAtBottom helper so openLastFile can reuse it. If the target was a genuinely-new
+    // plain-editor file, the helper landed it at the bottom and we're done — do NOT run compareEditor.previousChange.
+    if (await landNewFileTargetAtBottom(fileChanges[prevIndex])) {
         return;
     }
     // Diff (modified/renamed) file, or any non-new-file view: land at the LAST hunk exactly as before so
@@ -1702,38 +1728,95 @@ const newFileScrollEditor = (): vscode.TextEditor | undefined => {
     return vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === key); // (d)
 };
 
-// Shared step logic for new-file scroll mode: move the cursor `direction` by newFileNavLineJump lines within
-// a fully-added file so you can page through it. Returns true if it stepped (caller stops), or false if the
-// cursor is already at the edge (caller falls through to the next/previous FILE — matching the normal
-// end-of-changes behaviour so the review flow keeps going).
-// v1.2.1: async + focuses the editor being stepped. An UNFOCUSED editor renders no caret, so when focus sat
-// in the SCM panel the old steps were invisible (part of the perceived "nothing happens"). We also reveal
-// InCenter (not InCenterIfOutsideViewport) so every press produces visible scroll feedback once the file is
-// taller than the viewport.
+// Shared step logic for new-file scroll mode: scroll `editor` `direction` by newFileNavLineJump lines within
+// a fully-added file so you can page through it. Returns true if it scrolled a step (caller stops), or false
+// if the far edge of the file is already on screen (caller falls through to the next/previous FILE — matching
+// the normal end-of-changes behaviour so the review flow keeps going).
+//
+// v1.2.15 ROOT-CAUSE REWRITE — VIEWPORT-DERIVED, not caret-derived (Ethan 2026-07-10 bug):
+//   SYMPTOM: on a new untracked file that looked like it was AT THE TOP, pressing NEXT shot straight past the
+//   whole file ("went to the bottom / next file") instead of stepping +5 down.
+//   CAUSE: the old logic decided the edge (`cur >= last` / `cur <= 0`) and the step target PURELY from the
+//   CARET line (editor.selection.active.line), never from what was actually on screen. But the caret and the
+//   viewport routinely DECOUPLE in this flow: backward rollover into a new file (openPreviousFile) PINS the
+//   caret at the file's LAST line while the file — if it fits on screen — is rendered from its TOP. So the
+//   user SEES the top, but the caret is secretly at the bottom; the next NEXT press read caret>=last, hit the
+//   `atEdge` branch, and rolled over to the next file. (Codex independently confirmed the caret math alone can
+//   never reach EOF from the top — the "bottom" jump could only come from a caret that was already at the
+//   bottom.) Compounding it, the old `revealRange(target, InCenter)` produced NO visible scroll for the first
+//   few presses of a tall file: centring a near-top target line clamps to top, so the caret crept down
+//   invisibly until it passed the viewport centre, then the view lurched.
+//   FIX: derive EVERYTHING from the live viewport (editor.visibleRanges via readViewport) — the exact
+//   "recompute-live, viewport-is-the-state" philosophy the tall-hunk stepper (stepTallHunk) already uses, and
+//   which the task called out. DOWN advances to the next file ONLY when the file's last line is already
+//   visible (bottom >= last); otherwise it scrolls the viewport top down by `step` (AtTop, so it scrolls
+//   immediately and visibly). UP mirrors it: advance to the previous file only when the first line is visible
+//   (top <= 0); otherwise scroll up by `step`. The caret is pinned to the new top-visible line so it stays
+//   COUPLED to the viewport (keeps revert-and-save / any caret-relative command targeting what's on screen).
+//   Because edge detection keys off the viewport BOTTOM (unaffected by AtTop's near-EOF scroll clamp), the
+//   final down-step can never stick near the bottom — the same clamp that plagued the v1.2.10 tall-hunk bug is
+//   sidestepped here: a clamped down-step still makes `bottom` reach `last`, so the NEXT press advances.
+//
+// v1.2.1 legacy note (still true): async + focuses the editor being stepped. An UNFOCUSED editor renders no
+// caret, so when focus sat in the SCM panel the old steps were invisible (part of the perceived "nothing
+// happens"). Focusing also guarantees editor.visibleRanges reflects the editor the user is actually looking at.
 const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" | "up"): Promise<boolean> => {
     const configured = vscode.workspace.getConfiguration("better-git-vscode").get<number>("newFileNavLineJump", 5);
     // Guard bad user values: 0 / negative / NaN would "step" in place forever — a permanent no-op. Floor
     // fractional values; anything non-usable falls back to the default 5.
     const step = Number.isFinite(configured) && (configured as number) >= 1 ? Math.floor(configured as number) : 5;
-    const cur = editor.selection.active.line;
-    const last = Math.max(0, editor.document.lineCount - 1);
-    const atEdge = direction === "down" ? cur >= last : cur <= 0;
-    if (atEdge) {
-        return false;
-    }
-    const target = direction === "down" ? Math.min(cur + step, last) : Math.max(cur - step, 0);
+
     // Focus the editor we're about to step (safe here: the gate guarantees a plain file: document, never a
-    // diff side or virtual doc). showTextDocument on an already-visible document re-uses its tab/column.
-    // If focusing fails for any reason, still step the unfocused editor — movement over silence.
+    // diff side or virtual doc). showTextDocument on an already-visible document re-uses its tab/column, and
+    // the returned editor is the one whose visibleRanges we then read. If focusing fails for any reason, still
+    // act on the passed editor — movement over silence.
     let stepEditor = editor;
     try {
         stepEditor = await vscode.window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, preserveFocus: false });
     } catch {
-        // keep the unfocused editor — the selection/reveal below still applies
+        // keep the unfocused editor — the reveal below still applies
     }
-    const pos = new vscode.Position(target, 0);
-    stepEditor.selection = new vscode.Selection(pos, pos);
-    stepEditor.revealRange(new vscode.Range(target, 0, target, 0), vscode.TextEditorRevealType.InCenter);
+
+    const last = Math.max(0, stepEditor.document.lineCount - 1);
+    const vp = readViewport(stepEditor);
+    if (!vp) {
+        // Editor not laid out yet (visibleRanges empty) — fall back to the pre-v1.2.15 caret-based step so a
+        // press is never silently swallowed. Best-effort; the viewport path takes over on the next press once
+        // the editor is laid out.
+        const cur = stepEditor.selection.active.line;
+        const atEdge = direction === "down" ? cur >= last : cur <= 0;
+        if (atEdge) {
+            debugLog("new-file", `${direction}: no viewport + caret at edge (L${cur + 1}/L${last + 1}) -> advance to ${direction === "down" ? "next" : "previous"} file`);
+            return false;
+        }
+        const target = direction === "down" ? Math.min(cur + step, last) : Math.max(cur - step, 0);
+        revealTopAndPinCursor(stepEditor, target);
+        debugLog("new-file", `${direction}: no viewport, caret-fallback step L${cur + 1}->L${target + 1} (step=${step})`);
+        return true;
+    }
+
+    const { top, bottom, visLines } = vp;
+    if (direction === "down") {
+        // Bottom edge reached ONLY when the file's last line is genuinely on screen. Advance to the next file.
+        if (bottom >= last) {
+            debugLog("new-file", `down: last line L${last + 1} visible (viewport L${top + 1}-L${bottom + 1}) -> advance to next file`);
+            return false;
+        }
+        // Scroll the viewport DOWN by `step` lines (AtTop scrolls immediately, unlike InCenter which clamps a
+        // near-top target and appears frozen). Caret pinned to the new top so it tracks what's shown.
+        const newTop = Math.min(top + step, last);
+        revealTopAndPinCursor(stepEditor, newTop);
+        debugLog("new-file", `down: scroll top L${top + 1}->L${newTop + 1} (bottom was L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
+        return true;
+    }
+    // UP mirror: top edge reached ONLY when the first line is on screen. Advance to the previous file.
+    if (top <= 0) {
+        debugLog("new-file", `up: first line visible (viewport L${top + 1}-L${bottom + 1}) -> advance to previous file`);
+        return false;
+    }
+    const newTop = Math.max(top - step, 0);
+    revealTopAndPinCursor(stepEditor, newTop);
+    debugLog("new-file", `up: scroll top L${top + 1}->L${newTop + 1} (bottom was L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
     return true;
 };
 
