@@ -29,8 +29,8 @@ Each entry looks like:
 **Symptom:** Even when the editor-title `+` remains visible, its horizontal position changes because VS Code conditionally adds/removes built-in diff, revision, whitespace and layout actions for each editor/file state.
 **Root cause:** VS Code exposes ordering inside `editor/title`, but no fixed-pixel slot or spacer. The whole navigation group is right-aligned and changes width with its context-sensitive actions, so changing `navigation@order` can trade visibility against position but cannot make the screen coordinate invariant.
 **Fix:** src/extension.ts + package.json v1.2.20: add an additional persistent bottom-left `$(add) Stage & Next` StatusBarItem wired to the existing shared `stage-current-file-and-advance` command; priority 101 keeps it beside the priority-100 last-staged indicator. Add a default-on visibility setting while retaining the editor-title button.
-**Commit:** pending
-**Guard:** Real Extension Development Host inspection must show the status-bar control across added/staged and modified/diff editor states; clicking behavior remains the single shared command. Real-host E2E, lint, TypeScript and production package must pass.
+**Commit:** 9d87693 (PR #30)
+**Guard:** Real Extension Development Host inspection showed the status-bar control on a staged/index-added editor alongside the retained editor-title `+`; clicking behavior remains the single shared command. Real-host E2E 16/16, lint, TypeScript, production package and vsce file listing passed. Merged and installed locally as v1.2.20; Marketplace publish remains blocked by the expired publisher PAT recorded in the v1.2.19 entry.
 ---
 
 ---
