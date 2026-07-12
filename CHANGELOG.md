@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.20] (ethansk fork) — fixed-location status-bar Stage & Next button
+
+- **Added a persistent `+ Stage & Next` button to the bottom-left status bar.** It runs the exact same `stage-current-file-and-advance` command as the editor-title `+`, including remembering whether review was moving forward or backward.
+- The status-bar control does not move when VS Code swaps editor-title actions between modified, added, staged, plain-file, and diff views. The existing editor-title `+` remains available; this is an additional stable mouse target.
+- New setting `better-git-vscode.showStageAndAdvanceInStatusBar` defaults to on and can hide the status-bar button without affecting the editor-title action or the existing last-staged-file indicator.
+
 ## [1.2.19] (ethansk fork) — keep the `+` stage-and-advance button visible
 
 - **Fixed: the editor-title `+` button disappeared into the `…` overflow menu on crowded staged/index diffs.** v1.2.16 pinned the button furthest right with `navigation@100`, but current VS Code overflows the highest-order title actions first. The command was still present under `…`; it had not been removed.

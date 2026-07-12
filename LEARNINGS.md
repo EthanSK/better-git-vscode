@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-13T00:55:00Z
+**Trigger:** Ethan 2026-07-13: add a stable Stage & Next button that does not move between modified, added and staged editor shapes
+**Symptom:** Even when the editor-title `+` remains visible, its horizontal position changes because VS Code conditionally adds/removes built-in diff, revision, whitespace and layout actions for each editor/file state.
+**Root cause:** VS Code exposes ordering inside `editor/title`, but no fixed-pixel slot or spacer. The whole navigation group is right-aligned and changes width with its context-sensitive actions, so changing `navigation@order` can trade visibility against position but cannot make the screen coordinate invariant.
+**Fix:** src/extension.ts + package.json v1.2.20: add an additional persistent bottom-left `$(add) Stage & Next` StatusBarItem wired to the existing shared `stage-current-file-and-advance` command; priority 101 keeps it beside the priority-100 last-staged indicator. Add a default-on visibility setting while retaining the editor-title button.
+**Commit:** pending
+**Guard:** Real Extension Development Host inspection must show the status-bar control across added/staged and modified/diff editor states; clicking behavior remains the single shared command. Real-host E2E, lint, TypeScript and production package must pass.
+---
+
+---
 **Date:** 2026-07-13T00:35:00Z
 **Trigger:** Ethan 2026-07-13: what happened to the Better Git `+` stage-and-next button; add it back
 **Symptom:** On a crowded staged/index diff, the editor-title `+` was no longer visible even though stage-and-advance still existed. It appeared only under the editor `…` overflow menu.

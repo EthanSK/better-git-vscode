@@ -93,6 +93,13 @@ let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file 
 const showLastStagedEnabled = (): boolean =>
     vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("showLastStagedInStatusBar", true);
 
+// The editor-title action row is inherently dynamic: VS Code adds/removes diff, revision, whitespace and
+// layout buttons for different file states, so no menu order can keep the + at one exact pixel. The status
+// bar is independent of editor type. This live setting gates a second click target there while preserving the
+// existing editor-title + for users who like both.
+const showStageAndAdvanceStatusBarEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("showStageAndAdvanceInStatusBar", true);
+
 // Records `uri` as the last-staged file and refreshes the status bar item. Called from the SINGLE stage
 // chokepoint (stageThroughExtension) so EVERY stage path the extension performs updates the indicator —
 // a future stage path physically cannot bypass it as long as it stages via that helper. We show the
@@ -425,6 +432,19 @@ const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void =
 };
 
 export function activate(context: vscode.ExtensionContext) {
+    // Persistent fixed-location mouse target for stage-and-advance (v1.2.20). Priority 101 places it directly
+    // beside, and just before, the existing last-staged indicator at priority 100. Unlike editor/title, this
+    // row does not gain/lose controls when the active file switches between modified/new/staged diff shapes.
+    // It deliberately remains visible on every editor: the shared command safely no-ops when no changed file
+    // is active, and a never-moving target is the whole point of this alternative.
+    const stageAndAdvanceStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 101);
+    stageAndAdvanceStatusBarItem.text = "$(add) Stage & Next";
+    stageAndAdvanceStatusBarItem.tooltip = "Better Git: stage the current changed file and advance in the last navigation direction";
+    stageAndAdvanceStatusBarItem.command = "better-git-vscode.stage-current-file-and-advance";
+    if (showStageAndAdvanceStatusBarEnabled()) {
+        stageAndAdvanceStatusBarItem.show();
+    }
+
     // Create the last-staged status bar item. Left alignment + priority 100 puts it on the left cluster at a
     // reasonable position. Starts HIDDEN — there's nothing to show until the first stage of the session. Its
     // .command points at our reveal command (registered below) so a click reopens the staged file's diff.
@@ -800,13 +820,19 @@ export function activate(context: vscode.ExtensionContext) {
     // the next stage. We react live (rather than only reading at update time) so the bar disappears the moment
     // Ethan unchecks the setting — less surprising than it lingering until the next stage.
     let configListener = vscode.workspace.onDidChangeConfiguration((e) => {
-        if (!e.affectsConfiguration("better-git-vscode.showLastStagedInStatusBar") || !lastStagedStatusBarItem) {
-            return;
+        if (e.affectsConfiguration("better-git-vscode.showStageAndAdvanceInStatusBar")) {
+            if (showStageAndAdvanceStatusBarEnabled()) {
+                stageAndAdvanceStatusBarItem.show();
+            } else {
+                stageAndAdvanceStatusBarItem.hide();
+            }
         }
-        if (showLastStagedEnabled() && lastStagedUri) {
-            recordLastStaged(lastStagedUri); // re-render + show with the file we last staged
-        } else {
-            lastStagedStatusBarItem.hide();
+        if (e.affectsConfiguration("better-git-vscode.showLastStagedInStatusBar") && lastStagedStatusBarItem) {
+            if (showLastStagedEnabled() && lastStagedUri) {
+                recordLastStaged(lastStagedUri); // re-render + show with the file we last staged
+            } else {
+                lastStagedStatusBarItem.hide();
+            }
         }
     });
 
@@ -819,6 +845,7 @@ export function activate(context: vscode.ExtensionContext) {
         disposable, disposable2, disposable3, disposable4, disposable5, disposable6, disposable7, disposable8,
         disposable9, disposable10, disposable11, disposable12, disposable13, disposable14, disposable15,
         disposable16, // add-current-worktree-to-workspace (v1.2.14)
+        stageAndAdvanceStatusBarItem, // fixed-location Stage & Next mouse target (v1.2.20)
         lastStagedStatusBarItem, // disposed cleanly on deactivate
         configListener,
         reviewDecoEmitter,
