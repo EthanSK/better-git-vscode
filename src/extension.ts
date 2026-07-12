@@ -1462,10 +1462,26 @@ const openFirstFile = async () => {
 
     const fileChanges = await getFileChanges();
     if (fileChanges.length === 0) {
+        // v1.2.17 no-context pick: a clean repo is a normal end state after stage-and-advance, not an error.
+        // Keep the feedback quiet in the status bar (never a popup that interrupts the review flow), while
+        // still making the otherwise-empty keypress explain itself to the user and the debug output channel.
+        debugLog("nav", "next: no active file context -> no changes to navigate");
+        vscode.window.setStatusBarMessage("Better Git: No changes to navigate", 4000);
         return;
     }
 
-    await openChangeEntry(fileChanges[0]);
+    // v1.2.17 no-context pick: start with WORKING-TREE work (merge conflicts + unstaged/untracked entries)
+    // because that is the actionable review queue. Only after stage-and-advance has staged everything do we
+    // continue through the index diff — picking staged work is the useful continuation instead of dead-ending.
+    const unstagedChanges = fileChanges.filter((entry) => !entry.staged);
+    const target = unstagedChanges[0] ?? fileChanges.find((entry) => entry.staged)!;
+    debugLog(
+        "nav",
+        unstagedChanges.length > 0
+            ? "next: no active file context -> picking first changed file (unstaged-first)"
+            : "next: no active file context -> no unstaged changes; picking first staged file",
+    );
+    await openChangeEntry(target);
 };
 
 const openLastFile = async () => {
@@ -1476,16 +1492,38 @@ const openLastFile = async () => {
 
     const fileChanges = await getFileChanges();
     if (fileChanges.length === 0) {
+        // Mirror openFirstFile: reaching a clean repo backward is expected after staging the final file, so use
+        // the same quiet status-bar acknowledgement rather than an error/warning popup.
+        debugLog("nav", "previous: no active file context -> no changes to navigate");
+        vscode.window.setStatusBarMessage("Better Git: No changes to navigate", 4000);
         return;
     }
 
-    await openChangeEntry(fileChanges[fileChanges.length - 1]);
+    // v1.2.17 no-context pick: backward entry uses the LAST actionable working-tree item, falling back to the
+    // LAST staged/index item only when staging everything emptied that queue. Preserve getFileChanges order
+    // within each side so this still follows the SCM view's merge/index/working-tree sorting conventions.
+    const unstagedChanges = fileChanges.filter((entry) => !entry.staged);
+    const stagedChanges = fileChanges.filter((entry) => entry.staged);
+    const target = unstagedChanges[unstagedChanges.length - 1] ?? stagedChanges[stagedChanges.length - 1];
+    debugLog(
+        "nav",
+        unstagedChanges.length > 0
+            ? "previous: no active file context -> picking last changed file (unstaged-first)"
+            : "previous: no active file context -> no unstaged changes; picking last staged file",
+    );
+    await openChangeEntry(target);
     // Symmetric with openPreviousFile (v1.2.15): openLastFile is only ever reached via a BACKWARD entry
     // (pressing previous when nothing is under review wraps to the LAST file — see goToPreviousDiff /
     // goToLastOrPreviousFile). If that last file is a genuinely-new plain-editor file, land at its BOTTOM so the
     // NEXT 'previous' press steps UP through it instead of seeing top<=0 and skipping the whole file unseen (the
     // exact BUG 5 class of bug, previously only fixed for openPreviousFile — Codex xhigh flagged the asymmetry).
-    await landNewFileTargetAtBottom(fileChanges[fileChanges.length - 1]);
+    if (await landNewFileTargetAtBottom(target)) {
+        return;
+    }
+    // v1.2.17 mirror landing: a modified/staged diff selected by a backward no-context entry must land at its
+    // LAST hunk, just like openPreviousFile rollover. Forward entry needs no command because opening naturally
+    // starts at the first hunk; backward entry explicitly asks VS Code for the previous (last) change.
+    await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
 };
 
 // Shared backward-rollover landing (v1.2.15): when a BACKWARD navigation opens a genuinely-new, UNSTAGED,
@@ -1538,16 +1576,35 @@ const openNextFile = async () => {
 
     const active = await getActiveChange();
     if (!active) {
+        // v1.2.17 no-context pick: with no active file there is nothing to advance FROM, so choose the first
+        // changed file instead. Crucially this returns before the normal isPreview/closeActiveEditor block:
+        // starting a review must never close whatever non-review tab/editor the user currently has open.
+        await openFirstFile();
         return;
     }
 
     if (fileChanges.length === 0) {
+        // A clean/settings tab can still produce an ActiveChange-shaped path even though the repo has no
+        // entries. Reuse the v1.2.17 first-entry path so this clean-repo case gets the same quiet status-bar
+        // feedback and debug log instead of preserving the old silent return.
+        await openFirstFile();
         return;
     }
     const currentIndex = findCurrentIndex(fileChanges, active);
     if (currentIndex === -1) {
-        // Couldn't reliably locate the active file (e.g. its diff side wasn't readable for a dual-state
-        // file). Bail rather than guess — guessing turned into a jump to the wrong file. A re-press works.
+        const normalized = active.path.slice(1).replace(/\\/g, "/").toLowerCase();
+        const activePathExists = fileChanges.some((entry) => entry.uri.path.toLowerCase().endsWith(normalized));
+        if (!activePathExists) {
+            // v1.2.17 no-context pick: a clean/settings/other non-change tab is context for VS Code, but not
+            // for change navigation. Pick the first change without closing that active editor (openFirstFile
+            // intentionally only opens the target). This is the common post-stage-everything focus state.
+            await openFirstFile();
+            return;
+        }
+        // AMBIGUITY GUARD MUST KEEP BAILING: findCurrentIndex also returns -1 when a side-unknown file exists
+        // in BOTH staged and unstaged groups. activePathExists distinguishes that uncertainty from a genuine
+        // no-match; guessing here previously flung navigation to the wrong end of the list. A re-press works
+        // once VS Code exposes the diff side, so preserve the safe no-op for this distinct -1 meaning.
         return;
     }
 
@@ -1566,19 +1623,35 @@ const openPreviousFile = async () => {
     const fileChanges = await getFileChanges();
     const active = await getActiveChange();
     if (!active) {
+        // v1.2.17 no-context pick: mirror forward entry by selecting the last change, and return before the
+        // normal closeActiveEditor path so starting backward review never destroys the user's current tab.
+        await openLastFile();
         return;
     }
 
     if (fileChanges.length === 0) {
+        // Mirror forward navigation: an active non-change tab in a clean repo is still "no review context".
+        // Route through openLastFile for the shared status-bar acknowledgement rather than silently no-oping.
+        await openLastFile();
         return;
     }
     const currentIndex = findCurrentIndex(fileChanges, active);
     if (currentIndex === -1) {
+        const normalized = active.path.slice(1).replace(/\\/g, "/").toLowerCase();
+        const activePathExists = fileChanges.some((entry) => entry.uri.path.toLowerCase().endsWith(normalized));
+        if (!activePathExists) {
+            // A non-change active tab supplies no review position. Pick the last unstaged-first target via the
+            // shared backward entry path, which also handles bottom/last-hunk landing and never closes this tab.
+            await openLastFile();
+            return;
+        }
         // BUG FIX (intermittent "previous jumps to the last staged change"): the old code did
         // `currentIndex <= 0 ? last : currentIndex - 1`, which treated "not found" (-1) the SAME as "at the
         // first file" (0) and wrapped to the LAST file. When the diff side wasn't readable for a dual-state
         // file, findCurrentIndex returned -1 and "previous" lurched to the last change. Now we bail on -1;
         // the next press (once the diff tab is readable) navigates correctly. Genuine index 0 still loops.
+        // v1.2.17: activePathExists above preserves this ambiguity guard while routing ONLY true path misses
+        // (clean/settings/non-change tabs) to the friendly no-context picker.
         return;
     }
 
@@ -2829,6 +2902,30 @@ async function smartNavigate(direction: "forward" | "back") {
     // write. Calling the functions gives byte-identical navigation while restoring the invariant that the
     // flipped smart mouse buttons never touch lastNavDirection, so the "+" keeps advancing in Ethan's actual
     // review direction. (F18/F19 were already immune — they pass an explicit direction.)
+    // v1.2.17 narrow no-tab entry: keep normal browser history for EVERY active tab, including non-file
+    // webviews such as Settings, Welcome, and extension pages. Do NOT use activeNavFilePath() as this gate:
+    // webviews intentionally have no file path and would be mistaken for "nothing open", hijacking their
+    // useful navigateBack/navigateForward history; its last-ditch path lookup can also invoke the BUG 13
+    // clipboard save/blank/restore workaround on every mouse press. The tab model answers the real question
+    // synchronously and without side effects: is there an active tab in the group the user is currently using?
+    //
+    // Check ONLY activeTabGroup, not every group. A tab open in a different split is not the current browser-
+    // navigation context and should not prevent review entry when the active group itself is genuinely empty.
+    // Conversely, any active tab in the active group — file, diff, Settings, Welcome, custom editor, webview —
+    // must preserve normal browser navigation. In the one truly-empty-active-group state, let the mouse start
+    // review with Ethan's existing intentional direction flip. This may give up VS Code's "reopen last
+    // navigation position" opportunity when that group has no tab, but the explicit review command is more
+    // useful after stage-and-advance closed the final reviewed file.
+    const hasActiveTab = vscode.window.tabGroups.activeTabGroup.activeTab !== undefined;
+    if (!inReview && !hasActiveTab) {
+        if (direction === "forward") {
+            await goToPreviousDiff(); // flipped: forward button -> previous/last review entry
+        } else {
+            await goToNextDiff(); // flipped: back button -> next/first review entry
+        }
+        return;
+    }
+
     if (direction === "forward") {
         if (inReview) {
             await goToPreviousDiff(); // flipped: forward button -> PREVIOUS change (does NOT write lastNavDirection)

@@ -1,5 +1,13 @@
 # Change Log
 
+## [1.2.17] (ethansk fork) — no-context navigation now picks a changed file
+
+- **Fixed: next/previous change silently did nothing when no changed file had focus.** This commonly happened after stage-and-advance staged the final unstaged file and closed its editor, leaving either no tab or a clean/settings tab active. Next now opens the first changed file; previous opens the last and lands at its bottom/last hunk.
+- **No-context picks prefer unstaged work, then staged work.** Merge conflicts, untracked files, and other working-tree changes remain the actionable review queue; once that queue is empty, navigation continues through staged index diffs instead of dead-ending after staging everything.
+- **A completely clean repository now gives quiet feedback** with `Better Git: No changes to navigate` in the status bar for four seconds—never an error or warning popup. Debug logging records unstaged picks, staged fallbacks, and clean-repo no-ops.
+- **Dual-state safety is preserved.** If VS Code cannot tell whether the active view is the staged or unstaged copy of the same path, navigation still refuses to guess; only a path that matches no change at all is treated as missing context. Starting a review also never closes the user's active non-review editor.
+- **Smart mouse navigation covers the genuinely-empty-tab case.** With no tab/editor open it starts change review using the existing intentional direction flip, while any active clean/editor tab still keeps normal VS Code browser back/forward behavior.
+
 ## [1.2.16] (ethansk fork) — pin the "+" stage-and-advance button to a stable rightmost position
 
 - **Fixed: the `+` (stage-current-file-and-advance) button in the editor title bar stopped moving.** Before, it would SHIFT left/right depending on what file/diff/git state you were on, so you couldn't just hover one spot and click — you had to hunt for it. The cause: VS Code's built-in diff up/down "Previous/Next Change" arrows live in the SAME right-aligned editor-title navigation group as the `+`, and they spawn/despawn depending on whether the current tab is a diff (and other state). The `+` had no explicit sort order, so when those arrows appeared or disappeared the `+`'s position slid.
