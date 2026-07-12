@@ -134,6 +134,10 @@ suite('SCM change navigation E2E', () => {
 		const editor = await vscode.window.showTextDocument(wsUri(rel), { preview: false });
 		const pos = new vscode.Position(line, 0);
 		editor.selection = new vscode.Selection(pos, pos);
+		editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.AtTop);
+		// VS Code remembers scroll state by URI even after close/recreate. Several tests deliberately reuse
+		// zz_new.txt, so resetting only the caret can leave the next test's viewport at the prior test's L16.
+		await poll(() => editor.visibleRanges[0]?.start.line === line, `${rel} viewport to reset to line ${line}`);
 		return editor;
 	};
 
@@ -150,6 +154,20 @@ suite('SCM change navigation E2E', () => {
 			const e = visibleEditorFor(wsUri(rel));
 			return e && e.selection.active.line === line ? e : undefined;
 		}, `cursor in ${rel} to reach line ${line} (at ${visibleEditorFor(wsUri(rel))?.selection.active.line})`);
+
+	// A cursor move alone is NOT proof that new-file review scrolled: the v1.2.15 regression moved the caret
+	// from L1 to L6 while leaving the viewport at L1, then every later NEXT recomputed L6 and stuck forever.
+	const expectViewportTopAt = (rel: string, line: number) =>
+		poll(() => {
+			const e = visibleEditorFor(wsUri(rel));
+			return e?.visibleRanges[0]?.start.line === line ? e : undefined;
+		}, `viewport in ${rel} to start at line ${line} (at ${visibleEditorFor(wsUri(rel))?.visibleRanges[0]?.start.line})`);
+	const expectViewportTop = (rel: string, pred: (line: number) => boolean, description: string) =>
+		poll(() => {
+			const e = visibleEditorFor(wsUri(rel));
+			const top = e?.visibleRanges[0]?.start.line;
+			return top !== undefined && pred(top) ? e : undefined;
+		}, `viewport in ${rel} ${description} (at ${visibleEditorFor(wsUri(rel))?.visibleRanges[0]?.start.line})`);
 
 	suiteSetup(async function () {
 		// One-time host warm-up can be slow (git ext activation + repo discovery).
@@ -191,33 +209,55 @@ suite('SCM change navigation E2E', () => {
 	// UNTRACKED NEW FILE — the feature itself
 	// ────────────────────────────────────────────────────────────────────────────────────────
 
-	test('untracked new file: next steps +5 lines, previous steps -5 lines', async () => {
-		write('zz_new.txt', lines(30, 'new'));
+	test('untracked new file: repeated next scrolls +5 each time; previous mirrors -5', async () => {
+		// Deliberately much taller than any test-host viewport. A 30-line fixture could fit on a large runner
+		// and accidentally exercise cross-file fall-through instead of the production 243-line-file path.
+		write('zz_new.txt', lines(240, 'new'));
 		await refreshUntil(() => isUntracked('zz_new.txt'), 'zz_new.txt to appear as untracked');
 		await openPlainAt('zz_new.txt', 0);
 
 		await nextChange();
 		await expectCursorAt('zz_new.txt', 5);
+		await expectViewportTopAt('zz_new.txt', 5);
 		await nextChange();
 		await expectCursorAt('zz_new.txt', 10);
+		await expectViewportTopAt('zz_new.txt', 10);
 		await previousChange();
 		await expectCursorAt('zz_new.txt', 5);
+		await expectViewportTopAt('zz_new.txt', 5);
 		await previousChange();
 		await expectCursorAt('zz_new.txt', 0);
+		await expectViewportTopAt('zz_new.txt', 0);
 		// stepping never leaves the file
 		assert.strictEqual(activeTabPath(), wsUri('zz_new.txt').path);
+	});
+
+	test('untracked new file: rapid repeated next presses are serialized and none are lost', async () => {
+		write('zz_new.txt', lines(240, 'new'));
+		await refreshUntil(() => isUntracked('zz_new.txt'), 'zz_new.txt to appear as untracked');
+		await openPlainAt('zz_new.txt', 0);
+
+		// Do not wait between presses: this is key-repeat / a quick double-tap. Before the shared navigation
+		// queue both calls could read viewport top=0 and target L6, losing the second press.
+		await Promise.all([nextChange(), nextChange(), nextChange()]);
+		await expectCursorAt('zz_new.txt', 15);
+		await expectViewportTopAt('zz_new.txt', 15);
 	});
 
 	test('newFileNavLineJump custom value is respected', async () => {
 		const cfg = () => vscode.workspace.getConfiguration('better-git-vscode');
 		await cfg().update('newFileNavLineJump', 7, vscode.ConfigurationTarget.Global);
 		try {
-			write('zz_new.txt', lines(30, 'new'));
+			await poll(() => cfg().get<number>('newFileNavLineJump') === 7, 'custom new-file jump setting to become visible');
+			write('zz_new.txt', lines(240, 'new'));
 			await refreshUntil(() => isUntracked('zz_new.txt'), 'zz_new.txt to appear as untracked');
 			await openPlainAt('zz_new.txt', 0);
+			await expectActiveTab('zz_new.txt');
+			await expectCursorAt('zz_new.txt', 0);
 
 			await nextChange();
 			await expectCursorAt('zz_new.txt', 7);
+			await expectViewportTopAt('zz_new.txt', 7);
 		} finally {
 			// always restore, even on assertion failure — a leaked setting would skew later tests
 			await cfg().update('newFileNavLineJump', undefined, vscode.ConfigurationTarget.Global);
@@ -247,16 +287,16 @@ suite('SCM change navigation E2E', () => {
 		await expectActiveTab('aa_new.txt');
 	});
 
-	test('very short new file (< jump size): one clamped step to the last line, then falls through', async () => {
+	test('very short new file already fully visible: next falls through immediately', async () => {
 		write('aa_short.txt', lines(3, 's')); // 3 lines, no trailing newline -> last line index 2
 		write('ab_other.txt', lines(5, 'o'));
 		await refreshUntil(() => isUntracked('aa_short.txt') && isUntracked('ab_other.txt'), 'both untracked files listed');
 		await openPlainAt('aa_short.txt', 0);
 
 		await nextChange();
-		await expectCursorAt('aa_short.txt', 2); // clamped to the last line, NOT line 5
-		await nextChange();
-		await expectActiveTab('ab_other.txt'); // at the edge now -> advances to the next file
+		// v1.2.15 made the viewport the source of truth: if the whole file is already on screen, it has
+		// already been reviewed and NEXT advances immediately (no pointless caret-only step inside it).
+		await expectActiveTab('ab_other.txt');
 	});
 
 	test('empty new file: next advances to the next file immediately', async () => {
@@ -324,12 +364,50 @@ suite('SCM change navigation E2E', () => {
 		await expectActiveTab('committed/mod_d.txt');
 	});
 
+	test('MODIFIED tall hunk: repeated/rapid next scrolls down and previous scrolls back up', async () => {
+		const content = lines(260, 'tall_e').split('\n');
+		for (let i = 10; i <= 229; i++) {
+			content[i] = `tall_e EDITED line ${i + 1}`;
+		}
+		write('committed/tall_e.txt', content.join('\n'));
+		await refreshUntil(() => inWorkingTree('committed/tall_e.txt', 5 /* MODIFIED */), 'tall_e to appear as MODIFIED');
+
+		await vscode.commands.executeCommand('git.openChange', wsUri('committed/tall_e.txt'));
+		await poll(
+			() =>
+				vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff &&
+				visibleEditorFor(wsUri('committed/tall_e.txt')) !== undefined,
+			'tall_e diff editor to render'
+		);
+		await sleep(500);
+		const modifiedSide = visibleEditorFor(wsUri('committed/tall_e.txt'))!;
+		modifiedSide.selection = new vscode.Selection(new vscode.Position(0, 0), new vscode.Position(0, 0));
+
+		// First NEXT lands at the tall changed run's start and explicitly presents it at viewport top.
+		await nextChange();
+		const landed = await expectViewportTop('committed/tall_e.txt', top => top >= 7 && top <= 10, 'to land at the tall hunk start');
+		const startTop = landed.visibleRanges[0].start.line;
+
+		// Two immediate NEXT presses must both survive the shared queue and move the viewport farther down.
+		// Put keyboard focus in Source Control first: Ethan's real review flow clicks SCM rows with preserveFocus,
+		// so the scroll command must still target the active diff editor while focus lives in the sidebar.
+		await vscode.commands.executeCommand('workbench.view.scm');
+		await Promise.all([nextChange(), nextChange()]);
+		const down = await expectViewportTop('committed/tall_e.txt', top => top > startTop + 20, 'to advance through the tall hunk');
+		const downTop = down.visibleRanges[0].start.line;
+		assert.strictEqual(down.selection.active.line, downTop, 'tall-hunk caret did not remain pinned to viewport top');
+
+		await previousChange();
+		const up = await expectViewportTop('committed/tall_e.txt', top => top < downTop, 'to move back up through the tall hunk');
+		assert.strictEqual(up.selection.active.line, up.visibleRanges[0].start.line, 'reverse tall-hunk caret/view coupling broke');
+	});
+
 	// ────────────────────────────────────────────────────────────────────────────────────────
 	// STAGED-NEW (INDEX_ADDED)
 	// ────────────────────────────────────────────────────────────────────────────────────────
 
-	test('staged-new file opened as a PLAIN editor: still steps ±5', async () => {
-		write('aa_staged.txt', lines(20, 'staged'));
+	test('staged-new tall file opened as a PLAIN editor: still scroll-steps ±5', async () => {
+		write('aa_staged.txt', lines(240, 'staged'));
 		git('add aa_staged.txt');
 		await refreshUntil(
 			() => inIndex('aa_staged.txt', 1 /* INDEX_ADDED */) && !inWorkingTree('aa_staged.txt'),
@@ -339,8 +417,10 @@ suite('SCM change navigation E2E', () => {
 
 		await nextChange();
 		await expectCursorAt('aa_staged.txt', 5);
+		await expectViewportTopAt('aa_staged.txt', 5);
 		await previousChange();
 		await expectCursorAt('aa_staged.txt', 0);
+		await expectViewportTopAt('aa_staged.txt', 0);
 	});
 
 	test('staged-new file opened as its empty-original DIFF: normal nav, advances to the next file (no crawl)', async () => {
