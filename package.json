@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review — jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.18",
+  "version": "1.2.19",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -122,8 +122,8 @@
       "editor/title": [
         {
           "command": "better-git-vscode.stage-current-file-and-advance",
-          "_comment_editorTitleOrder": "The editor/title navigation group is right-aligned and sorts actions by ascending @order, so the highest order renders furthest right and stays anchored to the right edge. VS Code's built-in diff Previous/Next Change up/down arrows use lower/default orders and therefore render to the left of this + button; when those arrows appear or disappear across file, diff, and Git states, their space collapses on the left without moving the + button. Keep navigation@100 so the + remains hover-stable in the same rightmost position.",
-          "group": "navigation@100",
+          "_comment_editorTitleOrder": "Keep the + immediately before VS Code's built-in diff Previous/Next Change arrows (orders 10/11). VS Code overflows the highest-order editor-title actions first when a diff has many buttons, so the old navigation@100 placement moved + into the ... menu. navigation@9 keeps the primary stage-and-advance action visible while remaining beside the diff arrows.",
+          "group": "navigation@9",
           "when": "gitOpenRepositoryCount != 0"
         }
       ],

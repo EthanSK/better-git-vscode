@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.19] (ethansk fork) — keep the `+` stage-and-advance button visible
+
+- **Fixed: the editor-title `+` button disappeared into the `…` overflow menu on crowded staged/index diffs.** v1.2.16 pinned the button furthest right with `navigation@100`, but current VS Code overflows the highest-order title actions first. The command was still present under `…`; it had not been removed.
+- The `+` now sits at `navigation@9`, immediately before VS Code's built-in Previous/Next Change arrows (orders 10/11). This prioritizes the primary stage-and-advance action so it remains visible while a less important later action overflows.
+
 ## [1.2.18] (ethansk fork) — repeated next-change reliably scrolls new files and tall hunks
 
 - **Fixed: next-change moved five lines once, then got stuck forever on untracked (`U`) files.** The first press moved the caret from line 1 to line 6, but VS Code ignored the request to put line 6 at the top because it was already visible; the viewport stayed at line 1, so every later press recomputed line 6 and became a no-op. New-file review now performs a real relative logical-line scroll, waits for the viewport to settle, then pins the caret to the new top.

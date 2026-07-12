@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-13T00:35:00Z
+**Trigger:** Ethan 2026-07-13: what happened to the Better Git `+` stage-and-next button; add it back
+**Symptom:** On a crowded staged/index diff, the editor-title `+` was no longer visible even though stage-and-advance still existed. It appeared only under the editor `…` overflow menu.
+**Root cause:** v1.2.16 assigned the action `navigation@100` to pin it furthest right. Current VS Code overflows the highest-order editor-title actions first when space is constrained, so the exact ordering intended to stabilize the button also made it the first primary action to disappear.
+**Fix:** package.json v1.2.19: move the action to `navigation@9`, immediately before VS Code's built-in Previous/Next Change arrows at orders 10/11, so the stage-and-advance action survives title-bar overflow.
+**Commit:** pending
+**Guard:** Real VS Code extension-development-host inspection on a crowded staged/index diff must show `Stage current file and advance in last-navigated direction` as a visible editor-title button, not only in the `…` menu. Production package and manifest validation must pass.
+---
+
+---
 **Date:** 2026-07-12T23:09:05Z
 **Trigger:** Ethan 2026-07-12: on an untracked U file, next-change jumps down five once and then stops; previous keeps stepping up correctly
 **Symptom:** On a tall new/untracked file, the first NEXT press moved the caret from L1 to L6 but did not move the viewport from L1. Every later NEXT silently repeated the same L6 target, so downward review was permanently stuck after one press. Rapid presses could also reuse stale viewport/editor state. The shared tall-hunk down step had the same latent already-visible-target flaw.
