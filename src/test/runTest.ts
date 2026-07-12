@@ -42,13 +42,19 @@ async function main() {
 		fs.mkdirSync(path.join(fixturePath, 'committed'));
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'mod_a.txt'), lines(40, 'mod_a')); // 2-hunk modified-file test
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'mod_d.txt'), lines(10, 'mod_d')); // second modified file (fall-through target)
+		fs.writeFileSync(path.join(fixturePath, 'committed', 'tall_e.txt'), lines(260, 'tall_e')); // tall contiguous-hunk viewport stepping
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'del_b.txt'), lines(20, 'del_b')); // deleted-file tests
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'ren_c.txt'), lines(20, 'ren_c')); // rename test
 		run('git add -A');
 		run('git commit -m "base"');
 
 		// Download VS Code, unzip it and run the integration tests against the fixture workspace.
+		// CI normally downloads the requested stable build. Local diagnosis can set BGV_VSCODE_EXECUTABLE_PATH
+		// to reuse an already-installed Code binary, avoiding a 280MB download and making it practical to run
+		// the real E2E suite before every release (v1.2.15/v1.2.17 were shipped without it on the MBP).
+		const vscodeExecutablePath = process.env.BGV_VSCODE_EXECUTABLE_PATH;
 		await runTests({
+			...(vscodeExecutablePath ? { vscodeExecutablePath } : {}),
 			extensionDevelopmentPath,
 			extensionTestsPath,
 			launchArgs: [

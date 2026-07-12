@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.18] (ethansk fork) — repeated next-change reliably scrolls new files and tall hunks
+
+- **Fixed: next-change moved five lines once, then got stuck forever on untracked (`U`) files.** The first press moved the caret from line 1 to line 6, but VS Code ignored the request to put line 6 at the top because it was already visible; the viewport stayed at line 1, so every later press recomputed line 6 and became a no-op. New-file review now performs a real relative logical-line scroll, waits for the viewport to settle, then pins the caret to the new top.
+- **Fixed the same latent downward-scroll bug for tall modified hunks.** New-file stepping and tall-hunk staging share the corrected viewport mover, with symmetric next/previous behavior and exact configured jump sizes.
+- **Rapid presses are no longer lost or applied to stale editors.** All next/previous change navigation—keyboard layouts and smart mouse entry points alike—runs through one shared queue, so key repeat and quick double/triple presses execute in order after each viewport/editor transition settles.
+- **Real E2E coverage now proves the viewport moved, not merely the caret.** Production-shaped 240-line untracked and staged-new files, a 220-line modified hunk, custom jump sizes, reverse navigation, Source-Control-focused review, and rapid triple presses all run against a real VS Code extension host. The suite can also reuse the locally installed VS Code binary via `BGV_VSCODE_EXECUTABLE_PATH`, so releases no longer need to skip E2E testing on this Mac.
+
 ## [1.2.17] (ethansk fork) — no-context navigation now picks a changed file
 
 - **Fixed: next/previous change silently did nothing when no changed file had focus.** This commonly happened after stage-and-advance staged the final unstaged file and closed its editor, leaving either no tab or a clean/settings tab active. Next now opens the first changed file; previous opens the last and lands at its bottom/last hunk.

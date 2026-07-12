@@ -1863,7 +1863,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
             return false;
         }
         const target = direction === "down" ? Math.min(cur + step, last) : Math.max(cur - step, 0);
-        revealTopAndPinCursor(stepEditor, target);
+        await revealTopAndPinCursor(stepEditor, target);
         debugLog("new-file", `${direction}: no viewport, caret-fallback step L${cur + 1}->L${target + 1} (step=${step})`);
         return true;
     }
@@ -1875,10 +1875,11 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
             debugLog("new-file", `down: last line L${last + 1} visible (viewport L${top + 1}-L${bottom + 1}) -> advance to next file`);
             return false;
         }
-        // Scroll the viewport DOWN by `step` lines (AtTop scrolls immediately, unlike InCenter which clamps a
-        // near-top target and appears frozen). Caret pinned to the new top so it tracks what's shown.
+        // Scroll the viewport DOWN by `step` lines through the shared forced-scroll helper. Caret is pinned to
+        // the new top so it tracks what's shown; unlike the old direct AtTop call, this cannot no-op merely
+        // because the target line was already visible inside the old viewport.
         const newTop = Math.min(top + step, last);
-        revealTopAndPinCursor(stepEditor, newTop);
+        await revealTopAndPinCursor(stepEditor, newTop);
         debugLog("new-file", `down: scroll top L${top + 1}->L${newTop + 1} (bottom was L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
         return true;
     }
@@ -1888,7 +1889,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
         return false;
     }
     const newTop = Math.max(top - step, 0);
-    revealTopAndPinCursor(stepEditor, newTop);
+    await revealTopAndPinCursor(stepEditor, newTop);
     debugLog("new-file", `up: scroll top L${top + 1}->L${newTop + 1} (bottom was L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
     return true;
 };
@@ -2193,13 +2194,78 @@ const readViewport = (editor: vscode.TextEditor): { top: number; bottom: number;
     return { top, bottom, visLines: Math.max(1, bottom - top + 1) };
 };
 
+// Wait briefly for VS Code to publish the viewport produced by a scrolling call. revealRange is a void API:
+// the renderer applies it asynchronously, so resolving a navigation command immediately lets a rapid second
+// keypress read the OLD visibleRanges and repeat the same step. The timeout is deliberately short and merely a
+// settling fallback; in normal use onDidChangeTextEditorVisibleRanges resolves this as soon as the renderer moves.
+const waitForViewportTopChange = async (editor: vscode.TextEditor, oldTop: number): Promise<void> => {
+    const editorKey = editor.document.uri.toString();
+    await new Promise<void>((resolve) => {
+        let finished = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let subscription: vscode.Disposable | undefined;
+        const finish = () => {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            subscription?.dispose();
+            if (timer) {
+                clearTimeout(timer);
+            }
+            resolve();
+        };
+        subscription = vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
+            if (event.textEditor.document.uri.toString() !== editorKey || event.textEditor.viewColumn !== editor.viewColumn) {
+                return;
+            }
+            const movedViewport = readViewport(event.textEditor);
+            if (movedViewport && movedViewport.top !== oldTop) {
+                finish();
+            }
+        });
+        timer = setTimeout(finish, 120);
+    });
+};
+
 // Scroll `editor` so `topLine` is the top visible line, and pin the caret there (kept inside the hunk so
 // revert-and-save + the built-in advance both target the right change — see the CURSOR vs SCROLL note).
-const revealTopAndPinCursor = (editor: vscode.TextEditor, topLine: number): void => {
-    const clamped = Math.max(0, Math.min(topLine, Math.max(0, editor.document.lineCount - 1)));
-    const pos = new vscode.Position(clamped, 0);
-    editor.selection = new vscode.Selection(pos, pos); // caret follows the scroll, stays inside the hunk
-    editor.revealRange(new vscode.Range(clamped, 0, clamped, 0), vscode.TextEditorRevealType.AtTop);
+//
+// v1.2.18 ROOT CAUSE — `revealRange(topLine, AtTop)` alone can be ignored by the workbench when `topLine`
+// is ALREADY visible. Every downward step deliberately targets `viewport.top + step`, which is normally still
+// inside the current viewport. The first press moved the caret from L1 to L6 but left the viewport at L1; every
+// later press recomputed the same L6 target and became a permanent no-op. Up appeared healthy because its target
+// is ABOVE the viewport and therefore necessarily forces a reveal. Use VS Code's own `editorScroll` core command
+// for a REAL relative logical-line scroll in either direction; unlike revealRange it changes scrollTop directly
+// even when the destination line is already visible. Then wait for visibleRanges to settle and pin the caret.
+const revealTopAndPinCursor = async (editor: vscode.TextEditor, topLine: number): Promise<void> => {
+    const last = Math.max(0, editor.document.lineCount - 1);
+    const clampedTop = Math.max(0, Math.min(topLine, last));
+    const viewportBefore = readViewport(editor);
+    if (!viewportBefore || clampedTop === viewportBefore.top) {
+        // No layout yet: retain the direct API fallback. Equal-top needs only the caret pin (no scroll wait).
+        const pos = new vscode.Position(clampedTop, 0);
+        editor.selection = new vscode.Selection(pos, pos);
+        if (!viewportBefore) {
+            editor.revealRange(new vscode.Range(clampedTop, 0, clampedTop, 0), vscode.TextEditorRevealType.AtTop);
+        }
+        return;
+    }
+
+    const viewportSettled = waitForViewportTopChange(editor, viewportBefore.top);
+    const delta = clampedTop - viewportBefore.top;
+    await vscode.commands.executeCommand("editorScroll", {
+        to: delta > 0 ? "down" : "up",
+        by: "line",
+        value: Math.abs(delta),
+        revealCursor: false,
+    });
+    await viewportSettled;
+
+    // Pin only after the renderer has moved. Setting the selection before the reveal is what produced a visible
+    // caret jump with no viewport movement in the reported untracked-file failure.
+    const pos = new vscode.Position(clampedTop, 0);
+    editor.selection = new vscode.Selection(pos, pos);
 };
 
 // Scroll `editor` so `bottomLine` is brought into view at the BOTTOM of the viewport, and pin the caret THERE.
@@ -2297,13 +2363,13 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
             );
             return true;
         }
-        // NORMAL step: scroll down ~one screenful (minus overlap), never past maxTop. AtTop is safe here
-        // because we're still far enough from EOF that the target line CAN be placed at the top.
+        // NORMAL step: scroll down ~one screenful (minus overlap), never past maxTop. The shared helper forces
+        // an actual viewport move even when newTop is still visible at the bottom of the current screen.
         let newTop = Math.min(top + step, maxTop);
         if (newTop <= top) {
             newTop = top + step; // guarantee forward progress even in odd geometry
         }
-        revealTopAndPinCursor(ctx.editor, newTop);
+        await revealTopAndPinCursor(ctx.editor, newTop);
         debugLog("tall-hunk", `${base} | remainingBelow=${remainingBelow} maxTop=L${maxTop + 1} | DECISION: step DOWN, newTop=L${newTop + 1}`);
         return true;
     } else {
@@ -2345,7 +2411,7 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
         // FINAL STEP: a normal screenful-minus-overlap step would reach or pass minTop, i.e. this press should
         // land on the hunk's head. Reveal the START at the top (AtTop near doc-top never clamps) and park caret.
         if (top - step <= minTop) {
-            revealTopAndPinCursor(ctx.editor, hunk.start); // shows [hunk.start..]; caret parked at hunk.start
+            await revealTopAndPinCursor(ctx.editor, hunk.start); // shows [hunk.start..]; caret parked at hunk.start
             debugLog(
                 "tall-hunk",
                 `${base} | remainingAbove=${remainingAbove} minTop=L${minTop + 1} | DECISION: FINAL step -> reveal hunk start L${hunk.start + 1} at top, caret parked at start (next press advances)`,
@@ -2357,7 +2423,7 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
         if (newTop >= top) {
             newTop = top - step; // guarantee upward progress even in odd geometry
         }
-        revealTopAndPinCursor(ctx.editor, newTop);
+        await revealTopAndPinCursor(ctx.editor, newTop);
         debugLog("tall-hunk", `${base} | remainingAbove=${remainingAbove} minTop=L${minTop + 1} | DECISION: step UP, newTop=L${newTop + 1}`);
         return true;
     }
@@ -2368,12 +2434,12 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
 // start, so the NEXT press steps down); going UP we land showing its BOTTOM portion (so the next press
 // steps UP toward the top). Short hunks are left exactly where the built-in put them (don't disturb today's
 // feel). Best-effort: no context / no matching hunk -> leave the built-in's own reveal untouched.
-const revealHunkOnLanding = (
+const revealHunkOnLanding = async (
     ctx: HunkStageContext,
     caretLine: number,
     direction: "down" | "up",
     avoidHunk?: ModifiedHunk, // the hunk we were stepping in BEFORE the built-in advance (loop guard)
-): void => {
+): Promise<void> => {
     const vp = readViewport(ctx.editor);
     if (!vp) {
         return;
@@ -2400,16 +2466,28 @@ const revealHunkOnLanding = (
         return; // short hunk -> the built-in's reveal is fine, don't reposition
     }
     if (direction === "down") {
-        revealTopAndPinCursor(ctx.editor, hunk.start); // land at the top of the tall hunk
+        await revealTopAndPinCursor(ctx.editor, hunk.start); // land at the top of the tall hunk
         debugLog("tall-hunk", `landing(down): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed at its top`);
     } else {
         // Land showing the bottom portion so subsequent 'previous' presses step UP through the hunk.
-        revealTopAndPinCursor(ctx.editor, Math.max(hunk.start, hunk.end - visLines + 1));
+        await revealTopAndPinCursor(ctx.editor, Math.max(hunk.start, hunk.end - visLines + 1));
         debugLog("tall-hunk", `landing(up): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed showing its bottom`);
     }
 };
 
-const goToNextDiff = async () => {
+// Serialize every change-navigation press across keyboard and smart-mouse entry points. The scroll renderer and
+// git.openChange both settle asynchronously; without one shared queue, key-repeat can start a second navigation
+// against the first press's old viewport/editor and either lose a step or touch a just-disposed TextEditor.
+let changeNavigationTail: Promise<void> = Promise.resolve();
+const serializeChangeNavigation = (operation: () => Promise<void>): Promise<void> => {
+    const run = changeNavigationTail.then(operation, operation);
+    // Keep the tail fulfilled even if one best-effort navigation call fails, so later keypresses are never
+    // permanently blocked behind a rejected promise. The caller still receives `run` and can observe its error.
+    changeNavigationTail = run.catch(() => undefined);
+    return run;
+};
+
+const goToNextDiffOnce = async () => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath — avoids the clipboard
     // save/blank/restore hack in the hot path when focus is in the SCM panel. activeEditor is still kept for
@@ -2472,11 +2550,11 @@ const goToNextDiff = async () => {
     // screenful shows it from the start and the next press steps down through it (staging). Short hunks are
     // left exactly where the built-in reveal put them. stageCtx.hunks is still valid (same file).
     if (stageCtx && lineAfter !== undefined) {
-        revealHunkOnLanding(stageCtx, lineAfter, "down", hunkBefore);
+        await revealHunkOnLanding(stageCtx, lineAfter, "down", hunkBefore);
     }
 };
 
-const goToPreviousDiff = async () => {
+const goToPreviousDiffOnce = async () => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath (see goToNextDiff).
     if (!(await activeNavFilePath())) {
@@ -2525,9 +2603,14 @@ const goToPreviousDiff = async () => {
     // Advanced to a previous hunk within this file. If it's tall, land showing its BOTTOM portion so
     // subsequent 'previous' presses step UP through it toward the top (the mirror of the next-change flow).
     if (stageCtx && lineAfter !== undefined) {
-        revealHunkOnLanding(stageCtx, lineAfter, "up", hunkBefore);
+        await revealHunkOnLanding(stageCtx, lineAfter, "up", hunkBefore);
     }
 };
+
+// Thin queued wrappers are the single public/shared path used by direct keyboard commands and smart mouse
+// navigation alike. Keeping the queue here (rather than in keybindings) covers every entry point identically.
+const goToNextDiff = (): Promise<void> => serializeChangeNavigation(goToNextDiffOnce);
+const goToPreviousDiff = (): Promise<void> => serializeChangeNavigation(goToPreviousDiffOnce);
 
 const goToFirstOrNextFile = async () => {
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath (see goToNextDiff).
