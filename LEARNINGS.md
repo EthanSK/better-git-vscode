@@ -29,8 +29,8 @@ Each entry looks like:
 **Symptom:** On a crowded staged/index diff, the editor-title `+` was no longer visible even though stage-and-advance still existed. It appeared only under the editor `…` overflow menu.
 **Root cause:** v1.2.16 assigned the action `navigation@100` to pin it furthest right. Current VS Code overflows the highest-order editor-title actions first when space is constrained, so the exact ordering intended to stabilize the button also made it the first primary action to disappear.
 **Fix:** package.json v1.2.19: move the action to `navigation@9`, immediately before VS Code's built-in Previous/Next Change arrows at orders 10/11, so the stage-and-advance action survives title-bar overflow.
-**Commit:** pending
-**Guard:** Real VS Code extension-development-host inspection on a crowded staged/index diff must show `Stage current file and advance in last-navigated direction` as a visible editor-title button, not only in the `…` menu. Production package and manifest validation must pass.
+**Commit:** 21af53b (PR #29)
+**Guard:** Real VS Code extension-development-host inspection on a crowded staged/index diff showed `Stage current file and advance in last-navigated direction` as a visible editor-title button, not only in the `…` menu. Real-host E2E 16/16 passed on rerun (one prior tall-hunk viewport timing poll flaked, with no logic changes in this manifest-only release); lint + tsc + production package + vsce file listing green. Merged and installed locally as v1.2.19; Marketplace publish was blocked because the stored publisher PAT had expired.
 ---
 
 ---
