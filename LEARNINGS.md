@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-12T23:09:05Z
+**Trigger:** Ethan 2026-07-12: on an untracked U file, next-change jumps down five once and then stops; previous keeps stepping up correctly
+**Symptom:** On a tall new/untracked file, the first NEXT press moved the caret from L1 to L6 but did not move the viewport from L1. Every later NEXT silently repeated the same L6 target, so downward review was permanently stuck after one press. Rapid presses could also reuse stale viewport/editor state. The shared tall-hunk down step had the same latent already-visible-target flaw.
+**Root cause:** v1.2.15 made the viewport the source of truth but scrolled with `TextEditor.revealRange(viewport.top + step, AtTop)`. That target is normally already visible inside the current viewport, and the real VS Code workbench did not force a scroll in that case. Because the command returned before `visibleRanges` changed, the next press reread the old top and recomputed the identical target. The earlier E2E assertions checked only the caret, used short fixtures, and the v1.2.15/v1.2.17 MBP release flow explicitly skipped `npm test`, so the viewport failure escaped.
+**Fix:** src/extension.ts v1.2.18: shared top-and-pin movement now uses VS Code's real relative logical-line `editorScroll`, awaits the exact editor/view-column viewport event (short timeout fallback), then pins the caret. Both new-file and tall-hunk up/down paths await it. All shared next/previous navigation is serialized through one queue so keyboard repeat and smart-mouse presses cannot overlap against stale state or disposed editors. src/test now supports `BGV_VSCODE_EXECUTABLE_PATH` for local real-host runs and uses production-height fixtures.
+**Commit:** 7745dd2
+**Guard:** Real VS Code E2E suite asserts viewport top AND caret for 240-line untracked/staged-new files, custom jump size, reverse stepping, rapid triple presses, and a 220-line modified tall hunk with focus in Source Control; 16/16 passing. lint + tsc + production package + vsce file listing green. Published v1.2.18 (PR #28).
+---
+
+---
 **Date:** 2026-07-12T21:52:33Z
 **Trigger:** Ethan 2026-07-11: if NO file has focus/selection (after we finish staging everything) next/previous-change should just PICK one, obviously
 **Symptom:** Pressing next/previous-change with NO file context (after stage-and-advance staged the LAST file and closed its editor, or focus on a clean/settings tab) silently did nothing
