@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-13T22:36:12Z
+**Trigger:** Coordinator follow-through approval after v1.2.21, 2026-07-13
+**Symptom:** Scroll-stepping (alt+./alt+, through new files and tall hunks) silently no-oped whenever editor focus was elsewhere (SCM view, other split, unfocused/background window). Surfaced as 5/17 E2E tests timing out at 'viewport ... (at 0)' in the unfocused Mini test host during v1.2.21 verification.
+**Root cause:** v1.2.18's revealTopAndPinCursor scrolled via the global 'editorScroll' command, which acts on the FOCUSED editor widget and cannot target the TextEditor argument (Codex audit finding 2). The waiter also matched any viewport change by URI+viewColumn instead of the expected top on the exact editor object (finding 3), and editorScroll's arg shape is an untyped internal contract (finding 4).
+**Fix:** v1.2.22 (PR #32, bd87b2e), written by Codex gpt-5.6 xhigh: editor-scoped TextEditor.revealRange(AtTop) replaces editorScroll; already-visible targets are handled by first revealing an off-screen half-viewport forcing anchor (preserving the v1.2.18 already-visible fix); waitForViewportTop requires exact editor object identity + expected top and verifies real viewport state on timeout; sticky-padding calibration, bounded retry, achieved-top caret pinning; stepThroughNewFile no longer calls showTextDocument (replacement-editor identity hazard; reveals need no focus).
+**Commit:** bd87b2e
+**Guard:** Mini E2E in an UNFOCUSED window is the regression guard: 17/17 passing in 7s after the fix vs 12/17 with ~1m of timeouts before — any focus-dependence reintroduced will re-fail those 5 tests. Published as v1.2.22.
+---
+
+---
 **Date:** 2026-07-13T22:08:48Z
 **Trigger:** v1.2.21 release verification run, 2026-07-13
 **Symptom:** E2E suite on the Mac Mini via SSH: 5 scroll-navigation tests fail with 'viewport ... to start at line N (at 0)' — viewport never moves — while the same suite passed 16/16 on the authoring machine. Also: @vscode/test-electron 2.3.6 downloader crashes with 'write EPIPE' under Node v25 on the Mini, and the repo's local .vscode-test caches were corrupted (Electron binary = 4-byte ASCII file).
