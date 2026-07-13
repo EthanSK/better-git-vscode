@@ -1857,26 +1857,19 @@ const newFileScrollEditor = (): vscode.TextEditor | undefined => {
 //   final down-step can never stick near the bottom — the same clamp that plagued the v1.2.10 tall-hunk bug is
 //   sidestepped here: a clamped down-step still makes `bottom` reach `last`, so the NEXT press advances.
 //
-// v1.2.1 legacy note (still true): async + focuses the editor being stepped. An UNFOCUSED editor renders no
-// caret, so when focus sat in the SCM panel the old steps were invisible (part of the perceived "nothing
-// happens"). Focusing also guarantees editor.visibleRanges reflects the editor the user is actually looking at.
+// v1.2.1 legacy note (superseded in v1.2.22): this used to call showTextDocument to focus the file before
+// stepping because an unfocused editor did not draw its caret. That call can return/activate a replacement
+// TextEditor object for the same document, however, which defeats the exact-editor identity required by the
+// focus-independent reveal waiter below. The active-tab gate already hands us the TextEditor that is actually
+// rendering the tab, and editor-scoped revealRange works without keyboard/OS focus, so keep and operate on that
+// object. Selection still updates; VS Code draws the caret whenever the editor next receives focus.
 const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" | "up"): Promise<boolean> => {
     const configured = vscode.workspace.getConfiguration("better-git-vscode").get<number>("newFileNavLineJump", 5);
     // Guard bad user values: 0 / negative / NaN would "step" in place forever — a permanent no-op. Floor
     // fractional values; anything non-usable falls back to the default 5.
     const step = Number.isFinite(configured) && (configured as number) >= 1 ? Math.floor(configured as number) : 5;
 
-    // Focus the editor we're about to step (safe here: the gate guarantees a plain file: document, never a
-    // diff side or virtual doc). showTextDocument on an already-visible document re-uses its tab/column, and
-    // the returned editor is the one whose visibleRanges we then read. If focusing fails for any reason, still
-    // act on the passed editor — movement over silence.
-    let stepEditor = editor;
-    try {
-        stepEditor = await vscode.window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, preserveFocus: false });
-    } catch {
-        // keep the unfocused editor — the reveal below still applies
-    }
-
+    const stepEditor = editor;
     const last = Math.max(0, stepEditor.document.lineCount - 1);
     const vp = readViewport(stepEditor);
     if (!vp) {
@@ -2221,17 +2214,25 @@ const readViewport = (editor: vscode.TextEditor): { top: number; bottom: number;
     return { top, bottom, visLines: Math.max(1, bottom - top + 1) };
 };
 
-// Wait briefly for VS Code to publish the viewport produced by a scrolling call. revealRange is a void API:
+// Wait briefly for THIS exact TextEditor object to publish the requested top line. revealRange is a void API:
 // the renderer applies it asynchronously, so resolving a navigation command immediately lets a rapid second
-// keypress read the OLD visibleRanges and repeat the same step. The timeout is deliberately short and merely a
-// settling fallback; in normal use onDidChangeTextEditorVisibleRanges resolves this as soon as the renderer moves.
-const waitForViewportTopChange = async (editor: vscode.TextEditor, oldTop: number): Promise<void> => {
-    const editorKey = editor.document.uri.toString();
-    await new Promise<void>((resolve) => {
+// keypress read the OLD visibleRanges and repeat the same step. Matching only URI + viewColumn is not sufficient:
+// VS Code can replace an editor widget with another editor for the same URI/column, and a delayed visible-range
+// event from that replacement must not settle an operation issued to `editor`. Requiring the exact expected top
+// also prevents an anchor reveal, an older reveal, or any unrelated partial movement from completing the wait.
+//
+// The timeout stays deliberately short. It is only a renderer-settling fallback; callers MUST verify visibleRanges
+// after it expires and must never assume that the requested reveal succeeded merely because this promise resolved.
+const waitForViewportTop = async (editor: vscode.TextEditor, expectedTop: number): Promise<boolean> => {
+    const currentViewport = readViewport(editor);
+    if (currentViewport?.top === expectedTop) {
+        return true;
+    }
+    return new Promise<boolean>((resolve) => {
         let finished = false;
         let timer: ReturnType<typeof setTimeout> | undefined;
         let subscription: vscode.Disposable | undefined;
-        const finish = () => {
+        const finish = (reachedExpectedTop: boolean) => {
             if (finished) {
                 return;
             }
@@ -2240,19 +2241,49 @@ const waitForViewportTopChange = async (editor: vscode.TextEditor, oldTop: numbe
             if (timer) {
                 clearTimeout(timer);
             }
-            resolve();
+            resolve(reachedExpectedTop);
         };
         subscription = vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
-            if (event.textEditor.document.uri.toString() !== editorKey || event.textEditor.viewColumn !== editor.viewColumn) {
+            if (event.textEditor !== editor) {
                 return;
             }
             const movedViewport = readViewport(event.textEditor);
-            if (movedViewport && movedViewport.top !== oldTop) {
-                finish();
+            if (movedViewport?.top === expectedTop) {
+                finish(true);
             }
         });
-        timer = setTimeout(finish, 120);
+        timer = setTimeout(() => finish(readViewport(editor)?.top === expectedTop), 120);
     });
+};
+
+// Issue one editor-scoped AtTop reveal and wait for the exact viewport it requested. Unlike the global
+// `editorScroll` command this API is targeted at the TextEditor passed by the caller, so it keeps working when
+// focus is in Source Control, another split, or an entirely different VS Code window. The return value is verified
+// state, not merely "the settling timer elapsed".
+const revealLineAtTop = async (editor: vscode.TextEditor, line: number): Promise<boolean> => {
+    const viewportSettled = waitForViewportTop(editor, line);
+    editor.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.AtTop);
+    return viewportSettled;
+};
+
+// Pick an anchor far enough outside `viewport` that VS Code cannot dismiss it as edge/render slack, but still
+// far enough from EOF that AtTop can place it exactly. The first line immediately after visibleRanges is not a
+// reliable forcing anchor: the renderer may already regard that line as effectively visible and no-op the reveal.
+// A half-viewport jump is visually smaller than going to a document edge while decisively leaving the old view.
+const forcingAnchorForViewport = (
+    viewport: { top: number; bottom: number; visLines: number },
+    last: number,
+): number | undefined => {
+    const forcingDistance = Math.max(1, Math.ceil(viewport.visLines / 2));
+    // Leave at least `visLines` lines after a downward anchor. That avoids the normal EOF clamp that would make
+    // the achieved top differ from the exact anchor our waiter requires.
+    const greatestExactlyPlaceableTop = Math.max(0, last - viewport.visLines);
+    const below = Math.min(greatestExactlyPlaceableTop, viewport.bottom + forcingDistance);
+    if (below > viewport.bottom) {
+        return below;
+    }
+    const above = Math.max(0, viewport.top - forcingDistance);
+    return above < viewport.top ? above : undefined;
 };
 
 // Scroll `editor` so `topLine` is the top visible line, and pin the caret there (kept inside the hunk so
@@ -2262,9 +2293,21 @@ const waitForViewportTopChange = async (editor: vscode.TextEditor, oldTop: numbe
 // is ALREADY visible. Every downward step deliberately targets `viewport.top + step`, which is normally still
 // inside the current viewport. The first press moved the caret from L1 to L6 but left the viewport at L1; every
 // later press recomputed the same L6 target and became a permanent no-op. Up appeared healthy because its target
-// is ABOVE the viewport and therefore necessarily forces a reveal. Use VS Code's own `editorScroll` core command
-// for a REAL relative logical-line scroll in either direction; unlike revealRange it changes scrollTop directly
-// even when the destination line is already visible. Then wait for visibleRanges to settle and pin the caret.
+// is ABOVE the viewport and therefore necessarily forces a reveal.
+//
+// v1.2.22 replaces the attempted workaround (`commands.executeCommand("editorScroll", ...)`) entirely. That
+// command scrolls whichever editor widget currently owns keyboard focus; its object argument cannot target the
+// TextEditor received here. It therefore silently no-ops when review runs from Source Control, another split, or
+// an unfocused/background VS Code window. Its `{to, by, value, revealCursor}` argument is also an untyped internal
+// command contract, while TextEditor.revealRange is the public editor-scoped API supported by our VS Code engine.
+//
+// To preserve the v1.2.18 already-visible fix while using the public API, first reveal an OFF-SCREEN forcing
+// anchor whenever the requested top is currently visible. AtTop cannot ignore that first reveal because the anchor
+// is outside the viewport. As soon as that exact anchor viewport is observed, reveal the real target AtTop; now the
+// target is off-screen too, so the second reveal is likewise forced. The two calls are back-to-back apart from the
+// required renderer event, minimizing visible flicker. If the document fully fits in the viewport there is no
+// off-screen anchor and scrolling is physically impossible; in that small-document case the existing viewport is
+// already the only achievable result, so pinning the caret is success.
 const revealTopAndPinCursor = async (editor: vscode.TextEditor, topLine: number): Promise<void> => {
     const last = Math.max(0, editor.document.lineCount - 1);
     const clampedTop = Math.max(0, Math.min(topLine, last));
@@ -2279,19 +2322,69 @@ const revealTopAndPinCursor = async (editor: vscode.TextEditor, topLine: number)
         return;
     }
 
-    const viewportSettled = waitForViewportTopChange(editor, viewportBefore.top);
-    const delta = clampedTop - viewportBefore.top;
-    await vscode.commands.executeCommand("editorScroll", {
-        to: delta > 0 ? "down" : "up",
-        by: "line",
-        value: Math.abs(delta),
-        revealCursor: false,
-    });
-    await viewportSettled;
+    const targetIsVisible = clampedTop >= viewportBefore.top && clampedTop <= viewportBefore.bottom;
+    let revealTopOffset = 0;
+    if (targetIsVisible) {
+        // Prefer a half-viewport-distant line below; above covers near-EOF cases. If neither exists, every
+        // document line is already visible and VS Code has no scrollable layout to move.
+        const forcingAnchor = forcingAnchorForViewport(viewportBefore, last);
+        if (forcingAnchor === undefined) {
+            const pos = new vscode.Position(clampedTop, 0);
+            editor.selection = new vscode.Selection(pos, pos);
+            return;
+        }
+
+        await revealLineAtTop(editor, forcingAnchor);
+        const viewportAfterAnchor = readViewport(editor);
+        if (viewportAfterAnchor) {
+            // Some editor layouts intentionally keep a few context/sticky lines above an AtTop reveal. The API
+            // still moved the correct editor, but visibleRanges.top can be `anchor - padding` rather than anchor.
+            // Calibrate that public-API behavior from the forcing reveal and compensate the target reveal line;
+            // the waiter below still verifies the exact requested viewport top, so this never accepts "close".
+            revealTopOffset = forcingAnchor - viewportAfterAnchor.top;
+        }
+    }
+
+    const targetRevealLine = Math.max(0, Math.min(clampedTop + revealTopOffset, last));
+    let reachedRequestedTop = targetRevealLine === clampedTop
+        ? await revealLineAtTop(editor, clampedTop)
+        : await (async () => {
+            const viewportSettled = waitForViewportTop(editor, clampedTop);
+            editor.revealRange(
+                new vscode.Range(targetRevealLine, 0, targetRevealLine, 0),
+                vscode.TextEditorRevealType.AtTop,
+            );
+            return viewportSettled;
+        })();
+    if (!reachedRequestedTop) {
+        // A timeout is not success. Verify the actual viewport, then retry through the same forcing mechanism when
+        // possible. This covers a dropped/delayed first reveal without ever falling back to the focus-bound global
+        // command. The retry is intentionally bounded to keep command latency near the old 120ms settling fallback.
+        const viewportAfterFirstReveal = readViewport(editor);
+        if (viewportAfterFirstReveal && viewportAfterFirstReveal.top !== clampedTop) {
+            const retryAnchor = forcingAnchorForViewport(viewportAfterFirstReveal, last);
+            if (retryAnchor !== undefined) {
+                await revealLineAtTop(editor, retryAnchor);
+                const viewportAfterRetryAnchor = readViewport(editor);
+                const retryOffset = viewportAfterRetryAnchor ? retryAnchor - viewportAfterRetryAnchor.top : 0;
+                const retryRevealLine = Math.max(0, Math.min(clampedTop + retryOffset, last));
+                const viewportSettled = waitForViewportTop(editor, clampedTop);
+                editor.revealRange(
+                    new vscode.Range(retryRevealLine, 0, retryRevealLine, 0),
+                    vscode.TextEditorRevealType.AtTop,
+                );
+                reachedRequestedTop = await viewportSettled;
+            }
+        }
+    }
 
     // Pin only after the renderer has moved. Setting the selection before the reveal is what produced a visible
-    // caret jump with no viewport movement in the reported untracked-file failure.
-    const pos = new vscode.Position(clampedTop, 0);
+    // caret jump with no viewport movement in the reported untracked-file failure. If both short waits expired,
+    // never pretend the requested top was achieved: park at the top VS Code actually published so the next queued
+    // press computes from real viewport state rather than freezing on an assumed target.
+    const achievedTop = readViewport(editor)?.top ?? clampedTop;
+    const caretLine = reachedRequestedTop ? clampedTop : achievedTop;
+    const pos = new vscode.Position(caretLine, 0);
     editor.selection = new vscode.Selection(pos, pos);
 };
 
