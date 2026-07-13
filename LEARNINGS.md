@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-13T21:55:17Z
+**Trigger:** Ethan 2026-07-13: 'the buttons are inverse' after Marketplace update to v1.2.20
+**Symptom:** User reported 'the buttons are inverse' immediately after updating to v1.2.20 — the editor-title + (stage-and-advance) and VS Code's built-in diff Previous/Next Change arrows had swapped sides, breaking the far-right hover spot muscle memory. Regression shipped in the UNREVIEWED v1.2.18-1.2.20 batch (PRs #28-#30).
+**Root cause:** PR #29 (21af53b, v1.2.19) changed the editor/title contribution from navigation@100 to navigation@9 to dodge title-bar overflow. The right-aligned navigation group sorts ascending, so @9 rendered the + LEFT of the built-in arrows (orders 10/11) instead of far right — inverting the visual button order established in v1.2.16 at Ethan's explicit request. Root process failure: three PRs published without review.
+**Fix:** v1.2.21 (PR #31, f4c6d9a), written by Codex gpt-5.6 xhigh per repo convention: restored navigation@100 in package.json with a comment documenting the full v1.2.16->v1.2.21 ordering history; crowded-diff overflow is now deliberately covered by v1.2.20's status-bar Stage & Next button (kept). Codex review also flagged follow-ups in #28's scroll helper: editorScroll targets the ACTIVE editor not the passed one; waitForViewportTopChange accepts any top change not the expected target; editorScroll arg shape is an internal contract.
+**Commit:** f4c6d9a
+**Guard:** Regression pin test in src/test/suite/extension.test.ts asserts the manifest keeps navigation@100 — a future intentional move must consciously update the test and get user sign-off. Manifest also inspected inside the packaged vsix before publish.
+---
+
+---
 **Date:** 2026-07-13T00:55:00Z
 **Trigger:** Ethan 2026-07-13: add a stable Stage & Next button that does not move between modified, added and staged editor shapes
 **Symptom:** Even when the editor-title `+` remains visible, its horizontal position changes because VS Code conditionally adds/removes built-in diff, revision, whitespace and layout actions for each editor/file state.
