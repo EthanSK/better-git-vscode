@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.21] (ethansk fork) — restore the + button to the far right (fixes inverse button order)
+
+- **Fixed the user-reported "inverse buttons" regression from v1.2.19.** Moving the editor-title `+` from `navigation@100` to `navigation@9` put it to the LEFT of VS Code's built-in Previous/Next Change arrows instead of the RIGHT, reversing the visual order and breaking the stable hover-position muscle memory established in v1.2.16.
+- Restored the `+` to `navigation@100`, the far-right position in VS Code's ascending right-aligned navigation group. The built-in diff arrows at orders 10/11 remain to its LEFT, so the `+` returns to its original stable mouse target.
+- On crowded diff title bars the `+` may again overflow into the `…` menu; that tradeoff is deliberate because v1.2.20's always-visible status-bar `Stage & Next` button is now the overflow-proof fallback.
+
 ## [1.2.20] (ethansk fork) — fixed-location status-bar Stage & Next button
 
 - **Added a persistent `+ Stage & Next` button to the bottom-left status bar.** It runs the exact same `stage-current-file-and-advance` command as the editor-title `+`, including remembering whether review was moving forward or backward.
