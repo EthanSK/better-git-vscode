@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-13T22:08:48Z
+**Trigger:** v1.2.21 release verification run, 2026-07-13
+**Symptom:** E2E suite on the Mac Mini via SSH: 5 scroll-navigation tests fail with 'viewport ... to start at line N (at 0)' — viewport never moves — while the same suite passed 16/16 on the authoring machine. Also: @vscode/test-electron 2.3.6 downloader crashes with 'write EPIPE' under Node v25 on the Mini, and the repo's local .vscode-test caches were corrupted (Electron binary = 4-byte ASCII file).
+**Root cause:** Two independent causes. (1) The v1.2.18 revealTopAndPinCursor uses the global 'editorScroll' command, which acts on the FOCUSED editor widget — in an unfocused/background test window (SSH-launched on the Mini) it no-ops, so every scroll-step test times out at viewport 0. This empirically confirms Codex's 1.2.17..1.2.20 review finding: editorScroll ignores the TextEditor argument the helper receives. (2) test-electron's downloader progress stream EPIPEs under Node v25; its cache needs BOTH the 'is-complete' marker file AND the 'Visual Studio Code.app' wrapper layout with a real Mach-O Electron binary.
+**Fix:** Test-infra workaround that got the suite running on the Mini: curl the zip from update.code.visualstudio.com/1.128.0/darwin-arm64/stable, ditto -x -k into .vscode-test/vscode-darwin-arm64-1.128.0/, touch is-complete, strip quarantine. Result: 12/17 passing incl. the v1.2.21 pin test; the 5 focus-dependent scroll tests still fail unfocused. PRODUCT FOLLOW-UP (open): replace global editorScroll with an editor-targeted revealRange strategy + make waitForViewportTopChange take expectedTop and require exact editor identity (Codex's recommended design, in PR #31 description).
+**Commit:** f4c6d9a
+**Guard:** This entry. Until the editorScroll follow-up ships, treat Mini-run scroll-test failures at 'viewport ... (at 0)' as the known focus no-op, not a fresh regression — but ALSO remember the daily-driver implication: alt+. scroll-stepping silently no-ops whenever editor focus is elsewhere (e.g. SCM view).
+---
+
+---
 **Date:** 2026-07-13T21:55:17Z
 **Trigger:** Ethan 2026-07-13: 'the buttons are inverse' after Marketplace update to v1.2.20
 **Symptom:** User reported 'the buttons are inverse' immediately after updating to v1.2.20 — the editor-title + (stage-and-advance) and VS Code's built-in diff Previous/Next Change arrows had swapped sides, breaking the far-right hover spot muscle memory. Regression shipped in the UNREVIEWED v1.2.18-1.2.20 batch (PRs #28-#30).
