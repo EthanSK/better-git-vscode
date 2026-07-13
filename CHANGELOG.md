@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.22] (ethansk fork) — focus-independent scroll stepping
+
+- **Fixed: new-file and tall-hunk stepping silently failed when the target editor was not focused.** The v1.2.18 workaround called VS Code's global `editorScroll` command, which scrolls only the focused editor widget and ignores the `TextEditor` the extension intended to move. Review commands launched from Source Control, another split, or an unfocused/background VS Code window could therefore pin the caret while leaving the viewport stuck at line 1.
+- **Scrolling now uses the public, editor-scoped `TextEditor.revealRange` API and verifies the exact requested viewport on the exact editor object.** When the destination is already visible—the edge case that caused v1.2.18's repeated-next freeze—the extension first reveals a nearby off-screen forcing anchor, waits for that exact viewport, then immediately reveals the real target at the top. Small documents that fully fit the viewport are treated as unscrollable success, and timeout fallbacks verify/retry before pinning the caret to the viewport VS Code actually achieved.
+
 ## [1.2.21] (ethansk fork) — restore the + button to the far right (fixes inverse button order)
 
 - **Fixed the user-reported "inverse buttons" regression from v1.2.19.** Moving the editor-title `+` from `navigation@100` to `navigation@9` put it to the LEFT of VS Code's built-in Previous/Next Change arrows instead of the RIGHT, reversing the visual order and breaking the stable hover-position muscle memory established in v1.2.16.
