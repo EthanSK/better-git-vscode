@@ -19,9 +19,27 @@ Each entry looks like:
 ---
 ```
 
+## Release installation policy
+
+- Ethan's normal VS Code must end every release task on the **Marketplace-installed** copy of `EthanSK.better-git-vscode`, never a development VSIX.
+- Prefer the Extension Development Host for testing. Install a locally-packaged VSIX into Ethan's normal VS Code only when that exact integration check is genuinely required, and treat it as temporary.
+- After publishing, first prove the requested version is downloadable from the version-specific Marketplace gallery endpoint. Marketplace list/search metadata may lag or disagree briefly after a successful publish, so do not uninstall the working copy based only on `vsce show` ordering.
+- To replace a same-version VSIX reliably, uninstall `EthanSK.better-git-vscode`, then install `EthanSK.better-git-vscode@<version>` by Marketplace ID. `--force` on an already-installed identical version is not proof that VS Code replaced its source.
+- Verify both `code --list-extensions --show-versions` and the matching row in `~/.vscode/extensions/extensions.json`. The final row must have the released version and must not have `metadata.source: "vsix"`.
+
 ## Entries
 
 (newest first)
+
+---
+**Date:** 2026-07-14T13:25:40Z
+**Trigger:** Ethan 2026-07-14: do not leave Better Git installed locally; return normal VS Code to the Marketplace version after any necessary local test
+**Symptom:** After v1.2.23 was published, `code --list-extensions --show-versions` correctly showed `1.2.23`, but `~/.vscode/extensions/extensions.json` still identified the installed copy as `metadata.source: "vsix"`. Version alone could not distinguish the temporary local package from the Marketplace release.
+**Root cause:** Installing a development VSIX writes the same publisher, extension ID, and version as the eventual release. A later same-version install attempt can be treated as already satisfied, leaving the VSIX-sourced copy in place. Marketplace list metadata also briefly alternated between v1.2.22 and v1.2.23 across queries even though the version-specific v1.2.23 gallery package was already downloadable.
+**Fix:** Added the Release installation policy above. Prefer Extension Development Host testing; if normal VS Code temporarily needs a VSIX, wait until the published version is downloadable, then uninstall the extension and reinstall the exact version by Marketplace ID. Verify the installed-source metadata, not only the displayed version. During this incident the working Marketplace v1.2.22 copy remained installed while guarded `code --install-extension EthanSK.better-git-vscode@1.2.23 --force` attempts continued; VS Code's gallery index recognized v1.2.23 on check 22 and upgraded it successfully.
+**Commit:** a88b75b (v1.2.23 release); docs-only main follow-up adds this installation policy
+**Guard:** Release closeout is incomplete until the installed extension row reports the target version without `metadata.source: "vsix"`. The version-specific Marketplace package must be fetched/inspected before uninstalling so a propagation delay cannot strand Ethan without a working extension. Final verification for this incident: `ethansk.better-git-vscode@1.2.23`, `metadata.source: "gallery"`, and `autoAddWorktreeOnReveal.default: true`.
+---
 
 ---
 **Date:** 2026-07-14T13:06:51Z
