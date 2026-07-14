@@ -11,11 +11,11 @@ import * as path from "path";
 // ──────────────────────────────────────────────────────────────────────────────────────────
 // DEBUG LOGGING — "Better Git" OutputChannel (v1.2.10)
 //
-// WHY this exists: the tall-hunk stepping logic (stepTallHunk) makes a viewport-derived decision on every
+// WHY this exists: the tall-hunk stepping logic (stepTallHunk) makes a live caret/viewport decision on every
 // next/previous-change press, and when it gets it wrong (e.g. the v1.2.9 stuck-near-the-bottom-of-a-tall-hunk
 // bug) there was NO way to see WHY without re-deriving the geometry by hand from screenshots. This channel logs
 // every step decision — direction, viewport height, hunk extent, top/bottom visible lines, caret, computed
-// target, remaining lines, and the DECISION taken — so the NEXT stuck case is diagnosable instantly instead of
+// target, and the DECISION taken — so the NEXT stuck case is diagnosable instantly instead of
 // guessed. Open it via View → Output → pick "Better Git" from the dropdown.
 //
 // Gated behind the `better-git-vscode.debugLogging` setting (default false) so it's silent for normal use and
@@ -171,10 +171,9 @@ const SCM_COLLAPSE_ALL_REPOS_COMMAND = "workbench.scm.action.collapseAllReposito
 // failure (command missing on an old host, view not resolvable) is swallowed so it can never break
 // startup or a manual invocation.
 //
-// NOTE: this is the LOW-LEVEL primitive — it collapses EVERY repository/worktree header, INCLUDING the
-// primary/main one. The user-facing behaviour (keep the primary expanded, collapse only the OTHER
-// worktrees) is layered on top in collapseWorktreesKeepingPrimaryExpanded() below, which calls this and
-// then re-expands just the primary. Kept separate so the "collapse all" step has a single definition.
+// This intentionally collapses EVERY repository/worktree header, including the primary. v1.2.13 established
+// that as the side-effect-free manual UX; v1.2.26 uses the same primitive at startup instead of reopening a
+// primary-repo change in a preview tab merely to trigger SCM auto-reveal.
 const collapseScmRepositories = async (): Promise<boolean> => {
     try {
         // Must make SCM the active sidebar container first, otherwise the view action can't resolve its
@@ -189,43 +188,10 @@ const collapseScmRepositories = async (): Promise<boolean> => {
     }
 };
 
-// ──────────────────────────────────────────────────────────────────────────────────────────
-// KEEP THE PRIMARY / MAIN REPO EXPANDED, COLLAPSE ONLY THE OTHER WORKTREES (v1.2.4)
-//
-// WHY (Ethan's exact request): the repository at the TOP of the Source Control view is his main working
-// copy — the one he's actively working in — and should stay EXPANDED. Only the ADDITIONAL linked worktrees
-// below it (e.g. ~/Documents/claude-worktrees/<project>-<name>) should fold away.
-//
-// THE API LIMITATION (verified against the shipped VS Code bundle, src/vs/workbench/contrib/scm/):
-// there is NO command that collapses (or expands) a SINGLE, specific repository. The only two repo-level
-// commands both operate on ALL of them at once:
-//   • workbench.scm.action.collapseAllRepositories — iterates scmViewService.visibleRepositories, collapses each
-//   • workbench.scm.action.expandAllRepositories   — same, but expands each
-// The per-node tree.collapse()/tree.expand() calls those wrap are INTERNAL to the SCM view and unreachable
-// from an extension. So "collapse all except the primary" is not directly expressible.
-//
-// HOW WE ACHIEVE IT ANYWAY — collapse everything, then RE-EXPAND just the primary via SCM auto-reveal:
-// the Source Control view has a built-in behaviour, `scm.autoReveal` (default ON), whose handler is
-// SCMView.onDidActiveEditorChange. When the active editor changes, it looks up the SCM resource whose
-// sourceUri matches the editor's file and calls `tree.expandTo(resource)` — which expands ALL ancestor
-// nodes of that resource, INCLUDING its repository/worktree header. (Confirmed in the bundle:
-// `await this.tree.expandTo(s); this.tree.reveal(s); ...`.) So if, right after collapsing all repos, we
-// make a file that belongs to the PRIMARY repo the active editor, the SCM view re-expands the primary's
-// header for us — and leaves every other worktree collapsed. This is model-driven (keys off the active
-// editor + the repo's own change list), which makes it far more deterministic than trying to drive the
-// tree's transient keyboard focus with list.* commands.
-//
-// HONEST LIMITATIONS (documented, not faked):
-//   1. It relies on `scm.autoReveal` being enabled (VS Code default true). If the user turned it off, we
-//      skip the re-expand — the primary stays collapsed like the rest. We check the setting and bail cleanly.
-//   2. To trigger auto-reveal we OPEN one of the primary repo's changed files in a PREVIEW tab (preview +
-//      preserveFocus, so keyboard focus stays on the Source Control panel and no pinned tab is disturbed).
-//      That is a visible side effect: on reload, the primary repo's first change is shown. For a git-diff
-//      REVIEW tool that's a reasonable landing spot, but it IS an extra tab — the tradeoff of the missing
-//      "expand one repo" API.
-//   3. If the primary repo has NO changes at all, there's no resource to reveal, so it stays collapsed
-//      (nothing to expand toward). Not a problem in practice — an unchanged primary has nothing to review.
-//   4. Timing still applies: the repos must have populated (handled by the startup poll below).
+// VS Code still exposes no command/API to persist individual repository expansion state or collapse one specific
+// header. The supported workaround is therefore deliberately all-or-nothing. Reopening a changed file to re-expand
+// one header caused preview-tab/focus side effects and also undermined the user's request that the sections remain
+// collapsed after an extension-host restart, so no auto-reveal hack belongs in the startup path anymore.
 
 // Case-insensitive (mac/win filesystems) comparison of two uris' on-disk roots, trailing separators
 // stripped, so a repo's rootUri can be matched against a workspace folder uri regardless of a trailing slash.
@@ -260,82 +226,6 @@ const getPrimaryRepository = (): any | undefined => {
     }
 };
 
-// Pick a file: uri belonging to `repo` that we can open to trigger SCM auto-reveal (which then re-expands
-// that repo's header). We prefer a working-tree change (on-disk, always openable), then an untracked file,
-// then a merge-conflict file, then a staged (index) change. We deliberately try working-tree/untracked
-// FIRST because a staged entry could be a staged DELETION whose file no longer exists on disk (showTextDocument
-// would throw — harmless, we catch it, but it's a wasted attempt). Returns the change's `.uri` (the working
-// file path), which is exactly the `sourceUri` the SCM auto-reveal matcher compares against.
-const firstOpenableChangeUri = (repo: any): vscode.Uri | undefined => {
-    // Order matters: working-tree + untracked are real on-disk files; index/merge are best-effort fallbacks.
-    const groups: any[][] = [
-        repo?.state?.workingTreeChanges ?? [],
-        repo?.state?.untrackedChanges ?? [],
-        repo?.state?.mergeChanges ?? [],
-        repo?.state?.indexChanges ?? [],
-    ];
-    for (const group of groups) {
-        const first = group[0];
-        if (first?.uri) {
-            return first.uri as vscode.Uri;
-        }
-    }
-    return undefined;
-};
-
-// THE user-facing behaviour: collapse every repository/worktree header, then re-expand ONLY the primary.
-// Used by BOTH the startup auto-collapse and the manual command, because Ethan always wants the main repo
-// he's working in left open. See the big comment block above for the mechanism + honest limitations.
-const collapseWorktreesKeepingPrimaryExpanded = async (): Promise<void> => {
-    // Step 1 — collapse ALL repo headers (this also collapses the primary; we re-open it in step 2).
-    const collapsed = await collapseScmRepositories();
-    if (!collapsed) {
-        return; // collapse command unavailable / view not resolvable — nothing more we can do
-    }
-
-    // Step 2 — re-expand just the primary by nudging SCM auto-reveal onto one of its changed files.
-    const primary = getPrimaryRepository();
-    if (!primary) {
-        return; // no repositories — nothing to keep expanded
-    }
-    // If the user disabled scm.autoReveal, the expandTo mechanism won't fire — honestly bail (primary stays
-    // collapsed with the rest) rather than pretend. This is limitation #1 in the block above.
-    const autoRevealOn = vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true);
-    if (!autoRevealOn) {
-        return;
-    }
-    const revealUri = firstOpenableChangeUri(primary);
-    if (!revealUri) {
-        return; // primary has no changes -> no resource to reveal toward -> leave it collapsed (limitation #3)
-    }
-    // BUG 12 FIX (v1.2.9 — late worktree collapses hijacked the diff the user was actively reviewing): this
-    // function runs on startup AND is re-fired (debounced) by onDidOpenRepository for ~12s as worktrees
-    // populate in waves. The Step-2 reveal below re-uses the shared PREVIEW tab (showTextDocument preview:true),
-    // so if the user has already navigated to a change in that preview tab, a late re-collapse would replace
-    // their current diff with the primary's first change out from under them. Guard: if a change-review tab is
-    // already active (currentReviewFileUri — the SAME shared "which file is under review" predicate the nav +
-    // badge use — resolves to a file), the user is mid-review, so SKIP the reveal. Their own navigation keeps
-    // firing SCM auto-reveal (expandTo) on whatever they open, so the primary re-expands the next time they
-    // land on one of its files — without us hijacking their diff. The FIRST startup collapse has no review open
-    // yet (currentReviewFileUri undefined), so it still lands on the primary's first change exactly as before.
-    if (currentReviewFileUri() !== undefined) {
-        return;
-    }
-    try {
-        // Let the collapse settle on the SCM view's internal tree-operation sequencer before we queue the
-        // reveal, so the expandTo from auto-reveal lands AFTER the collapse (otherwise a race could collapse
-        // the primary right back). A short delay is enough — both run on the same microtask-ish queue.
-        await new Promise((r) => setTimeout(r, 120));
-        // Open a primary-repo change as the ACTIVE editor to fire SCMView.onDidActiveEditorChange -> expandTo.
-        // preview:true reuses the ephemeral preview tab (doesn't pile up pinned tabs); preserveFocus:true keeps
-        // keyboard focus on the Source Control panel we just revealed, so the user isn't yanked into the editor.
-        await vscode.window.showTextDocument(revealUri, { preview: true, preserveFocus: true });
-    } catch {
-        // File couldn't be opened (e.g. a staged deletion we fell through to) — the primary just stays
-        // collapsed. Never throw: this must not break startup or a manual invocation.
-    }
-};
-
 // Reads the git API and returns how many repositories/worktrees VS Code currently has open (0 if the git
 // extension isn't ready yet). Used to (a) decide whether the multi-worktree annoyance even applies and
 // (b) poll until repos have populated before collapsing.
@@ -348,18 +238,18 @@ const getOpenRepositoryCount = (): number => {
     }
 };
 
-// The auto-on-startup routine. Gated by the `collapseWorktreesOnStartup` setting (default FALSE — opt-in;
-// changed from true in v1.2.12) and by there being ≥2 repositories (a single repo isn't the "lots of expanded
+// The auto-on-startup routine. Gated by the `collapseWorktreesOnStartup` setting (default TRUE again in v1.2.26)
+// and by there being ≥2 repositories (a single repo isn't the "lots of expanded
 // worktrees" annoyance, and we don't want to steal focus / hide the only repo's changes for it). Because repos
 // populate async, we POLL for them, then collapse. We ALSO briefly watch `onDidOpenRepository` so worktrees
 // that finish opening AFTER our first collapse still get folded — but only within a short startup window, so
 // opening a repo later in the session (deliberately) never yanks its section closed under the user.
 const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void => {
-    // Fallback matches the package.json default (false): off by default, opt-in only. The manual
+    // Fallback matches the package.json default (true). The manual
     // 'collapse-worktrees' command still works regardless of this setting.
     const enabled = vscode.workspace
         .getConfiguration("better-git-vscode")
-        .get<boolean>("collapseWorktreesOnStartup", false);
+        .get<boolean>("collapseWorktreesOnStartup", true);
     if (!enabled) {
         return; // user opted out — never auto-collapse, but the manual command still works
     }
@@ -381,18 +271,17 @@ const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void =
         if (getOpenRepositoryCount() >= MIN_REPOS_TO_COLLAPSE) {
             done = true;
             clearInterval(timer);
-            // Collapse the OTHER worktrees but keep the primary/main repo expanded (v1.2.4).
-            await collapseWorktreesKeepingPrimaryExpanded();
+            // Plain collapse-all: no primary re-expand and no preview-tab side effect.
+            await collapseScmRepositories();
             // v1.2.11 — RELIABLE COLLAPSE ON EXTENSION-HOST RESTART. activate() re-runs on "Developer: Restart
             // Extension Host", so this routine already fires then — BUT on a restart the SCM view is
             // simultaneously re-rendering from its persisted state and can RE-EXPAND the sections a beat after
             // our single collapse lands, silently undoing it (Ethan: "on restart of extensions also make it run
             // the collapse"). Fix: re-fire the collapse a few times over the first ~1.6s to win that race so the
-            // fold sticks. Re-collapsing already-collapsed sections is a harmless no-op, and the Bug-12
-            // review-in-flight guard inside collapseWorktreesKeepingPrimaryExpanded still prevents any diff
-            // hijack on the re-expand step, so these repeats can't yank a diff out from under a mid-review user.
+            // fold sticks. Re-collapsing already-collapsed sections is a harmless no-op; unlike the retired
+            // keep-primary-expanded hack, these repeats never open or replace an editor tab.
             for (const delayMs of [300, 800, 1600]) {
-                const t = setTimeout(() => void collapseWorktreesKeepingPrimaryExpanded(), delayMs);
+                const t = setTimeout(() => void collapseScmRepositories(), delayMs);
                 context.subscriptions.push(new vscode.Disposable(() => clearTimeout(t)));
             }
         } else if (polls >= MAX_POLLS) {
@@ -420,8 +309,8 @@ const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void =
                     clearTimeout(reCollapseTimer);
                 }
                 reCollapseTimer = setTimeout(() => {
-                    // Late worktree opened -> re-fold the others, still keeping the primary expanded (v1.2.4).
-                    void collapseWorktreesKeepingPrimaryExpanded();
+                    // Late worktree opened -> repeat the same plain collapse-all after discovery settles.
+                    void collapseScmRepositories();
                 }, 600);
             });
             context.subscriptions.push(sub);
@@ -516,9 +405,8 @@ export function activate(context: vscode.ExtensionContext) {
     // (including the primary/main one) and does NOT re-expand the primary afterward. Ethan explicitly asked
     // for this ("just do the normal collapse"): the old keep-primary-expanded behaviour re-opened the
     // primary's first change in a PREVIEW TAB to re-reveal it, and that tab popping open was annoying. A
-    // plain collapse has none of that. (The auto-on-startup path still keeps the primary expanded for anyone
-    // who turns collapseWorktreesOnStartup on — only this explicit command is a plain collapse.) No ≥2-repo
-    // gate — if you ask for it explicitly, we act on whatever's there.
+    // plain collapse has none of that. v1.2.26 makes the startup path use this exact same clean behavior. No
+    // ≥2-repo gate — if you ask for it explicitly, we act on whatever's there.
     let disposable14 = vscode.commands.registerCommand("better-git-vscode.collapse-worktrees", async () => {
         await collapseScmRepositories();
     });
@@ -1625,13 +1513,7 @@ const openLastFile = async () => {
     // goToLastOrPreviousFile). If that last file is a genuinely-new plain-editor file, land at its BOTTOM so the
     // NEXT 'previous' press steps UP through it instead of seeing top<=0 and skipping the whole file unseen (the
     // exact BUG 5 class of bug, previously only fixed for openPreviousFile — Codex xhigh flagged the asymmetry).
-    if (await landNewFileTargetAtBottom(target)) {
-        return;
-    }
-    // v1.2.17 mirror landing: a modified/staged diff selected by a backward no-context entry must land at its
-    // LAST hunk, just like openPreviousFile rollover. Forward entry needs no command because opening naturally
-    // starts at the first hunk; backward entry explicitly asks VS Code for the previous (last) change.
-    await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
+    await landChangeForBackwardReview(target);
 };
 
 // Shared backward-rollover landing (v1.2.15): when a BACKWARD navigation opens a genuinely-new, UNSTAGED,
@@ -1642,8 +1524,9 @@ const openLastFile = async () => {
 // WHY the bottom landing (BUG 5, v1.2.9): a MODIFIED file lands at its LAST hunk on backward rollover (via
 // compareEditor.previousChange), so subsequent 'previous' presses step UP through it. But that command is a
 // NO-OP on a genuinely-new file's PLAIN editor (no diff hunks), leaving the view at the TOP — and since
-// stepThroughNewFile is now viewport-derived (v1.2.15), a viewport at the top means the next 'previous' press
-// sees top<=0 and advances to the file BEFORE it, skipping the new file's content unseen. Landing at the bottom
+// stepThroughNewFile treats a caret at line 1 as the backward completion signal, so leaving a new target's caret
+// at the top makes the next 'previous' press advance to the file BEFORE it, skipping the new file's content unseen.
+// Landing at the bottom
 // makes the next 'previous' start stepping up from the end.
 //
 // WHY the !staged gate (Codex fix 2026-07-04): isFullyAddedFile is also true for a STAGED-new file
@@ -1672,11 +1555,22 @@ const landNewFileTargetAtBottom = async (entry: FileChange): Promise<boolean> =>
         // revealBottomAndPinCursor uses RevealType.Default, which brings an off-screen-below line into view at
         // the BOTTOM and is NEVER EOF-clamped (unlike InCenter on the last line), so the bottom shows reliably.
         const lastLine = Math.max(0, newFileEditor.document.lineCount - 1);
-        revealBottomAndPinCursor(newFileEditor, lastLine);
+        await revealBottomAndPinCursor(newFileEditor, lastLine);
     }
     // If the editor never resolved (rare race) we still return true (it IS a new-file target) — the view stays
     // at the top, the same no-op the old unconditional compareEditor.previousChange produced on a plain new file.
     return true;
+};
+
+// One shared landing contract for EVERY cross-file backward transition. A plain unstaged new file has no diff
+// navigator, so it starts at EOF; every other target asks the compare editor for its last change. Keeping this in
+// one helper prevents openPreviousFile, openLastFile, and stage-and-previous from drifting into three subtly
+// different behaviours again.
+const landChangeForBackwardReview = async (entry: FileChange): Promise<void> => {
+    if (await landNewFileTargetAtBottom(entry)) {
+        return;
+    }
+    await landPreviousDiffAtLastChange();
 };
 
 const openNextFile = async () => {
@@ -1787,12 +1681,7 @@ const openPreviousFile = async () => {
     // v1.2.15: the retry + bottom-landing logic (and the !staged gate rationale) now lives in the shared
     // landNewFileTargetAtBottom helper so openLastFile can reuse it. If the target was a genuinely-new
     // plain-editor file, the helper landed it at the bottom and we're done — do NOT run compareEditor.previousChange.
-    if (await landNewFileTargetAtBottom(fileChanges[prevIndex])) {
-        return;
-    }
-    // Diff (modified/renamed) file, or any non-new-file view: land at the LAST hunk exactly as before so
-    // subsequent 'previous' presses step up through the diff. No delay on this common path.
-    await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
+    await landChangeForBackwardReview(fileChanges[prevIndex]);
 };
 
 // NEW-FILE detection (Ethan 2026-07-03, HARDENED in v1.2.1): a file is "fully added" when its entire
@@ -1952,7 +1841,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
             return false;
         }
         const target = direction === "down" ? Math.min(cur + step, last) : Math.max(cur - step, 0);
-        await revealTopAndPinCursor(stepEditor, target);
+        await revealTopAndPinCursor(stepEditor, target, { forceWhenVisible: direction === "down" });
         debugLog("new-file", `${direction}: no viewport, caret-fallback step L${cur + 1}->L${target + 1} (step=${step})`);
         return true;
     }
@@ -1962,9 +1851,9 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
     if (direction === "down") {
         if (caret >= last) {
             // A stale/decoupled caret at EOF must not change files invisibly. Present EOF once, then let the next
-            // press roll over. Normally the final partial step below already made bottom>=last.
-            if (bottom < last) {
-                await revealBottomAndPinCursorSettled(stepEditor, last);
+            // press roll over. For a wrapped final line, its END—not merely its first visual segment—must be shown.
+            if (!positionIsVisible(stepEditor, bottomPresentationPosition(stepEditor, last))) {
+                await revealBottomAndPinCursor(stepEditor, last);
                 debugLog("new-file", `down: caret already at L${last + 1} but EOF off-screen (viewport L${top + 1}-L${bottom + 1}) -> reveal EOF before rollover`);
                 return true;
             }
@@ -1976,7 +1865,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
         if (target === last) {
             // Always consume a final partial step at EOF, even when EOF was already visible. Default reveal puts
             // the last line at the bottom without the near-EOF AtTop clamp, and parks the caret for next-press rollover.
-            await revealBottomAndPinCursorSettled(stepEditor, last);
+            await revealBottomAndPinCursor(stepEditor, last);
         } else {
             await revealTopAndPinCursor(stepEditor, target);
         }
@@ -1986,8 +1875,8 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
 
     if (caret <= 0) {
         // Mirror the decoupling guard above: line 1 must actually be presented once before changing files.
-        if (top > 0) {
-            await revealTopAndPinCursor(stepEditor, 0);
+        if (!positionIsVisible(stepEditor, new vscode.Position(0, 0))) {
+            await revealTopAndPinCursor(stepEditor, 0, { forceWhenVisible: false });
             debugLog("new-file", `up: caret already at L1 but file start off-screen (viewport L${top + 1}-L${bottom + 1}) -> reveal start before rollover`);
             return true;
         }
@@ -1996,7 +1885,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
     }
 
     const target = Math.max(caret - step, 0);
-    await revealTopAndPinCursor(stepEditor, target);
+    await revealTopAndPinCursor(stepEditor, target, { forceWhenVisible: false });
     debugLog("new-file", `up: step caret L${caret + 1}->L${target + 1}${target === 0 ? " (final partial step at file start)" : ""} (viewport L${top + 1}-L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
     return true;
 };
@@ -2012,30 +1901,29 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
 // DOWN by ~a screenful within that same hunk; repeat until the BOTTOM is on screen; the NEXT press then
 // advances to the next hunk. previous-change mirrors it (step UP in stages, then advance to the prev hunk).
 //
-// ── DESIGN CHOICE: STATELESS / VIEWPORT-DERIVED, NOT AN EXPLICIT STATE MACHINE ──
+// ── DESIGN CHOICE: STATELESS / LIVE EDITOR-DERIVED, NOT AN EXPLICIT STATE MACHINE ──
 // The spec framed this as a state machine ("track that you're mid-scrolling hunk X in direction D, reset
 // when you switch files / reverse / move the cursor"). We deliberately implement it WITHOUT a persisted
-// state object, because the viewport + cursor ARE the state and they're always live and exactly what
-// Ethan sees on screen. Every press RECOMPUTES from three live facts: (1) the current viewport
-// (editor.visibleRanges — real height, adapts to his window size), (2) the cursor line (our logical
-// "current change" anchor), and (3) the current file's hunk geometry (parsed fresh from git). This is the
+// state object. Every press RECOMPUTES from three live facts: (1) the cursor line, which exclusively owns
+// logical ±step progression and edge completion, (2) the current viewport, which supplies real height for auto
+// step/threshold values and proves the requested edge was presented, and (3) the current file's hunk geometry
+// (parsed fresh from git). This is the
 // same "recompute-live, tab-derived, focus-independent" philosophy the rest of this file already uses
 // (see visibleEditorForActiveTab / getActiveChange) and it makes ALL the required reset rules fall out
 // for free, with NO stale-state bugs to chase:
 //   • switch files / editors      -> a different tab means different hunks + a cursor at the new file; the
 //                                     old file's viewport is gone, so there's nothing stale to reset.
-//   • reverse direction mid-scroll -> "previous while scrolling down" just runs the UP branch against the
-//                                     live viewport: it sees the hunk top is still off-screen above and
-//                                     steps back UP one screenful. No teleport, because we never stored a
+//   • reverse direction mid-scroll -> "previous while scrolling down" computes caret-step from the current
+//                                     caret. No teleport, because we never stored a
 //                                     "we were going down" flag to contradict.
 //   • cursor / selection moves elsewhere -> the cursor is no longer inside any tall hunk, so
 //                                     hunkContainingLine() returns undefined and we fall straight through
 //                                     to today's plain hunk-to-hunk navigation.
-//   • reached the end of the hunk  -> handled explicitly below (bottom/top already visible -> advance).
+//   • reached the end of the hunk  -> a final partial press lands at the exact edge; only a later press advances.
 //
 // ── CURSOR vs SCROLL ──
-// While stepping we move BOTH the viewport (revealRange) AND pin the cursor to the top visible line of the
-// new viewport. Keeping the caret inside the hunk (rather than leaving it at the file top) means: (a) other
+// While stepping we move BOTH the viewport (revealRange) AND pin the cursor to the exact requested logical line.
+// Keeping the caret inside the hunk (rather than leaving it at the file top) means: (a) other
 // commands stay sensible — revert-and-save (git.revertSelectedRanges) reverts the hunk the caret sits in,
 // which is exactly the hunk being read; and (b) when we DO advance, VS Code's built-in
 // compareEditor.next/previousChange navigates relative to the caret, so from inside the current (single,
@@ -2053,7 +1941,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
 //
 // ── COMPOSITION (must not break anything) ──
 // This layer is an INTERPOSER: it runs only for side-by-side text diffs (TabInputTextDiff) and only when it
-// decides the caret is inside a genuinely-tall hunk whose far edge isn't on screen yet. In every other case
+// decides the caret is inside a genuinely-tall hunk and has not already consumed the requested far edge. In every other case
 // it returns "not consumed" and the EXISTING navigation runs byte-for-byte as before — so the new-file
 // line-scroll (plain-editor added files), modified-file hunk nav, deleted files, cross-file rollover, the
 // smart mouse commands (which just executeCommand these same scm-change commands), and the dvorak/qwerty
@@ -2301,71 +2189,111 @@ const readViewport = (editor: vscode.TextEditor): { top: number; bottom: number;
     return { top, bottom, visLines: Math.max(1, bottom - top + 1) };
 };
 
-// Wait briefly for THIS exact TextEditor object to publish the requested top line. revealRange is a void API:
-// the renderer applies it asynchronously, so resolving a navigation command immediately lets a rapid second
-// keypress read the OLD visibleRanges and repeat the same step. Matching only URI + viewColumn is not sufficient:
-// VS Code can replace an editor widget with another editor for the same URI/column, and a delayed visible-range
-// event from that replacement must not settle an operation issued to `editor`.
-const waitForViewportTop = async (editor: vscode.TextEditor, expectedTop: number): Promise<boolean> => {
-    const currentViewport = readViewport(editor);
-    if (currentViewport?.top === expectedTop) {
-        return true;
+const positionIsVisible = (editor: vscode.TextEditor, position: vscode.Position): boolean =>
+    editor.visibleRanges.some((range) => range.contains(position));
+
+// A logical line can occupy many visual rows under word wrap. For a bottom/EOF presentation, line:0 only proves
+// that the FIRST wrapped segment is visible; the user still has unread content below it. Reveal the line's end in
+// wrapped editors, but keep column 0 for unwrapped editors so a long line never causes a horizontal jump.
+const editorUsesWordWrap = (editor: vscode.TextEditor): boolean => {
+    const editorWrap = vscode.workspace
+        .getConfiguration("editor", editor.document.uri)
+        .get<string>("wordWrap", "off");
+    if (vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff) {
+        const diffWrap = vscode.workspace
+            .getConfiguration("diffEditor", editor.document.uri)
+            .get<string>("wordWrap", "inherit");
+        if (diffWrap === "on") {
+            return true;
+        }
+        if (diffWrap === "off") {
+            return false;
+        }
     }
-    return new Promise<boolean>((resolve) => {
+    return editorWrap !== "off";
+};
+
+const bottomPresentationPosition = (editor: vscode.TextEditor, line: number): vscode.Position => {
+    const clamped = Math.max(0, Math.min(line, Math.max(0, editor.document.lineCount - 1)));
+    return editorUsesWordWrap(editor)
+        ? editor.document.lineAt(clamped).range.end
+        : new vscode.Position(clamped, 0);
+};
+
+// TextEditor.revealRange is editor-scoped (so it works while Source Control owns focus) but applies a SMOOTH
+// renderer scroll asynchronously. Resolve only after the exact editor's visible range has stopped changing for a
+// short quiet period. Resolving on the FIRST range event is too early: a rapid queued keypress can then plan from a
+// mid-animation viewport and lose distance. A bounded timeout keeps every reveal best-effort if a host stops
+// publishing events. Callers avoid invoking this helper for known no-scroll cases, so the timeout is not normal flow.
+const revealRangeAndWaitForViewport = async (
+    editor: vscode.TextEditor,
+    range: vscode.Range,
+    revealType: vscode.TextEditorRevealType,
+): Promise<void> => {
+    const QUIET_MS = 32;
+    const MAX_WAIT_MS = 320;
+    const NO_EVENT_WAIT_MS = 64;
+
+    const settling = new Promise<void>((resolve) => {
         let finished = false;
-        let timer: ReturnType<typeof setTimeout> | undefined;
+        let quietTimer: ReturnType<typeof setTimeout> | undefined;
+        let maxTimer: ReturnType<typeof setTimeout> | undefined;
+        let noEventTimer: ReturnType<typeof setTimeout> | undefined;
         let subscription: vscode.Disposable | undefined;
-        const finish = (reachedExpectedTop: boolean) => {
+        let lastViewport = readViewport(editor);
+
+        const finish = () => {
             if (finished) {
                 return;
             }
             finished = true;
             subscription?.dispose();
-            if (timer) {
-                clearTimeout(timer);
+            if (quietTimer) {
+                clearTimeout(quietTimer);
             }
-            resolve(reachedExpectedTop);
+            if (maxTimer) {
+                clearTimeout(maxTimer);
+            }
+            if (noEventTimer) {
+                clearTimeout(noEventTimer);
+            }
+            resolve();
         };
+        const scheduleQuietFinish = () => {
+            if (quietTimer) {
+                clearTimeout(quietTimer);
+            }
+            quietTimer = setTimeout(finish, QUIET_MS);
+        };
+
         subscription = vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
             if (event.textEditor !== editor) {
                 return;
             }
-            const movedViewport = readViewport(event.textEditor);
-            if (movedViewport?.top === expectedTop) {
-                finish(true);
+            const viewport = readViewport(event.textEditor);
+            if (!viewport) {
+                return;
+            }
+            if (
+                !lastViewport ||
+                viewport.top !== lastViewport.top ||
+                viewport.bottom !== lastViewport.bottom
+            ) {
+                lastViewport = viewport;
+                if (noEventTimer) {
+                    clearTimeout(noEventTimer);
+                    noEventTimer = undefined;
+                }
+                scheduleQuietFinish();
             }
         });
-        timer = setTimeout(() => finish(readViewport(editor)?.top === expectedTop), 120);
+        // A reveal can truthfully no-op at a physical document edge. Do not hold the navigation queue forever.
+        noEventTimer = setTimeout(finish, NO_EVENT_WAIT_MS);
+        maxTimer = setTimeout(finish, MAX_WAIT_MS);
     });
-};
 
-// Issue one editor-scoped AtTop reveal and wait for the exact viewport it requested. Unlike the global
-// `editorScroll` command this API is targeted at the TextEditor passed by the caller, so it keeps working when
-// focus is in Source Control, another split, or an entirely different VS Code window.
-const revealLineAtTop = async (editor: vscode.TextEditor, line: number): Promise<boolean> => {
-    const viewportSettled = waitForViewportTop(editor, line);
-    editor.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.AtTop);
-    return viewportSettled;
-};
-
-// Pick an anchor far enough outside `viewport` that VS Code cannot dismiss it as edge/render slack, but still
-// far enough from EOF that AtTop can place it exactly. The first line immediately after visibleRanges is not a
-// reliable forcing anchor: the renderer may already regard that line as effectively visible and no-op the reveal.
-// A half-viewport jump is visually smaller than going to a document edge while decisively leaving the old view.
-const forcingAnchorForViewport = (
-    viewport: { top: number; bottom: number; visLines: number },
-    last: number,
-): number | undefined => {
-    const forcingDistance = Math.max(1, Math.ceil(viewport.visLines / 2));
-    // Leave at least `visLines` lines after a downward anchor. That avoids the normal EOF clamp that would make
-    // the achieved top differ from the exact anchor our waiter requires.
-    const greatestExactlyPlaceableTop = Math.max(0, last - viewport.visLines);
-    const below = Math.min(greatestExactlyPlaceableTop, viewport.bottom + forcingDistance);
-    if (below > viewport.bottom) {
-        return below;
-    }
-    const above = Math.max(0, viewport.top - forcingDistance);
-    return above < viewport.top ? above : undefined;
+    editor.revealRange(range, revealType);
+    await settling;
 };
 
 // Scroll `editor` so `topLine` is the top visible line, and pin the caret there (kept inside the hunk so
@@ -2383,13 +2311,28 @@ const forcingAnchorForViewport = (
 // an unfocused/background VS Code window. Its `{to, by, value, revealCursor}` argument is also an untyped internal
 // command contract, while TextEditor.revealRange is the public editor-scoped API supported by our VS Code engine.
 //
-// To preserve the v1.2.18 already-visible fix while using the public API, first reveal an OFF-SCREEN forcing
-// anchor whenever the requested top is currently visible. AtTop cannot ignore that first reveal because the anchor
-// is outside the viewport. As soon as that anchor viewport is observed, reveal the real target AtTop; now the target
-// is off-screen too, so the second reveal is likewise forced. Wrapped lines and sticky context can make the final
-// exact logical top unattainable; that is not retried because a second anchor round-trip caused the visible glitch
-// in v1.2.22. Progress is instead guaranteed by pinning the exact requested caret line below.
-const revealTopAndPinCursor = async (editor: vscode.TextEditor, topLine: number): Promise<void> => {
+// v1.2.26 removes v1.2.22's visible OFF-SCREEN-ANCHOR ROUND TRIP. That workaround first moved far beyond the
+// requested position and then moved back, producing the reported "jumpy jumpy" tall-hunk review. Source inspection
+// of VS Code's ViewLines._computeScrollTopToRevealRange explains why the original one-line AtTop reveal could stay
+// put: API reveals reserve max(editor.cursorSurroundingLines, editor.stickyScroll.maxLineCount) above the target.
+// With the normal sticky maximum of five, asking for oldTop+5 truthfully computes the same scrollTop. It is not a
+// dropped reveal and must not be "fixed" with an off-screen detour.
+//
+// Progress is now caret-owned in BOTH new files and tall hunks, so one direct editor-scoped AtTop reveal is enough:
+// even if sticky context keeps the viewport still on this press, the caret advances to the exact logical target and
+// the next press advances from that new caret rather than recomputing the same target from a stale viewport. Upward
+// callers skip the reveal when their target is already visible, preventing Previous from scrolling DOWN merely to
+// reposition an on-screen caret (the L12->L7 reversal observed in v1.2.25). Wrapped rendering can publish a nearby
+// logical top, but it no longer changes the ±N progression and there is never a corrective second movement.
+interface RevealTopOptions {
+    forceWhenVisible?: boolean;
+}
+
+const revealTopAndPinCursor = async (
+    editor: vscode.TextEditor,
+    topLine: number,
+    options: RevealTopOptions = {},
+): Promise<void> => {
     const last = Math.max(0, editor.document.lineCount - 1);
     const clampedTop = Math.max(0, Math.min(topLine, last));
     const viewportBefore = readViewport(editor);
@@ -2403,67 +2346,25 @@ const revealTopAndPinCursor = async (editor: vscode.TextEditor, topLine: number)
         return;
     }
 
-    const targetIsVisible = clampedTop >= viewportBefore.top && clampedTop <= viewportBefore.bottom;
-    let revealTopOffset = 0;
-    if (targetIsVisible) {
-        // Prefer a half-viewport-distant line below; above covers near-EOF cases. If neither exists, every
-        // document line is already visible and VS Code has no scrollable layout to move.
-        const forcingAnchor = forcingAnchorForViewport(viewportBefore, last);
-        if (forcingAnchor === undefined) {
-            const pos = new vscode.Position(clampedTop, 0);
-            editor.selection = new vscode.Selection(pos, pos);
-            return;
-        }
-
-        await revealLineAtTop(editor, forcingAnchor);
-        const viewportAfterAnchor = readViewport(editor);
-        if (viewportAfterAnchor) {
-            // Calibrate ordinary sticky/context padding from the forcing reveal. This preserves exact viewport
-            // placement in normal layouts; the caret remains authoritative when wrapped geometry varies by line.
-            revealTopOffset = forcingAnchor - viewportAfterAnchor.top;
-        }
+    const targetIsVisible = editor.visibleRanges.some(
+        (range) => clampedTop >= range.start.line && clampedTop <= range.end.line,
+    );
+    const forceWhenVisible = options.forceWhenVisible ?? true;
+    if (targetIsVisible && !forceWhenVisible) {
+        const pos = new vscode.Position(clampedTop, 0);
+        editor.selection = new vscode.Selection(pos, pos);
+        return;
     }
 
-    const targetRevealLine = Math.max(0, Math.min(clampedTop + revealTopOffset, last));
-    let reachedRequestedTop = targetRevealLine === clampedTop
-        ? await revealLineAtTop(editor, clampedTop)
-        : await (async () => {
-        const viewportSettled = waitForViewportTop(editor, clampedTop);
-        editor.revealRange(
-            new vscode.Range(targetRevealLine, 0, targetRevealLine, 0),
-            vscode.TextEditorRevealType.AtTop,
-        );
-        return viewportSettled;
-    })();
-
-    // A dropped reveal in a non-wrapped editor still gets one bounded retry; exact top placement is achievable
-    // there and is required by tall-hunk cursor/view coupling. Wrapped editors deliberately skip this retry:
-    // visibleRanges.top can be an unattainable logical line when one source line occupies several visual rows,
-    // and v1.2.22's retry then produced the extra back-and-forth flicker Ethan reported.
-    const wordWrap = vscode.workspace.getConfiguration("editor", editor.document.uri).get<string>("wordWrap", "off");
-    if (!reachedRequestedTop && wordWrap === "off") {
-        const viewportAfterFirstReveal = readViewport(editor);
-        if (viewportAfterFirstReveal && viewportAfterFirstReveal.top !== clampedTop) {
-            const retryAnchor = forcingAnchorForViewport(viewportAfterFirstReveal, last);
-            if (retryAnchor !== undefined) {
-                await revealLineAtTop(editor, retryAnchor);
-                const viewportAfterRetryAnchor = readViewport(editor);
-                const retryOffset = viewportAfterRetryAnchor ? retryAnchor - viewportAfterRetryAnchor.top : 0;
-                const retryRevealLine = Math.max(0, Math.min(clampedTop + retryOffset, last));
-                const viewportSettled = waitForViewportTop(editor, clampedTop);
-                editor.revealRange(
-                    new vscode.Range(retryRevealLine, 0, retryRevealLine, 0),
-                    vscode.TextEditorRevealType.AtTop,
-                );
-                reachedRequestedTop = await viewportSettled;
-            }
-        }
-    }
-
-    // Pin only after the renderer has moved. The cursor is the exact configured logical-line progression anchor;
-    // substituting visibleRanges.top here is what made wrapped/sticky editors drift away from ±5 per press.
+    // Pin first: selection is the logical state consumed by the next queued press and assigning it does not scroll.
+    // If this reveal legitimately no-ops because sticky context already presents the line, progress still occurred.
     const pos = new vscode.Position(clampedTop, 0);
     editor.selection = new vscode.Selection(pos, pos);
+    await revealRangeAndWaitForViewport(
+        editor,
+        new vscode.Range(clampedTop, 0, clampedTop, 0),
+        vscode.TextEditorRevealType.AtTop,
+    );
 };
 
 // Scroll `editor` so `bottomLine` is brought into view at the BOTTOM of the viewport, and pin the caret THERE.
@@ -2478,49 +2379,22 @@ const revealTopAndPinCursor = async (editor: vscode.TextEditor, topLine: number)
 // into view) is NEVER EOF-clamped — the line exists, so it always becomes visible. That guarantees the hunk's
 // tail lines are shown. We pin the caret to `bottomLine` (the hunk's last line): on the NEXT press stepTallHunk
 // sees caret >= hunk.end and definitively advances — no dependence on exact viewport-bottom render slack.
-const revealBottomAndPinCursor = (editor: vscode.TextEditor, bottomLine: number): void => {
+const revealBottomAndPinCursor = async (editor: vscode.TextEditor, bottomLine: number): Promise<void> => {
     const clamped = Math.max(0, Math.min(bottomLine, Math.max(0, editor.document.lineCount - 1)));
-    const pos = new vscode.Position(clamped, 0);
-    editor.selection = new vscode.Selection(pos, pos); // caret parked on the hunk's last line
-    // Default reveal brings the range into view with minimal scroll; for a line below the viewport that lands
-    // it at the bottom edge. This direction is unclamped (unlike AtTop near EOF), so the tail always shows.
-    editor.revealRange(new vscode.Range(clamped, 0, clamped, 0), vscode.TextEditorRevealType.Default);
-};
-
-// New-file rollover has a stricter sequencing requirement than the tall-hunk caller above: the final partial
-// step must finish presenting EOF before a rapid queued second press is allowed to decide whether to change files.
-// Wait on the exact TextEditor object, just like the AtTop path, but accept any viewport containing the requested
-// bottom line because Default reveal intentionally lets VS Code choose the EOF-clamped top.
-const revealBottomAndPinCursorSettled = async (editor: vscode.TextEditor, bottomLine: number): Promise<void> => {
-    const clamped = Math.max(0, Math.min(bottomLine, Math.max(0, editor.document.lineCount - 1)));
-    const lineIsVisible = (target: vscode.TextEditor): boolean =>
-        target.visibleRanges.some((range) => clamped >= range.start.line && clamped <= range.end.line);
-    const viewportSettled = lineIsVisible(editor)
-        ? Promise.resolve()
-        : new Promise<void>((resolve) => {
-            let finished = false;
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            let subscription: vscode.Disposable | undefined;
-            const finish = () => {
-                if (finished) {
-                    return;
-                }
-                finished = true;
-                subscription?.dispose();
-                if (timer) {
-                    clearTimeout(timer);
-                }
-                resolve();
-            };
-            subscription = vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
-                if (event.textEditor === editor && lineIsVisible(event.textEditor)) {
-                    finish();
-                }
-            });
-            timer = setTimeout(finish, 120);
-        });
-    revealBottomAndPinCursor(editor, clamped);
-    await viewportSettled;
+    const caretPosition = new vscode.Position(clamped, 0);
+    const presentationPosition = bottomPresentationPosition(editor, clamped);
+    const alreadyVisible = positionIsVisible(editor, presentationPosition);
+    if (!alreadyVisible) {
+        // Default reveal brings an off-screen-below line (or the final visual segment of a wrapped line) into view
+        // with minimal movement. Wait for the whole smooth movement so a rapid queued rollover cannot replace the
+        // file mid-render.
+        await revealRangeAndWaitForViewport(
+            editor,
+            new vscode.Range(presentationPosition, presentationPosition),
+            vscode.TextEditorRevealType.Default,
+        );
+    }
+    editor.selection = new vscode.Selection(caretPosition, caretPosition); // pin only after the tail visibly settles
 };
 
 // THE INTERPOSER. Given the per-press context and which key was pressed, decide whether this press should
@@ -2554,119 +2428,56 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
         debugLog("tall-hunk", `${base} | DECISION: hunk fits on screen (span<=threshold) -> defer to plain nav`);
         return false; // hunk fits on one screen (or under the override threshold) -> behave EXACTLY as today
     }
-    // BUG 8 FIX (v1.2.9): advance only when the far edge is FULLY on screen (remaining <= 0), not when a
-    // "tiny tail" of up to overlap(=4) CHANGED lines is still off screen. (See the long history note that
-    // used to be here; kept short now.) The v1.2.10 fix below is layered on top of that guard.
-    //
-    // ── BUG 14 FIX (v1.2.10) — the "stuck near the bottom of a tall hunk" dead-end ──
-    // Symptom (reproduced on the Mini, v1.2.9): stepping DOWN a 240-line hunk stuck at ~Ln 202 showing the
-    // final screenful minus the last few lines — repeated next-change did nothing, the tail (236-240) never
-    // showed, and it never advanced to the next file. Root cause: the final down-step computed a target `top`
-    // of `hunk.end - visLines + 1` and revealed it with `AtTop`, but VS Code CANNOT put a near-EOF line at the
-    // TOP of the viewport (it clamps the scroll — there aren't a viewport's worth of lines below it). So the
-    // viewport silently didn't move, while `remainingBelow = hunk.end - bottom` stayed > 0 → the press became
-    // an infinite no-op. Two-part fix:
-    //   (1) When the caret is already parked AT (or past) the hunk's last line, we've shown the tail on a
-    //       previous press (the final step pins the caret to hunk.end). Advance now — a definitive
-    //       "reached the bottom" signal that can't be fooled by a few lines of EOF render slack.
-    //   (2) The FINAL down-step (whose normal target would reach/exceed the last-line-at-bottom position)
-    //       reveals the hunk's END at the BOTTOM (RevealType.Default, which scrolls DOWN and is NEVER
-    //       EOF-clamped) instead of an unreachable line at the top — guaranteeing the tail is seen — and pins
-    //       the caret to hunk.end so signal (1) fires on the next press. UP is unaffected: AtTop of a line
-    //       near the TOP of the document (hunk.start) is always reachable, so it never clamps.
-    if (direction === "down") {
-        // Signal (1): caret already parked at/after the hunk end from a prior final step -> definitively advance.
-        if (caret >= hunk.end) {
-            debugLog("tall-hunk", `${base} | DECISION: caret at hunk end (tail already shown) -> advance to next change/file`);
-            return false;
-        }
-        const remainingBelow = hunk.end - bottom; // lines of the hunk still below the viewport
-        if (remainingBelow <= 0) {
-            debugLog("tall-hunk", `${base} | remainingBelow=${remainingBelow} | DECISION: hunk bottom on screen -> advance to next change/file`);
-            return false; // bottom of the hunk is fully on screen -> advance to next hunk
-        }
-        // The top position where the hunk's LAST line sits at the bottom of the viewport. Never below hunk.start.
-        const maxTop = Math.max(hunk.start, hunk.end - visLines + 1);
-        // FINAL STEP: a normal screenful-minus-overlap step would reach or pass maxTop, i.e. this press should
-        // land on the hunk's tail. Reveal the END at the bottom (unclamped) rather than AtTop-an-unreachable-line.
-        if (top + step >= maxTop) {
-            revealBottomAndPinCursor(ctx.editor, hunk.end); // shows [maxTop..hunk.end]; caret parked at hunk.end
-            debugLog(
-                "tall-hunk",
-                `${base} | remainingBelow=${remainingBelow} maxTop=L${maxTop + 1} | DECISION: FINAL step -> reveal hunk end L${hunk.end + 1} at bottom, caret parked at end (next press advances)`,
-            );
+
+    // v1.2.26 SHARED EDGE CONTRACT. Tall hunks now use the same caret-owned state machine as new files:
+    //   1. Each press targets clamp(caret ± step, hunk edge).
+    //   2. A partial final step is always consumed at the hunk start/end, even if that edge was already visible.
+    //   3. Only a LATER press, with the caret already at the requested edge, advances to another hunk/file.
+    //   4. Direction reversal starts from the current caret; no stored direction or viewport-derived reset exists.
+    // This removes the split ownership that accumulated the bottom-stuck and up-loop fixes: visibleRanges still
+    // decides whether a hunk is tall and how large an automatic page step should be, but it never decides logical
+    // completion. Word wrap, sticky context, smooth-scroll intermediates and EOF clamping cannot repeat/skip a step.
+    const edge = direction === "down" ? hunk.end : hunk.start;
+    const caretAtEdge = direction === "down" ? caret >= edge : caret <= edge;
+    if (caretAtEdge) {
+        const presentationPosition = direction === "down"
+            ? bottomPresentationPosition(ctx.editor, edge)
+            : new vscode.Position(edge, 0);
+        const edgeIsVisible = positionIsVisible(ctx.editor, presentationPosition);
+        if (!edgeIsVisible) {
+            // Defensive decoupling guard: never change hunks/files while the authoritative edge caret is hidden.
+            if (direction === "down") {
+                await revealBottomAndPinCursor(ctx.editor, edge);
+            } else {
+                await revealTopAndPinCursor(ctx.editor, edge, { forceWhenVisible: false });
+            }
+            debugLog("tall-hunk", `${base} | DECISION: caret at edge but edge off-screen -> present edge before advance`);
             return true;
         }
-        // NORMAL step: scroll down ~one screenful (minus overlap), never past maxTop. The shared helper forces
-        // an actual viewport move even when newTop is still visible at the bottom of the current screen.
-        let newTop = Math.min(top + step, maxTop);
-        if (newTop <= top) {
-            newTop = top + step; // guarantee forward progress even in odd geometry
-        }
-        await revealTopAndPinCursor(ctx.editor, newTop);
-        debugLog("tall-hunk", `${base} | remainingBelow=${remainingBelow} maxTop=L${maxTop + 1} | DECISION: step DOWN, newTop=L${newTop + 1}`);
-        return true;
-    } else {
-        // ── UP direction — the EXACT MIRROR of the down branch above (BUG 15 FIX, v1.2.12) ──
-        // Symmetry contract (must not drift again): down guards the BOTTOM edge with a caret signal
-        // (caret >= hunk.end) + a final step that reveals hunk.end at the BOTTOM; up guards the TOP edge with
-        // the mirrored caret signal (caret <= hunk.start) + a final step that reveals hunk.start at the TOP.
-        // Same three-stage shape in both branches: (1) caret-at-far-edge -> advance; (2) far edge already fully
-        // on screen -> advance; (3) final step reveals the far edge and parks the caret there; else normal step.
-        //
-        // BUG 15 (v1.2.11, Ethan report — "stepping UP a tall hunk, at the TOP it loops back to the BOTTOM
-        // instead of going to the previous change"): the OLD up branch relied SOLELY on the viewport-derived
-        // `remainingAbove <= 0` to decide "top reached -> advance", with NO caret-derived signal — the exact
-        // asymmetry the v1.2.10 down fix removed for the bottom edge. When render slack / the built-in nav left
-        // `top` a hair off hunk.start, `remainingAbove` never cleanly hit <= 0, so the press re-entered the step
-        // path (its `newTop = top - step` fallback could even scroll ABOVE the hunk), and when the built-in
-        // advance DID fire it could re-land inside the SAME merged hunk — then revealHunkOnLanding re-showed the
-        // hunk's BOTTOM. Net effect: an infinite within-hunk loop that never reached the previous change.
-        // Fix: mirror the bottom edge exactly.
-        //   (1) Caret already parked AT (or above) the hunk's first line -> the top was shown on a prior press
-        //       (the final step pins the caret to hunk.start). Advance now — a definitive "reached the top"
-        //       signal that can't be fooled by a line or two of viewport render slack (mirror of caret>=hunk.end).
-        //   (2) The FINAL up-step reveals hunk.start at the TOP (AtTop of a line near the TOP of the document is
-        //       ALWAYS reachable — never clamps, unlike AtTop near EOF going down) and pins the caret to
-        //       hunk.start so signal (1) fires on the next press. Normal steps scroll up ~one screenful.
-        // Signal (1): caret already parked at/before the hunk start from a prior final step -> definitively advance.
-        if (caret <= hunk.start) {
-            debugLog("tall-hunk", `${base} | DECISION: caret at hunk start (top already shown) -> advance to previous change/file`);
-            return false;
-        }
-        const remainingAbove = top - hunk.start; // lines of the hunk still above the viewport
-        if (remainingAbove <= 0) {
-            debugLog("tall-hunk", `${base} | remainingAbove=${remainingAbove} | DECISION: hunk top on screen -> advance to previous change/file`);
-            return false; // top of the hunk is fully on screen -> advance to previous hunk
-        }
-        // The top position where the hunk's FIRST line sits at the top of the viewport. Mirror of `maxTop`
-        // (which put the LAST line at the viewport bottom); here the far edge going up is simply hunk.start.
-        const minTop = hunk.start;
-        // FINAL STEP: a normal screenful-minus-overlap step would reach or pass minTop, i.e. this press should
-        // land on the hunk's head. Reveal the START at the top (AtTop near doc-top never clamps) and park caret.
-        if (top - step <= minTop) {
-            await revealTopAndPinCursor(ctx.editor, hunk.start); // shows [hunk.start..]; caret parked at hunk.start
-            debugLog(
-                "tall-hunk",
-                `${base} | remainingAbove=${remainingAbove} minTop=L${minTop + 1} | DECISION: FINAL step -> reveal hunk start L${hunk.start + 1} at top, caret parked at start (next press advances)`,
-            );
-            return true;
-        }
-        // NORMAL step: scroll up ~one screenful (minus overlap), never past minTop. Mirror of the down clamp.
-        let newTop = Math.max(top - step, minTop);
-        if (newTop >= top) {
-            newTop = top - step; // guarantee upward progress even in odd geometry
-        }
-        await revealTopAndPinCursor(ctx.editor, newTop);
-        debugLog("tall-hunk", `${base} | remainingAbove=${remainingAbove} minTop=L${minTop + 1} | DECISION: step UP, newTop=L${newTop + 1}`);
-        return true;
+        debugLog("tall-hunk", `${base} | DECISION: caret and viewport at hunk edge -> advance to ${direction === "down" ? "next" : "previous"} change/file`);
+        return false;
     }
+
+    const target = direction === "down"
+        ? Math.min(caret + step, hunk.end)
+        : Math.max(caret - step, hunk.start);
+    if (direction === "down" && target === hunk.end) {
+        // Default reveal presents the final tail at the bottom without AtTop's unavoidable EOF clamp.
+        await revealBottomAndPinCursor(ctx.editor, target);
+    } else {
+        await revealTopAndPinCursor(ctx.editor, target, { forceWhenVisible: direction === "down" });
+    }
+    debugLog(
+        "tall-hunk",
+        `${base} | DECISION: step ${direction.toUpperCase()} caret L${caret + 1}->L${target + 1}${target === edge ? " (final partial step at hunk edge; next press advances)" : ""}`,
+    );
+    return true;
 };
 
 // After the built-in navigation ADVANCES to a new hunk within the same file, reposition the viewport so a
-// tall hunk is presented for stage-stepping: going DOWN we land at its TOP (a full screenful from the
-// start, so the NEXT press steps down); going UP we land showing its BOTTOM portion (so the next press
-// steps UP toward the top). Short hunks are left exactly where the built-in put them (don't disturb today's
+// tall hunk is presented for stage-stepping: going DOWN we land/pin at its TOP; going UP we land/pin at its
+// BOTTOM. The subsequent press then advances from that exact caret edge by one configured page step. Short hunks
+// are left exactly where the built-in put them (don't disturb today's
 // feel). Best-effort: no context / no matching hunk -> leave the built-in's own reveal untouched.
 const revealHunkOnLanding = async (
     ctx: HunkStageContext,
@@ -2703,11 +2514,38 @@ const revealHunkOnLanding = async (
         await revealTopAndPinCursor(ctx.editor, hunk.start); // land at the top of the tall hunk
         debugLog("tall-hunk", `landing(down): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed at its top`);
     } else {
-        // Land showing the bottom portion so subsequent 'previous' presses step UP through the hunk.
-        await revealTopAndPinCursor(ctx.editor, Math.max(hunk.start, hunk.end - visLines + 1));
-        debugLog("tall-hunk", `landing(up): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed showing its bottom`);
+        // Present/pin the exact far edge so caret-owned reverse stepping mirrors forward landing precisely.
+        await revealBottomAndPinCursor(ctx.editor, hunk.end);
+        debugLog("tall-hunk", `landing(up): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed at its bottom`);
     }
 };
+
+// Backward cross-file entry first lets VS Code select the target diff's last change, then applies the same
+// tall-hunk landing rule used for an in-file Previous transition. Without this second phase, VS Code leaves the
+// caret at the last hunk's START: the very next Previous press can treat that hunk as already exhausted and skip
+// it instead of reviewing it bottom-up.
+async function landPreviousDiffAtLastChange(): Promise<void> {
+    await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
+
+    let ctx = await getHunkStageContext();
+    // openChangeEntry normally awaits a fully-created diff editor. Retry only for the narrow renderer race where
+    // the active tab is already a diff but its modified TextEditor object is not visible yet. Do not delay plain
+    // deleted files or ordinary short/no-added-line diffs, for which an absent staging context is expected.
+    if (
+        !ctx &&
+        vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff &&
+        !visibleEditorForActiveTab()
+    ) {
+        for (let attempt = 0; attempt < 4 && !ctx; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            ctx = await getHunkStageContext();
+        }
+    }
+    if (!ctx) {
+        return;
+    }
+    await revealHunkOnLanding(ctx, ctx.editor.selection.active.line, "up");
+}
 
 // Serialize every change-navigation press across keyboard and smart-mouse entry points. The scroll renderer and
 // git.openChange both settle asynchronously; without one shared queue, key-repeat can start a second navigation
@@ -2747,10 +2585,10 @@ const goToNextDiffOnce = async () => {
         return;
     }
 
-    // TALL-HUNK STAGING (v1.2.6): if the caret is inside a hunk taller than the viewport and its BOTTOM
-    // isn't on screen yet, consume this press as a downward scroll step (read the next screenful of the
-    // same hunk) instead of jumping to the next hunk. When it returns false (short hunk, bottom already
-    // visible, caret not in a hunk, or feature off) we fall through to the unchanged navigation below, so
+    // TALL-HUNK STAGING (v1.2.6): if the caret is inside a hunk taller than the viewport and has not consumed
+    // its exact BOTTOM edge yet, use this press as a downward step (read the next screenful of the same hunk)
+    // instead of jumping to the next hunk. When it returns false (short hunk, caret already at the presented
+    // bottom, caret not in a hunk, or feature off) we fall through to the unchanged navigation below, so
     // nothing else is disturbed. See the big design note above getModifiedSideHunks.
     const stageCtx = await getHunkStageContext();
     if (stageCtx && (await stepTallHunk(stageCtx, "down"))) {
@@ -2809,7 +2647,7 @@ const goToPreviousDiffOnce = async () => {
     }
 
     // TALL-HUNK STAGING (v1.2.6), mirror of goToNextDiff: if the caret is inside a hunk taller than the
-    // viewport and its TOP isn't on screen yet, consume this press as an UPWARD scroll step (read the
+    // viewport and has not consumed its exact TOP edge yet, use this press as an UPWARD step (read the
     // previous screenful of the same hunk) instead of jumping to the previous hunk. Returns false -> fall
     // through to the unchanged navigation below.
     const stageCtx = await getHunkStageContext();
@@ -2941,9 +2779,9 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     // SCM nav order. Staged entries are excluded because there's nothing to stage-and-advance FROM on them (the
     // staged-side early-return above already handled that case). Untracked/new files ARE included (git.openChange
     // opens them as a diff vs an empty original), so stage-and-advance lands on a brand-new file too.
-    const advanceTargets = allChanges.filter((c) => !c.staged).map((c) => c.uri);
+    const advanceTargets = allChanges.filter((c) => !c.staged);
 
-    const currentIndex = advanceTargets.findIndex(pathMatches);
+    const currentIndex = advanceTargets.findIndex((change) => pathMatches(change.uri));
     // Where to land after staging, by direction:
     //   "next"     -> the file AFTER the current one (top-to-bottom review); if it was the LAST, fall back to
     //                 the PREVIOUS one so we don't strand you. Not in the list -> the FIRST unstaged file.
@@ -2953,13 +2791,13 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     // undefined (-> close the editor below, nothing left to review). NOTE: this end-of-list guard is exactly
     // what the mouse (F18/F19) + the "+" button inherit for free — they call this SAME function, so the
     // at-the-end/at-the-bottom behavior is identical no matter how stage-and-advance is triggered.
-    let targetUnstagedFile: vscode.Uri | undefined;
+    let targetUnstagedChange: FileChange | undefined;
     if (currentIndex === -1) {
-        targetUnstagedFile = direction === "next" ? advanceTargets[0] : advanceTargets[advanceTargets.length - 1];
+        targetUnstagedChange = direction === "next" ? advanceTargets[0] : advanceTargets[advanceTargets.length - 1];
     } else if (direction === "next") {
-        targetUnstagedFile = advanceTargets[currentIndex + 1] ?? advanceTargets[currentIndex - 1];
+        targetUnstagedChange = advanceTargets[currentIndex + 1] ?? advanceTargets[currentIndex - 1];
     } else {
-        targetUnstagedFile = advanceTargets[currentIndex - 1] ?? advanceTargets[currentIndex + 1];
+        targetUnstagedChange = advanceTargets[currentIndex - 1] ?? advanceTargets[currentIndex + 1];
     }
 
     // Stage the whole current file — equivalent to clicking the + next to it in the Source Control view.
@@ -2970,7 +2808,7 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     // succeeds, so a no-op/failed stage won't show a file in the bar.
     await stageThroughExtension(activeRepo, currentUri);
 
-    if (!targetUnstagedFile) {
+    if (!targetUnstagedChange) {
         // Current was the ONLY unstaged file (no next and no previous) — nothing left to review, so close.
         await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
         return;
@@ -2988,7 +2826,12 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     // the target never opened and the user was stranded on a blank/closed editor. openChangeEntry's unstaged
     // path has a shown-tab verification + showTextDocument fallback that handles exactly this silent-no-op —
     // so the mouse/keyboard/"+" stage-and-advance now inherits it for free, matching plain navigation.
-    await openChangeEntry({ uri: targetUnstagedFile, staged: false });
+    await openChangeEntry(targetUnstagedChange);
+    if (direction === "previous") {
+        // Stage-and-Previous is a cross-file backward transition too: land new files at EOF and tall diff hunks
+        // at their last line, exactly like openPreviousFile/openLastFile.
+        await landChangeForBackwardReview(targetUnstagedChange);
+    }
 };
 
 // BUG 13 FIX (v1.2.9): serialize getActiveFilePath so its clipboard save/blank/restore dance can't interleave.

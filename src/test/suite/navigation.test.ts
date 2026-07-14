@@ -152,6 +152,23 @@ suite('SCM change navigation E2E', () => {
 		return editor;
 	};
 
+	// Open the live working-tree side of a real git diff and reset its logical caret/viewport. Keeping this in one
+	// helper makes the tall-hunk regressions exercise the same git.openChange path while avoiding duplicated races.
+	const openWorkingDiffAt = async (rel: string, line: number): Promise<vscode.TextEditor> => {
+		await vscode.commands.executeCommand('git.openChange', wsUri(rel));
+		const editor = await poll(() => {
+			const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+			const visible = visibleEditorFor(wsUri(rel));
+			return activeTab?.input instanceof vscode.TabInputTextDiff && visible ? visible : undefined;
+		}, `${rel} working-tree diff to render`);
+		await sleep(300); // built-in diff computation finishes after the editor object first becomes visible
+		const pos = new vscode.Position(line, 0);
+		editor.selection = new vscode.Selection(pos, pos);
+		editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.AtTop);
+		await poll(() => lineIsVisible(editor, line), `${rel} line ${line} to become visible`);
+		return editor;
+	};
+
 	const nextChange = () => vscode.commands.executeCommand('better-git-vscode.next-scm-change');
 	const previousChange = () => vscode.commands.executeCommand('better-git-vscode.previous-scm-change');
 
@@ -168,17 +185,54 @@ suite('SCM change navigation E2E', () => {
 
 	// A cursor move alone is NOT proof that new-file review scrolled: the v1.2.15 regression moved the caret
 	// from L1 to L6 while leaving the viewport at L1, then every later NEXT recomputed L6 and stuck forever.
-	const expectViewportTopAt = (rel: string, line: number) =>
-		poll(() => {
-			const e = visibleEditorFor(wsUri(rel));
-			return e?.visibleRanges[0]?.start.line === line ? e : undefined;
-		}, `viewport in ${rel} to start at line ${line} (at ${visibleEditorFor(wsUri(rel))?.visibleRanges[0]?.start.line})`);
 	const expectViewportTop = (rel: string, pred: (line: number) => boolean, description: string) =>
 		poll(() => {
 			const e = visibleEditorFor(wsUri(rel));
 			const top = e?.visibleRanges[0]?.start.line;
 			return top !== undefined && pred(top) ? e : undefined;
 		}, `viewport in ${rel} ${description} (at ${visibleEditorFor(wsUri(rel))?.visibleRanges[0]?.start.line})`);
+	const lineIsVisible = (editor: vscode.TextEditor, line: number) =>
+		editor.visibleRanges.some(range => line >= range.start.line && line <= range.end.line);
+	const positionIsVisible = (editor: vscode.TextEditor, position: vscode.Position) =>
+		editor.visibleRanges.some(range => range.contains(position));
+	const expectCursorVisibleAt = async (rel: string, line: number) => {
+		const editor = await expectCursorAt(rel, line);
+		await poll(() => lineIsVisible(editor, line), `cursor line ${line} in ${rel} to be visible`);
+		return editor;
+	};
+
+	// Capture the real renderer event sequence for one navigation operation. The v1.2.22 forcing-anchor workaround
+	// would produce e.g. [10, 80, 15]: it moved far past the target and then back. Final-state-only assertions could
+	// never catch that visible "jumpy jumpy" regression, so all scrolling primitives now get monotonicity coverage.
+	const viewportTopsDuring = async (editor: vscode.TextEditor, operation: () => PromiseLike<unknown>) => {
+		const tops: number[] = [];
+		const record = () => {
+			const top = editor.visibleRanges[0]?.start.line;
+			if (top !== undefined && tops[tops.length - 1] !== top) {
+				tops.push(top);
+			}
+		};
+		record();
+		const sub = vscode.window.onDidChangeTextEditorVisibleRanges(event => {
+			if (event.textEditor === editor) {
+				record();
+			}
+		});
+		try {
+			await operation();
+			await sleep(40); // operation waits for renderer quiet; this catches one final queued visible-range event
+			record();
+			return tops;
+		} finally {
+			sub.dispose();
+		}
+	};
+	const assertViewportMonotonic = (tops: number[], direction: 'down' | 'up', context: string) => {
+		for (let i = 1; i < tops.length; i++) {
+			const monotonic = direction === 'down' ? tops[i] >= tops[i - 1] : tops[i] <= tops[i - 1];
+			assert.ok(monotonic, `${context}: viewport reversed ${direction} during one press: ${tops.join(' -> ')}`);
+		}
+	};
 
 	suiteSetup(async function () {
 		// One-time host warm-up can be slow (git ext activation + repo discovery).
@@ -225,20 +279,23 @@ suite('SCM change navigation E2E', () => {
 		// and accidentally exercise cross-file fall-through instead of the production 243-line-file path.
 		write('zz_new.txt', lines(240, 'new'));
 		await refreshUntil(() => isUntracked('zz_new.txt'), 'zz_new.txt to appear as untracked');
-		await openPlainAt('zz_new.txt', 0);
+		const editor = await openPlainAt('zz_new.txt', 0);
+		const initialTop = editor.visibleRanges[0].start.line;
 
-		await nextChange();
-		await expectCursorAt('zz_new.txt', 5);
-		await expectViewportTopAt('zz_new.txt', 5);
-		await nextChange();
-		await expectCursorAt('zz_new.txt', 10);
-		await expectViewportTopAt('zz_new.txt', 10);
-		await previousChange();
-		await expectCursorAt('zz_new.txt', 5);
-		await expectViewportTopAt('zz_new.txt', 5);
-		await previousChange();
-		await expectCursorAt('zz_new.txt', 0);
-		await expectViewportTopAt('zz_new.txt', 0);
+		const firstDown = await viewportTopsDuring(editor, nextChange);
+		await expectCursorVisibleAt('zz_new.txt', 5);
+		assertViewportMonotonic(firstDown, 'down', 'first untracked next');
+		const secondDown = await viewportTopsDuring(editor, nextChange);
+		await expectCursorVisibleAt('zz_new.txt', 10);
+		assertViewportMonotonic(secondDown, 'down', 'second untracked next');
+		assert.ok(editor.visibleRanges[0].start.line > initialTop, 'two next presses never advanced the viewport');
+
+		const firstUp = await viewportTopsDuring(editor, previousChange);
+		await expectCursorVisibleAt('zz_new.txt', 5);
+		assertViewportMonotonic(firstUp, 'up', 'first untracked previous');
+		const secondUp = await viewportTopsDuring(editor, previousChange);
+		await expectCursorVisibleAt('zz_new.txt', 0);
+		assertViewportMonotonic(secondUp, 'up', 'second untracked previous');
 		// stepping never leaves the file
 		assert.strictEqual(activeTabPath(), wsUri('zz_new.txt').path);
 	});
@@ -350,9 +407,11 @@ suite('SCM change navigation E2E', () => {
 
 		// Do not wait between presses: this is key-repeat / a quick double-tap. Before the shared navigation
 		// queue both calls could read viewport top=0 and target L6, losing the second press.
-		await Promise.all([nextChange(), nextChange(), nextChange()]);
-		await expectCursorAt('zz_new.txt', 15);
-		await expectViewportTopAt('zz_new.txt', 15);
+		const editor = visibleEditorFor(wsUri('zz_new.txt'))!;
+		const tops = await viewportTopsDuring(editor, () => Promise.all([nextChange(), nextChange(), nextChange()]));
+		await expectCursorVisibleAt('zz_new.txt', 15);
+		assertViewportMonotonic(tops, 'down', 'rapid untracked next');
+		assert.ok(editor.visibleRanges[0].start.line > 0, 'rapid next presses never advanced the viewport');
 	});
 
 	test('untracked wrapped file: SCM-focused next/previous remain exact five-line steps', async () => {
@@ -471,8 +530,8 @@ suite('SCM change navigation E2E', () => {
 			await expectCursorAt('zz_new.txt', 0);
 
 			await nextChange();
-			await expectCursorAt('zz_new.txt', 7);
-			await expectViewportTopAt('zz_new.txt', 7);
+			const editor = await expectCursorVisibleAt('zz_new.txt', 7);
+			assert.ok(editor.visibleRanges[0].start.line >= 0, 'custom jump produced an invalid viewport');
 		} finally {
 			// always restore, even on assertion failure — a leaked setting would skew later tests
 			await cfg().update('newFileNavLineJump', undefined, vscode.ConfigurationTarget.Global);
@@ -550,13 +609,21 @@ suite('SCM change navigation E2E', () => {
 		const last = editor.document.lineCount - 1;
 		const pos = new vscode.Position(last, 0);
 		editor.selection = new vscode.Selection(pos, pos);
+		const topBefore = editor.visibleRanges[0].start.line;
 
-		await previousChange();
+		const firstUp = await viewportTopsDuring(editor, previousChange);
 		await expectCursorAt('ab_current.txt', 6);
-		await previousChange();
+		assertViewportMonotonic(firstUp, 'up', 'visible-start previous L12->L7');
+		const secondUp = await viewportTopsDuring(editor, previousChange);
 		await expectCursorAt('ab_current.txt', 1);
-		await previousChange();
+		assertViewportMonotonic(secondUp, 'up', 'visible-start previous L7->L2');
+		const finalUp = await viewportTopsDuring(editor, previousChange);
 		await expectCursorAt('ab_current.txt', 0); // final one-line partial step
+		assertViewportMonotonic(finalUp, 'up', 'visible-start final previous step');
+		assert.ok(
+			editor.visibleRanges[0].start.line <= topBefore,
+			'Previous moved the viewport downward even though every target was already visible above the caret'
+		);
 		assert.strictEqual(activeTabPath(), wsUri('ab_current.txt').path, 'visible file start caused premature rollover');
 
 		await previousChange();
@@ -606,11 +673,24 @@ suite('SCM change navigation E2E', () => {
 				'near-EOF caret visible while the heavily wrapped EOF remains off-screen'
 			);
 			await vscode.commands.executeCommand('workbench.view.scm');
+			const eofEnd = editor.document.lineAt(last).range.end;
+			let wrappedEofEndBecameVisible = positionIsVisible(editor, eofEnd);
+			const visibleSub = vscode.window.onDidChangeTextEditorVisibleRanges(event => {
+				if (event.textEditor === editor && positionIsVisible(editor, eofEnd)) {
+					wrappedEofEndBecameVisible = true;
+				}
+			});
 
 			// First queued press must render/pin EOF; only the second may roll over. Without awaiting the bottom
 			// reveal, the second press can see stale visibleRanges and consume an unintended extra edge-reveal step.
-			await Promise.all([nextChange(), nextChange()]);
+			// Checking the end position (not only the logical line number) proves the final wrapped segment was shown.
+			try {
+				await Promise.all([nextChange(), nextChange()]);
+			} finally {
+				visibleSub.dispose();
+			}
 			await expectActiveTab('ab_next.txt');
+			assert.ok(wrappedEofEndBecameVisible, 'rolled over before the final visual segment of wrapped EOF appeared');
 		} finally {
 			await editorConfig.update('wordWrap', previousWordWrap, vscode.ConfigurationTarget.Global);
 		}
@@ -700,23 +780,315 @@ suite('SCM change navigation E2E', () => {
 		const modifiedSide = visibleEditorFor(wsUri('committed/tall_e.txt'))!;
 		modifiedSide.selection = new vscode.Selection(new vscode.Position(0, 0), new vscode.Position(0, 0));
 
-		// First NEXT lands at the tall changed run's start and explicitly presents it at viewport top.
-		await nextChange();
-		const landed = await expectViewportTop('committed/tall_e.txt', top => top >= 7 && top <= 10, 'to land at the tall hunk start');
+		// First NEXT lands/pins at the exact tall-hunk start. Sticky context may intentionally keep several source
+		// lines above it, so the invariant is a visible exact caret—not caret===visibleRanges.top.
+		const landingTops = await viewportTopsDuring(modifiedSide, nextChange);
+		const landed = await expectCursorVisibleAt('committed/tall_e.txt', 10);
+		assertViewportMonotonic(landingTops, 'down', 'tall-hunk forward landing');
 		const startTop = landed.visibleRanges[0].start.line;
 
 		// Two immediate NEXT presses must both survive the shared queue and move the viewport farther down.
 		// Put keyboard focus in Source Control first: Ethan's real review flow clicks SCM rows with preserveFocus,
 		// so the scroll command must still target the active diff editor while focus lives in the sidebar.
 		await vscode.commands.executeCommand('workbench.view.scm');
-		await Promise.all([nextChange(), nextChange()]);
+		const rapidDownTops = await viewportTopsDuring(modifiedSide, () => Promise.all([nextChange(), nextChange()]));
 		const down = await expectViewportTop('committed/tall_e.txt', top => top > startTop + 20, 'to advance through the tall hunk');
-		const downTop = down.visibleRanges[0].start.line;
-		assert.strictEqual(down.selection.active.line, downTop, 'tall-hunk caret did not remain pinned to viewport top');
+		const downCaret = down.selection.active.line;
+		assert.ok(downCaret > 10, `rapid tall-hunk next did not advance the caret (at ${downCaret})`);
+		assert.ok(lineIsVisible(down, downCaret), 'rapid tall-hunk next left its logical caret off-screen');
+		assertViewportMonotonic(rapidDownTops, 'down', 'rapid tall-hunk next');
 
-		await previousChange();
-		const up = await expectViewportTop('committed/tall_e.txt', top => top < downTop, 'to move back up through the tall hunk');
-		assert.strictEqual(up.selection.active.line, up.visibleRanges[0].start.line, 'reverse tall-hunk caret/view coupling broke');
+		const reverseTops = await viewportTopsDuring(modifiedSide, previousChange);
+		const up = await poll(() => {
+			const editor = visibleEditorFor(wsUri('committed/tall_e.txt'));
+			return editor && editor.selection.active.line < downCaret ? editor : undefined;
+		}, 'previous to step upward from the current tall-hunk caret');
+		assert.ok(up.selection.active.line >= 10, 'reverse tall-hunk step jumped above the current hunk');
+		assert.ok(lineIsVisible(up, up.selection.active.line), 'reverse tall-hunk step left its caret off-screen');
+		assertViewportMonotonic(reverseTops, 'up', 'tall-hunk direction reversal');
+	});
+
+	test('MODIFIED tall hunk: sticky-context rapid one-line steps are caret-owned and reversible', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const editorConfig = vscode.workspace.getConfiguration('editor');
+		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		const previousSticky = editorConfig.inspect<boolean>('stickyScroll.enabled')?.globalValue;
+		const previousStickyMax = editorConfig.inspect<number>('stickyScroll.maxLineCount')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingLineStep', 1, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('stickyScroll.enabled', true, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('stickyScroll.maxLineCount', 5, vscode.ConfigurationTarget.Global);
+
+			const content = lines(260, 'tall_e').split('\n');
+			for (let i = 10; i <= 60; i++) {
+				content[i] = `tall_e sticky EDITED line ${i + 1}`;
+			}
+			write('committed/tall_e.txt', content.join('\n') + '\n');
+			await refreshUntil(() => inWorkingTree('committed/tall_e.txt', 5), 'sticky tall_e change to appear');
+			const editor = await openWorkingDiffAt('committed/tall_e.txt', 0);
+
+			await nextChange();
+			await expectCursorVisibleAt('committed/tall_e.txt', 10);
+			await vscode.commands.executeCommand('workbench.view.scm');
+
+			// A +1 target can remain inside sticky/cursor-surrounding padding and legitimately leave visibleRanges.top
+			// unchanged. Logical progress must still be 10 -> 11 -> 12 -> 13, never one jump followed by a stall.
+			const rapidTops = await viewportTopsDuring(editor, () =>
+				Promise.all([nextChange(), nextChange(), nextChange()])
+			);
+			await expectCursorVisibleAt('committed/tall_e.txt', 13);
+			assertViewportMonotonic(rapidTops, 'down', 'sticky one-line tall-hunk progression');
+
+			const reverseTops = await viewportTopsDuring(editor, previousChange);
+			await expectCursorVisibleAt('committed/tall_e.txt', 12);
+			assertViewportMonotonic(reverseTops, 'up', 'sticky one-line tall-hunk reversal');
+			assert.strictEqual(activeTabPath(), wsUri('committed/tall_e.txt').path);
+		} finally {
+			await navConfig.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('stickyScroll.enabled', previousSticky, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('stickyScroll.maxLineCount', previousStickyMax, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('MODIFIED tall hunk: exact edges are consumed before forward/backward file rollover', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingLineStep', 10_000, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
+
+			const tall = lines(260, 'tall_e').split('\n');
+			for (let i = 10; i <= 229; i++) {
+				tall[i] = `tall_e boundary EDITED line ${i + 1}`;
+			}
+			write('committed/tall_e.txt', tall.join('\n') + '\n');
+			const previousFile = lines(40, 'mod_a').split('\n');
+			previousFile[4] = 'mod_a boundary EDITED line 5';
+			write('committed/mod_a.txt', previousFile.join('\n') + '\n');
+			await refreshUntil(
+				() => inWorkingTree('committed/tall_e.txt', 5) && inWorkingTree('committed/mod_a.txt', 5),
+				'boundary files to appear as modified'
+			);
+			const editor = await openWorkingDiffAt('committed/tall_e.txt', 0);
+
+			await nextChange();
+			await expectCursorVisibleAt('committed/tall_e.txt', 10);
+			const finalDown = await viewportTopsDuring(editor, nextChange);
+			await expectCursorVisibleAt('committed/tall_e.txt', 229);
+			assertViewportMonotonic(finalDown, 'down', 'final tall-hunk down step');
+			assert.strictEqual(
+				activeTabPath(),
+				wsUri('committed/tall_e.txt').path,
+				'landing at the hunk end prematurely changed files'
+			);
+
+			await nextChange(); // only a later press may wrap from the final file to the first one
+			await expectActiveTab('committed/mod_a.txt');
+			const modA = await poll(
+				() => visibleEditorFor(wsUri('committed/mod_a.txt')),
+				'mod_a modified editor after forward rollover'
+			);
+			const top = new vscode.Position(0, 0);
+			modA.selection = new vscode.Selection(top, top);
+
+			// Backward cross-file entry must present the last tall hunk from its bottom, not leave the caret at its
+			// start and let the following Previous skip it.
+			await previousChange();
+			await expectCursorVisibleAt('committed/tall_e.txt', 229);
+			assert.strictEqual(activeTabPath(), wsUri('committed/tall_e.txt').path);
+
+			const landedEditor = visibleEditorFor(wsUri('committed/tall_e.txt'))!;
+			const finalUp = await viewportTopsDuring(landedEditor, previousChange);
+			await expectCursorVisibleAt('committed/tall_e.txt', 10);
+			assertViewportMonotonic(finalUp, 'up', 'final tall-hunk up step');
+			assert.strictEqual(
+				activeTabPath(),
+				wsUri('committed/tall_e.txt').path,
+				'landing at the hunk start prematurely changed files'
+			);
+
+			await previousChange();
+			await expectActiveTab('committed/mod_a.txt');
+		} finally {
+			await navConfig.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('stage-and-Previous lands at the bottom of the previous tall diff', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
+			const tall = lines(260, 'tall_e').split('\n');
+			for (let i = 10; i <= 229; i++) {
+				tall[i] = `tall_e stage-previous EDITED line ${i + 1}`;
+			}
+			write('committed/tall_e.txt', tall.join('\n') + '\n');
+			write('zz_current.txt', lines(20, 'current'));
+			await refreshUntil(
+				() => inWorkingTree('committed/tall_e.txt', 5) && isUntracked('zz_current.txt'),
+				'stage-and-Previous files to appear'
+			);
+			await openPlainAt('zz_current.txt', 0);
+
+			await vscode.commands.executeCommand('better-git-vscode.stage-and-previous-changed-file');
+			await expectCursorVisibleAt('committed/tall_e.txt', 229);
+			assert.ok(inIndex('zz_current.txt', 1), 'stage-and-Previous did not stage the current file');
+		} finally {
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('MODIFIED wrapped tall hunk: SCM-focused rapid steps and reversal stay exact and monotonic', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const editorConfig = vscode.workspace.getConfiguration('editor');
+		const diffConfig = vscode.workspace.getConfiguration('diffEditor');
+		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
+		const previousDiffWordWrap = diffConfig.inspect<string>('wordWrap')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingLineStep', 5, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+			await diffConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+
+			const content = lines(260, 'tall_e').split('\n');
+			for (let i = 10; i <= 229; i++) {
+				content[i] =
+					`const wrappedTall${i} = '${'variable-fragment-'.repeat(4 + (i % 18))}'` +
+					`${i % 3 === 0 ? ' + short' : ' + another-variable-tail'.repeat(1 + (i % 5))};`;
+			}
+			write('committed/tall_e.txt', content.join('\n') + '\n');
+			await refreshUntil(() => inWorkingTree('committed/tall_e.txt', 5), 'wrapped tall_e change to appear');
+			const editor = await openWorkingDiffAt('committed/tall_e.txt', 0);
+			await nextChange();
+			await expectCursorVisibleAt('committed/tall_e.txt', 10);
+			await vscode.commands.executeCommand('workbench.view.scm');
+
+			const rapidDown = await viewportTopsDuring(editor, () =>
+				Promise.all([nextChange(), nextChange(), nextChange(), nextChange()])
+			);
+			await expectCursorVisibleAt('committed/tall_e.txt', 30);
+			assertViewportMonotonic(rapidDown, 'down', 'wrapped tall-hunk rapid next');
+
+			const rapidUp = await viewportTopsDuring(editor, () =>
+				Promise.all([previousChange(), previousChange()])
+			);
+			await expectCursorVisibleAt('committed/tall_e.txt', 20);
+			assertViewportMonotonic(rapidUp, 'up', 'wrapped tall-hunk rapid previous');
+
+			await nextChange();
+			await expectCursorVisibleAt('committed/tall_e.txt', 25);
+			assert.strictEqual(activeTabPath(), wsUri('committed/tall_e.txt').path);
+		} finally {
+			await navConfig.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('wordWrap', previousWordWrap, vscode.ConfigurationTarget.Global);
+			await diffConfig.update('wordWrap', previousDiffWordWrap, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('partially staged tall file: unstaged navigation ignores the staged phantom region', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingLineStep', 5, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
+
+			const staged = lines(260, 'tall_e').split('\n');
+			for (let i = 10; i <= 99; i++) {
+				staged[i] = `tall_e STAGED-ONLY line ${i + 1}`;
+			}
+			write('committed/tall_e.txt', staged.join('\n') + '\n');
+			git('add committed/tall_e.txt');
+
+			const working = staged.slice();
+			for (let i = 180; i <= 229; i++) {
+				working[i] = `tall_e WORKING-ONLY line ${i + 1}`;
+			}
+			write('committed/tall_e.txt', working.join('\n') + '\n');
+			await refreshUntil(
+				() => inIndex('committed/tall_e.txt', 0 /* INDEX_MODIFIED */) && inWorkingTree('committed/tall_e.txt', 5),
+				'tall_e to become partially staged'
+			);
+
+			// Line 20 changed relative to HEAD but is unchanged in the displayed index-vs-working diff. Parsing
+			// HEAD-vs-working would invent a tall hunk here and consume Next as 20->25; correct geometry jumps to 180.
+			const editor = await openWorkingDiffAt('committed/tall_e.txt', 20);
+			await vscode.commands.executeCommand('workbench.view.scm');
+			const jumpTops = await viewportTopsDuring(editor, nextChange);
+			const actualHunk = await expectCursorVisibleAt('committed/tall_e.txt', 180);
+			assert.notStrictEqual(actualHunk.selection.active.line, 25, 'staged-only phantom hunk consumed Next');
+			assertViewportMonotonic(jumpTops, 'down', 'partially-staged jump to working hunk');
+
+			await nextChange();
+			await expectCursorVisibleAt('committed/tall_e.txt', 185);
+		} finally {
+			await navConfig.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('MODIFIED tall hunk: rapid final-step plus rollover presents the hunk end first', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const editorConfig = vscode.workspace.getConfiguration('editor');
+		const diffConfig = vscode.workspace.getConfiguration('diffEditor');
+		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
+		const previousDiffWordWrap = diffConfig.inspect<string>('wordWrap')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingLineStep', 10_000, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+			await diffConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+
+			const tall = lines(260, 'tall_e').split('\n');
+			for (let i = 10; i <= 229; i++) {
+				tall[i] = `tall_e queued-boundary EDITED line ${i + 1}`;
+			}
+			tall[229] = `tall_e wrapped final segment ${'must-be-presented-'.repeat(160)}`;
+			write('committed/tall_e.txt', tall.join('\n') + '\n');
+			const nextFile = lines(40, 'mod_a').split('\n');
+			nextFile[4] = 'mod_a queued-boundary EDITED line 5';
+			write('committed/mod_a.txt', nextFile.join('\n') + '\n');
+			await refreshUntil(
+				() => inWorkingTree('committed/tall_e.txt', 5) && inWorkingTree('committed/mod_a.txt', 5),
+				'queued boundary files to appear'
+			);
+			const editor = await openWorkingDiffAt('committed/tall_e.txt', 0);
+			await nextChange();
+			await expectCursorVisibleAt('committed/tall_e.txt', 10);
+			assert.ok(!lineIsVisible(editor, 229), 'test precondition: final hunk line should start off-screen');
+
+			const hunkEndPosition = editor.document.lineAt(229).range.end;
+			let endBecameVisible = positionIsVisible(editor, hunkEndPosition);
+			const visibleSub = vscode.window.onDidChangeTextEditorVisibleRanges(event => {
+				if (event.textEditor === editor && positionIsVisible(editor, hunkEndPosition)) {
+					endBecameVisible = true;
+				}
+			});
+			try {
+				// The shared queue may execute the second press only after the first reveal settles and presents L230.
+				await Promise.all([nextChange(), nextChange()]);
+			} finally {
+				visibleSub.dispose();
+			}
+			await expectActiveTab('committed/mod_a.txt');
+			assert.ok(endBecameVisible, 'queued rollover changed files before the final wrapped hunk segment was presented');
+		} finally {
+			await navConfig.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('wordWrap', previousWordWrap, vscode.ConfigurationTarget.Global);
+			await diffConfig.update('wordWrap', previousDiffWordWrap, vscode.ConfigurationTarget.Global);
+		}
 	});
 
 	// ────────────────────────────────────────────────────────────────────────────────────────
@@ -732,12 +1104,13 @@ suite('SCM change navigation E2E', () => {
 		);
 		await openPlainAt('aa_staged.txt', 0);
 
-		await nextChange();
-		await expectCursorAt('aa_staged.txt', 5);
-		await expectViewportTopAt('aa_staged.txt', 5);
-		await previousChange();
-		await expectCursorAt('aa_staged.txt', 0);
-		await expectViewportTopAt('aa_staged.txt', 0);
+		const editor = visibleEditorFor(wsUri('aa_staged.txt'))!;
+		const downTops = await viewportTopsDuring(editor, nextChange);
+		await expectCursorVisibleAt('aa_staged.txt', 5);
+		assertViewportMonotonic(downTops, 'down', 'staged-new next');
+		const upTops = await viewportTopsDuring(editor, previousChange);
+		await expectCursorVisibleAt('aa_staged.txt', 0);
+		assertViewportMonotonic(upTops, 'up', 'staged-new previous');
 	});
 
 	test('staged-new file opened as its empty-original DIFF: normal nav, advances to the next file (no crawl)', async () => {
