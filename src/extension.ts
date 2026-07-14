@@ -1911,32 +1911,20 @@ const newFileScrollEditor = (): vscode.TextEditor | undefined => {
 
 // Shared step logic for new-file scroll mode: scroll `editor` `direction` by newFileNavLineJump lines within
 // a fully-added file so you can page through it. Returns true if it scrolled a step (caller stops), or false
-// if the far edge of the file is already on screen (caller falls through to the next/previous FILE — matching
-// the normal end-of-changes behaviour so the review flow keeps going).
+// only when the caret is already parked at the requested far edge (caller then falls through to the adjacent
+// FILE). Reaching the edge and leaving the file are intentionally separate presses: the user must always see a
+// final partial step land at line 1 / the last line before navigation changes files.
 //
-// v1.2.15 ROOT-CAUSE REWRITE — VIEWPORT-DERIVED, not caret-derived (Ethan 2026-07-10 bug):
-//   SYMPTOM: on a new untracked file that looked like it was AT THE TOP, pressing NEXT shot straight past the
-//   whole file ("went to the bottom / next file") instead of stepping +5 down.
-//   CAUSE: the old logic decided the edge (`cur >= last` / `cur <= 0`) and the step target PURELY from the
-//   CARET line (editor.selection.active.line), never from what was actually on screen. But the caret and the
-//   viewport routinely DECOUPLE in this flow: backward rollover into a new file (openPreviousFile) PINS the
-//   caret at the file's LAST line while the file — if it fits on screen — is rendered from its TOP. So the
-//   user SEES the top, but the caret is secretly at the bottom; the next NEXT press read caret>=last, hit the
-//   `atEdge` branch, and rolled over to the next file. (Codex independently confirmed the caret math alone can
-//   never reach EOF from the top — the "bottom" jump could only come from a caret that was already at the
-//   bottom.) Compounding it, the old `revealRange(target, InCenter)` produced NO visible scroll for the first
-//   few presses of a tall file: centring a near-top target line clamps to top, so the caret crept down
-//   invisibly until it passed the viewport centre, then the view lurched.
-//   FIX: derive EVERYTHING from the live viewport (editor.visibleRanges via readViewport) — the exact
-//   "recompute-live, viewport-is-the-state" philosophy the tall-hunk stepper (stepTallHunk) already uses, and
-//   which the task called out. DOWN advances to the next file ONLY when the file's last line is already
-//   visible (bottom >= last); otherwise it scrolls the viewport top down by `step` (AtTop, so it scrolls
-//   immediately and visibly). UP mirrors it: advance to the previous file only when the first line is visible
-//   (top <= 0); otherwise scroll up by `step`. The caret is pinned to the new top-visible line so it stays
-//   COUPLED to the viewport (keeps revert-and-save / any caret-relative command targeting what's on screen).
-//   Because edge detection keys off the viewport BOTTOM (unaffected by AtTop's near-EOF scroll clamp), the
-//   final down-step can never stick near the bottom — the same clamp that plagued the v1.2.10 tall-hunk bug is
-//   sidestepped here: a clamped down-step still makes `bottom` reach `last`, so the NEXT press advances.
+// v1.2.25 EDGE CONTRACT (supersedes the v1.2.15 "edge visible means advance" rule):
+//   • Progress is caret-derived: target = clamp(caret ± configuredStep). This is exact under word wrap/sticky
+//     context and also respects a caret the user moved manually.
+//   • DOWN's final partial step uses revealBottomAndPinCursor(last), so EOF is visibly presented at the bottom
+//     despite AtTop's unavoidable near-EOF clamp. UP's final partial step mirrors it at line 1 via AtTop.
+//   • Rollover happens only on a later press when the caret is already at that edge. If caret and viewport ever
+//     decouple, the edge is revealed once before rollover, preventing an invisible cross-file jump.
+// This fixes both asymmetric failures caused by the old viewport edge gate: NEXT skipped the remaining <step
+// lines whenever EOF merely entered the viewport, and PREVIOUS jumped to the prior file's bottom whenever line 1
+// was visible even though the caret was still several steps below it.
 //
 // v1.2.1 legacy note (superseded in v1.2.22): this used to call showTextDocument to focus the file before
 // stepping because an unfocused editor did not draw its caret. That call can return/activate a replacement
@@ -1972,32 +1960,44 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
     const { top, bottom, visLines } = vp;
     const caret = stepEditor.selection.active.line;
     if (direction === "down") {
-        // Bottom edge reached ONLY when the file's last line is genuinely on screen. Advance to the next file.
-        if (bottom >= last) {
-            debugLog("new-file", `down: last line L${last + 1} visible (viewport L${top + 1}-L${bottom + 1}) -> advance to next file`);
+        if (caret >= last) {
+            // A stale/decoupled caret at EOF must not change files invisibly. Present EOF once, then let the next
+            // press roll over. Normally the final partial step below already made bottom>=last.
+            if (bottom < last) {
+                await revealBottomAndPinCursorSettled(stepEditor, last);
+                debugLog("new-file", `down: caret already at L${last + 1} but EOF off-screen (viewport L${top + 1}-L${bottom + 1}) -> reveal EOF before rollover`);
+                return true;
+            }
+            debugLog("new-file", `down: caret and viewport already at EOF L${last + 1} -> advance to next file`);
             return false;
         }
-        // Scroll the viewport DOWN by `step` lines through the shared forced-scroll helper. Caret is pinned to
-        // the new top so it tracks what's shown; unlike the old direct AtTop call, this cannot no-op merely
-        // because the target line was already visible inside the old viewport.
-        // The caret is the exact logical-line progression anchor. visibleRanges.top is not: with word wrap,
-        // sticky scroll, or other editor context VS Code can report a top a few logical lines away from the
-        // line requested with AtTop. Using that reported top made repeated +5 presses drift to +7 and made the
-        // reverse path asymmetric. The viewport still owns edge detection (what the user has actually read),
-        // while the caret—pinned by every successful step—owns the configured ±N progression.
-        const newTop = Math.min(caret + step, last);
-        await revealTopAndPinCursor(stepEditor, newTop);
-        debugLog("new-file", `down: step caret L${caret + 1}->L${newTop + 1} (viewport L${top + 1}-L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
+
+        const target = Math.min(caret + step, last);
+        if (target === last) {
+            // Always consume a final partial step at EOF, even when EOF was already visible. Default reveal puts
+            // the last line at the bottom without the near-EOF AtTop clamp, and parks the caret for next-press rollover.
+            await revealBottomAndPinCursorSettled(stepEditor, last);
+        } else {
+            await revealTopAndPinCursor(stepEditor, target);
+        }
+        debugLog("new-file", `down: step caret L${caret + 1}->L${target + 1}${target === last ? " (final partial step at EOF)" : ""} (viewport L${top + 1}-L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
         return true;
     }
-    // UP mirror: top edge reached ONLY when the first line is on screen. Advance to the previous file.
-    if (top <= 0) {
-        debugLog("new-file", `up: first line visible (viewport L${top + 1}-L${bottom + 1}) -> advance to previous file`);
+
+    if (caret <= 0) {
+        // Mirror the decoupling guard above: line 1 must actually be presented once before changing files.
+        if (top > 0) {
+            await revealTopAndPinCursor(stepEditor, 0);
+            debugLog("new-file", `up: caret already at L1 but file start off-screen (viewport L${top + 1}-L${bottom + 1}) -> reveal start before rollover`);
+            return true;
+        }
+        debugLog("new-file", "up: caret and viewport already at L1 -> advance to previous file");
         return false;
     }
-    const newTop = Math.max(caret - step, 0);
-    await revealTopAndPinCursor(stepEditor, newTop);
-    debugLog("new-file", `up: step caret L${caret + 1}->L${newTop + 1} (viewport L${top + 1}-L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
+
+    const target = Math.max(caret - step, 0);
+    await revealTopAndPinCursor(stepEditor, target);
+    debugLog("new-file", `up: step caret L${caret + 1}->L${target + 1}${target === 0 ? " (final partial step at file start)" : ""} (viewport L${top + 1}-L${bottom + 1}, last L${last + 1}, vis=${visLines}, step=${step})`);
     return true;
 };
 
@@ -2485,6 +2485,42 @@ const revealBottomAndPinCursor = (editor: vscode.TextEditor, bottomLine: number)
     // Default reveal brings the range into view with minimal scroll; for a line below the viewport that lands
     // it at the bottom edge. This direction is unclamped (unlike AtTop near EOF), so the tail always shows.
     editor.revealRange(new vscode.Range(clamped, 0, clamped, 0), vscode.TextEditorRevealType.Default);
+};
+
+// New-file rollover has a stricter sequencing requirement than the tall-hunk caller above: the final partial
+// step must finish presenting EOF before a rapid queued second press is allowed to decide whether to change files.
+// Wait on the exact TextEditor object, just like the AtTop path, but accept any viewport containing the requested
+// bottom line because Default reveal intentionally lets VS Code choose the EOF-clamped top.
+const revealBottomAndPinCursorSettled = async (editor: vscode.TextEditor, bottomLine: number): Promise<void> => {
+    const clamped = Math.max(0, Math.min(bottomLine, Math.max(0, editor.document.lineCount - 1)));
+    const lineIsVisible = (target: vscode.TextEditor): boolean =>
+        target.visibleRanges.some((range) => clamped >= range.start.line && clamped <= range.end.line);
+    const viewportSettled = lineIsVisible(editor)
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            let finished = false;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            let subscription: vscode.Disposable | undefined;
+            const finish = () => {
+                if (finished) {
+                    return;
+                }
+                finished = true;
+                subscription?.dispose();
+                if (timer) {
+                    clearTimeout(timer);
+                }
+                resolve();
+            };
+            subscription = vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
+                if (event.textEditor === editor && lineIsVisible(event.textEditor)) {
+                    finish();
+                }
+            });
+            timer = setTimeout(finish, 120);
+        });
+    revealBottomAndPinCursor(editor, clamped);
+    await viewportSettled;
 };
 
 // THE INTERPOSER. Given the per-press context and which key was pressed, decide whether this press should

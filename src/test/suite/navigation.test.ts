@@ -502,16 +502,118 @@ suite('SCM change navigation E2E', () => {
 		await expectActiveTab('aa_new.txt');
 	});
 
-	test('very short new file already fully visible: next falls through immediately', async () => {
+	test('very short new file already fully visible: final partial step lands at EOF before rollover', async () => {
 		write('aa_short.txt', lines(3, 's')); // 3 lines, no trailing newline -> last line index 2
 		write('ab_other.txt', lines(5, 'o'));
 		await refreshUntil(() => isUntracked('aa_short.txt') && isUntracked('ab_other.txt'), 'both untracked files listed');
 		await openPlainAt('aa_short.txt', 0);
 
 		await nextChange();
-		// v1.2.15 made the viewport the source of truth: if the whole file is already on screen, it has
-		// already been reviewed and NEXT advances immediately (no pointless caret-only step inside it).
+		await expectCursorAt('aa_short.txt', 2); // consume the remaining two-line step and visibly park at EOF
+		assert.strictEqual(activeTabPath(), wsUri('aa_short.txt').path, 'final partial step skipped straight to the next file');
+
+		await nextChange(); // only the following press may roll over
 		await expectActiveTab('ab_other.txt');
+	});
+
+	test('untracked file with EOF already visible: next still lands at EOF before rollover', async () => {
+		write('aa_new.txt', lines(60, 'a'));
+		write('ab_next.txt', lines(5, 'b'));
+		await refreshUntil(() => isUntracked('aa_new.txt') && isUntracked('ab_next.txt'), 'both untracked files listed');
+		const editor = await openPlainAt('aa_new.txt', 0);
+		const last = editor.document.lineCount - 1;
+		const nearEnd = last - 3; // fewer than the configured five lines remain
+		const pos = new vscode.Position(nearEnd, 0);
+		editor.selection = new vscode.Selection(pos, pos);
+		editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.Default);
+		await poll(
+			() => editor.visibleRanges[editor.visibleRanges.length - 1]?.end.line === last,
+			'EOF to be visible while caret remains above it'
+		);
+
+		await nextChange();
+		await expectCursorAt('aa_new.txt', last);
+		assert.strictEqual(activeTabPath(), wsUri('aa_new.txt').path, 'visible EOF caused premature file rollover');
+
+		await nextChange();
+		await expectActiveTab('ab_next.txt');
+	});
+
+	test('untracked file with start already visible: previous steps to line 1 before rollover', async () => {
+		write('aa_previous.txt', lines(5, 'a'));
+		write('ab_current.txt', lines(12, 'b'));
+		await refreshUntil(
+			() => isUntracked('aa_previous.txt') && isUntracked('ab_current.txt'),
+			'both untracked files listed'
+		);
+		const editor = await openPlainAt('ab_current.txt', 0); // the whole file fits, so line 1 is already visible
+		const last = editor.document.lineCount - 1;
+		const pos = new vscode.Position(last, 0);
+		editor.selection = new vscode.Selection(pos, pos);
+
+		await previousChange();
+		await expectCursorAt('ab_current.txt', 6);
+		await previousChange();
+		await expectCursorAt('ab_current.txt', 1);
+		await previousChange();
+		await expectCursorAt('ab_current.txt', 0); // final one-line partial step
+		assert.strictEqual(activeTabPath(), wsUri('ab_current.txt').path, 'visible file start caused premature rollover');
+
+		await previousChange();
+		await expectActiveTab('aa_previous.txt');
+	});
+
+	test('untracked EOF direction reversal continues from the current caret', async () => {
+		write('zz_reverse.txt', lines(13, 'r'));
+		await refreshUntil(() => isUntracked('zz_reverse.txt'), 'zz_reverse.txt to appear as untracked');
+		const editor = await openPlainAt('zz_reverse.txt', 0);
+		const pos = new vscode.Position(10, 0);
+		editor.selection = new vscode.Selection(pos, pos);
+
+		await nextChange();
+		await expectCursorAt('zz_reverse.txt', 12); // final +2 lands at EOF
+		await previousChange();
+		await expectCursorAt('zz_reverse.txt', 7); // reverse from EOF, never jump to another file/bottom
+		await nextChange();
+		await expectCursorAt('zz_reverse.txt', 12);
+		assert.strictEqual(activeTabPath(), wsUri('zz_reverse.txt').path);
+	});
+
+	test('untracked wrapped EOF: rapid final-step plus rollover waits until EOF is presented', async () => {
+		const editorConfig = vscode.workspace.getConfiguration('editor');
+		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
+		try {
+			await editorConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+			write(
+				'aa_wrapped_boundary.ts',
+				Array.from({ length: 40 }, (_, i) => `const wrappedBoundary${i} = '${'very-long-content-'.repeat(120)}';`).join('\n')
+			);
+			write('ab_next.txt', lines(5, 'b'));
+			await refreshUntil(
+				() => isUntracked('aa_wrapped_boundary.ts') && isUntracked('ab_next.txt'),
+				'both untracked files listed'
+			);
+			const editor = await openPlainAt('aa_wrapped_boundary.ts', 0);
+			const last = editor.document.lineCount - 1;
+			const nearEnd = last - 3;
+			const pos = new vscode.Position(nearEnd, 0);
+			editor.selection = new vscode.Selection(pos, pos);
+			editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.Default);
+			await poll(
+				() =>
+					editor.visibleRanges.some((range) => nearEnd >= range.start.line && nearEnd <= range.end.line) &&
+					!editor.visibleRanges.some((range) => last >= range.start.line && last <= range.end.line),
+				'near-EOF caret visible while the heavily wrapped EOF remains off-screen'
+			);
+			await vscode.commands.executeCommand('workbench.view.scm');
+
+			// First queued press must render/pin EOF; only the second may roll over. Without awaiting the bottom
+			// reveal, the second press can see stale visibleRanges and consume an unintended extra edge-reveal step.
+			await Promise.all([nextChange(), nextChange()]);
+			await expectActiveTab('ab_next.txt');
+		} finally {
+			await editorConfig.update('wordWrap', previousWordWrap, vscode.ConfigurationTarget.Global);
+		}
 	});
 
 	test('empty new file: next advances to the next file immediately', async () => {

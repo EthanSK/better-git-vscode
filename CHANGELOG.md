@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.25] (ethansk fork) — always present new-file edges before rollover
+
+- **Fixed: new/untracked-file navigation changed files as soon as EOF or line 1 merely entered the viewport.** The cursor could still be several steps away, so Next skipped the final remaining lines and Previous unexpectedly opened the prior file at its bottom.
+- New-file stepping now follows one symmetric contract from the current cursor: move by exactly the configured logical-line jump, clamp a final partial step to the last line or line 1, visibly present that edge, and only let the following press change files.
+- The final downward step uses an EOF-safe bottom reveal instead of an impossible near-EOF `AtTop` placement. It waits for the exact editor to publish EOF before a rapid queued second press can roll over. Reversing direction always continues from the current caret.
+- Added real Extension Development Host regressions for short files, EOF already visible, file start already visible, reversing from EOF, and rapid rollover with heavily wrapped EOF lines. Full suite: 28/28 passing.
+
 ## [1.2.24] (ethansk fork) — reliable wrapped untracked-file stepping
 
 - **Fixed: Option+`>` could step once and then stop in a new/untracked file, while Option+`<` became irregular.** Wrapped TypeScript editors with sticky context do not always report the exact logical line requested with `revealRange(AtTop)`. The v1.2.22 fallback treated that reported viewport top as the next five-line anchor, causing shifted +7/-3 steps, stale repeated targets, and extra retry flicker.

@@ -33,6 +33,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-14T18:14:00Z
+**Trigger:** Ethan 2026-07-14 after installing v1.2.24: Next goes to the next file too early; the last jump must always land at the bottom, and Previous must keep stepping from the current cursor before changing files
+**Symptom:** The v1.2.24 exact ±5 anchor fixed wrapped-line drift, but rollover still used v1.2.15's viewport edge rule. As soon as EOF was anywhere on screen, Next opened the next file even when fewer than five unread lines remained. As soon as line 1 was visible, Previous opened the prior file at its bottom even when the caret was still below line 1, making it look like reverse navigation had reset/jumped unpredictably.
+**Root cause:** `stepThroughNewFile` had split ownership: the caret determined the next ±N target, but `visibleRanges.top/bottom` alone decided file rollover. Visibility is not completion—a viewport can contain an edge while the current review cursor has not reached it. The two direction branches therefore violated the same basic navigation state contract in mirror-image ways.
+**Fix:** v1.2.25 refactors new-file stepping around one symmetric caret-edge contract. Each press computes `clamp(caret ± step)`; a partial final step is always consumed at line 1/EOF; rollover is allowed only on a later press when the caret is already at that edge. Down uses an EOF-safe bottom reveal and awaits the exact editor publishing the last line before a rapid queued rollover. The viewport is now only a safety check: if an edge caret is ever visually decoupled, present it once before changing files. Direction reversal naturally starts from the current caret with no stored direction state.
+**Commit:** pending on `codex/fix-new-file-edge-rollover`
+**Guard:** Real-file isolated-host proof with word wrap and SCM focus: L150->L155->L157 stays in file, Previous returns to L152; near the top L12->L7->L2->L1 stays in file. Real-host E2Es cover short-file partial EOF, EOF-visible/caret-not-at-EOF, start-visible/caret-not-at-start, EOF reversal, and rapid final-step+rollover when heavily wrapped EOF is initially off-screen. Full suite 28/28; TypeScript, webpack, and ESLint green.
+---
+
+---
 **Date:** 2026-07-14T17:40:00Z
 **Trigger:** Ethan 2026-07-14: Option+`>` on a new untracked file jumps five lines once, then repeated next stops; previous became glitchier after the v1.2.22 rewrite
 **Symptom:** The defect is specific to the plain-editor untracked-file stepper. In an isolated real Extension Development Host on Ethan's actual 156-line untracked TypeScript file with `editor.wordWrap=on`, sticky context, Dvorak physical Option+`>` (`Alt+V`), and Source Control retaining focus, v1.2.23 did not preserve the configured logical progression: L1->L6->L13->L20 and rapid reverse stepping ended at L9 instead of L1. Editor-focused/default-unwrapped E2E paths could still pass, which hid the production setup failure.
