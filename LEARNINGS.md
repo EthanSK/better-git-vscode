@@ -37,7 +37,7 @@ Each entry looks like:
 **Symptom:** The release workflow treated upgrading Ethan's normal VS Code to the newly published Better Git version as mandatory closeout, including uninstall/install retries while Marketplace search metadata propagated.
 **Root cause:** The repository's release policy incorrectly equated successful Marketplace publication with permission to mutate Ethan's installed extension. Publishing and installing are separate actions with separate authorization.
 **Fix:** Release Better Git to the Marketplace by default, verify the version-specific remote package, and stop there. Never install, uninstall, update, reload, or restart Better Git in Ethan's normal VS Code unless he explicitly requests that installation action in the current task; Ethan handles routine Marketplace updates himself.
-**Commit:** pending on `codex/release-without-installing`
+**Commit:** PR #41 (release-without-installing policy)
 **Guard:** Release closeout checks remote publication/package validity only. Any normal-VS-Code mutation during a release without an explicit current-task installation request violates this policy.
 ---
 
