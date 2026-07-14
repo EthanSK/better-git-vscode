@@ -1,10 +1,10 @@
-# How Agentic Git navigation works
+# How Better Git VS Code navigation works
 
-Agentic Git treats change review as one continuous, reversible sequence. The same Next and Previous commands must behave predictably in ordinary diffs, tall hunks, brand-new files, staged files, and cross-file transitions.
+Better Git VS Code treats change review as one continuous, reversible sequence. The same Next and Previous commands must behave predictably in ordinary diffs, tall hunks, brand-new files, staged files, and cross-file transitions.
 
 ## The navigation contract
 
-The current caret is the review position. Every press starts from that position; the viewport is used only to present it. Agentic Git does not keep a separate forward/backward state machine that can drift away from what the user is reading.
+The current caret is the review position. Every press starts from that position; the viewport is used only to present it. Better Git VS Code does not keep a separate forward/backward state machine that can drift away from what the user is reading.
 
 For a brand-new file, Next and Previous move by the configured logical-line step (five lines by default):
 
@@ -16,7 +16,7 @@ For a brand-new file, Next and Previous move by the configured logical-line step
 
 Tall diff hunks follow the same rule at hunk boundaries. A hunk that fits in the viewport remains normal hunk-to-hunk navigation. A hunk that does not fit is reviewed in overlapping screen-sized stages; its exact first or last line is presented before the following press can leave it.
 
-Reversing direction always continues from the current caret. Previous does not reset to the bottom of the file, and Next does not restart from the top. When Previous enters a different file, Agentic Git deliberately lands at that file's last reviewable position so upward review begins in the right place.
+Reversing direction always continues from the current caret. Previous does not reset to the bottom of the file, and Next does not restart from the top. When Previous enters a different file, Better Git VS Code deliberately lands at that file's last reviewable position so upward review begins in the right place.
 
 ## Why the old behavior became jumpy
 

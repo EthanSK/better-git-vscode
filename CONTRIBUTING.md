@@ -1,6 +1,6 @@
-# Contributing to Agentic Git
+# Contributing to Better Git VS Code
 
-Agentic Git is a TypeScript VS Code extension bundled with webpack. Changes to review navigation should start with the behavior contract in [`docs/navigation-behavior.md`](docs/navigation-behavior.md) and the incident evidence in [`LEARNINGS.md`](LEARNINGS.md).
+Better Git VS Code is a TypeScript VS Code extension bundled with webpack. Changes to review navigation should start with the behavior contract in [`docs/navigation-behavior.md`](docs/navigation-behavior.md) and the incident evidence in [`LEARNINGS.md`](LEARNINGS.md).
 
 ## Local setup
 
@@ -26,7 +26,7 @@ npm test
 To reuse an existing VS Code executable instead of downloading another test build:
 
 ```sh
-AGENTIC_GIT_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Electron" npm test
+BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Electron" npm test
 ```
 
 Also validate the production package before release:
@@ -36,7 +36,7 @@ npm run package
 npx @vscode/vsce package
 ```
 
-Inspect the resulting VSIX manifest and file tree. It must identify `EthanSK.agentic-git`, contain the production bundle and documentation, and exclude development output or credentials.
+Inspect the resulting VSIX manifest and file tree. It must identify `EthanSK.better-git-vscode`, contain the production bundle and documentation, and exclude development output or credentials.
 
 ## Navigation changes
 
