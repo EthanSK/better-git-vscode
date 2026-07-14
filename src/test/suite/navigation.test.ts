@@ -106,6 +106,17 @@ suite('SCM change navigation E2E', () => {
 	// n lines joined WITHOUT a trailing newline, so document.lineCount === n exactly — keeps the
 	// step-target arithmetic in assertions deterministic (a trailing \n adds a phantom empty last line).
 	const lines = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => `${prefix} line ${i + 1}`).join('\n');
+	const wrappedTypeScriptFixture = () => {
+		const result = ['export class WrappedNavigationFixture {'];
+		for (let i = 0; i < 70; i++) {
+			result.push(`  method${i + 1}(): string {`);
+			result.push(`    const value = '${'wrapped-content-'.repeat(8 + (i % 9))}';`);
+			result.push(`    return value + '${i % 3 === 0 ? 'short' : 'another-variable-length-fragment-'.repeat(5)}';`);
+			result.push('  }');
+		}
+		result.push('}');
+		return result.join('\n');
+	};
 
 	// Ask the git extension to re-scan, then wait until `pred` sees the expected state. Every test calls
 	// this after mutating the working tree so assertions never race the extension's async refresh.
@@ -342,6 +353,110 @@ suite('SCM change navigation E2E', () => {
 		await Promise.all([nextChange(), nextChange(), nextChange()]);
 		await expectCursorAt('zz_new.txt', 15);
 		await expectViewportTopAt('zz_new.txt', 15);
+	});
+
+	test('untracked wrapped file: SCM-focused next/previous remain exact five-line steps', async () => {
+		const editorConfig = vscode.workspace.getConfiguration('editor');
+		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
+		const previousStickyScroll = editorConfig.inspect<boolean>('stickyScroll.enabled')?.globalValue;
+		try {
+			await editorConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+			await editorConfig.update('stickyScroll.enabled', true, vscode.ConfigurationTarget.Global);
+			write('zz_wrapped_new.ts', wrappedTypeScriptFixture());
+			await refreshUntil(() => isUntracked('zz_wrapped_new.ts'), 'zz_wrapped_new.ts to appear as untracked');
+			await openPlainAt('zz_wrapped_new.ts', 0);
+
+			// This is Ethan's exact path: the SCM tree owns keyboard focus while the active plain editor is the
+			// untracked file. v1.2.22 used visibleRanges.top as both success criterion and cursor fallback; wrapped
+			// and sticky layouts can report that top a few logical lines away, producing +7/-3 drift or a repeat.
+			await vscode.commands.executeCommand('workbench.view.scm');
+			await nextChange();
+			await expectCursorAt('zz_wrapped_new.ts', 5);
+			await nextChange();
+			await expectCursorAt('zz_wrapped_new.ts', 10);
+			await previousChange();
+			await expectCursorAt('zz_wrapped_new.ts', 5);
+			await previousChange();
+			await expectCursorAt('zz_wrapped_new.ts', 0);
+			assert.strictEqual(activeTabPath(), wsUri('zz_wrapped_new.ts').path);
+		} finally {
+			await editorConfig.update('wordWrap', previousWordWrap, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('stickyScroll.enabled', previousStickyScroll, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('untracked wrapped file: rapid queued next and direction reversals lose no steps', async () => {
+		const editorConfig = vscode.workspace.getConfiguration('editor');
+		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
+		const previousStickyScroll = editorConfig.inspect<boolean>('stickyScroll.enabled')?.globalValue;
+		try {
+			await editorConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+			await editorConfig.update('stickyScroll.enabled', true, vscode.ConfigurationTarget.Global);
+			write('zz_wrapped_rapid.ts', wrappedTypeScriptFixture());
+			await refreshUntil(() => isUntracked('zz_wrapped_rapid.ts'), 'zz_wrapped_rapid.ts to appear as untracked');
+			await openPlainAt('zz_wrapped_rapid.ts', 0);
+			await vscode.commands.executeCommand('workbench.view.scm');
+
+			await Promise.all([nextChange(), nextChange(), nextChange(), nextChange()]);
+			const afterRapidNext = await expectCursorAt('zz_wrapped_rapid.ts', 20);
+			assert.ok(afterRapidNext.visibleRanges[0].start.line > 0, 'rapid wrapped stepping did not move the viewport');
+
+			// Queue order: 20 -> 15 -> 20 -> 15 -> 10 -> 15. This catches stale viewport reads in either direction.
+			await Promise.all([previousChange(), nextChange(), previousChange(), previousChange(), nextChange()]);
+			await expectCursorAt('zz_wrapped_rapid.ts', 15);
+			assert.strictEqual(activeTabPath(), wsUri('zz_wrapped_rapid.ts').path);
+		} finally {
+			await editorConfig.update('wordWrap', previousWordWrap, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('stickyScroll.enabled', previousStickyScroll, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('untracked wrapped file: editor/SCM focus switches preserve one shared five-line sequence', async () => {
+		const editorConfig = vscode.workspace.getConfiguration('editor');
+		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
+		try {
+			await editorConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+			write('zz_wrapped_focus.ts', wrappedTypeScriptFixture());
+			await refreshUntil(() => isUntracked('zz_wrapped_focus.ts'), 'zz_wrapped_focus.ts to appear as untracked');
+			await openPlainAt('zz_wrapped_focus.ts', 0);
+
+			await nextChange(); // editor focused
+			await expectCursorAt('zz_wrapped_focus.ts', 5);
+			await vscode.commands.executeCommand('workbench.view.scm');
+			await nextChange(); // SCM focused
+			await expectCursorAt('zz_wrapped_focus.ts', 10);
+			await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+			await previousChange(); // editor focused again
+			await expectCursorAt('zz_wrapped_focus.ts', 5);
+			await vscode.commands.executeCommand('workbench.view.scm');
+			await previousChange(); // SCM focused again
+			await expectCursorAt('zz_wrapped_focus.ts', 0);
+		} finally {
+			await editorConfig.update('wordWrap', previousWordWrap, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('untracked wrapped file: custom jump remains exact with SCM focus and rapid presses', async () => {
+		const editorConfig = vscode.workspace.getConfiguration('editor');
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
+		const previousJump = navConfig.inspect<number>('newFileNavLineJump')?.globalValue;
+		try {
+			await editorConfig.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+			await navConfig.update('newFileNavLineJump', 7, vscode.ConfigurationTarget.Global);
+			write('zz_wrapped_custom.ts', wrappedTypeScriptFixture());
+			await refreshUntil(() => isUntracked('zz_wrapped_custom.ts'), 'zz_wrapped_custom.ts to appear as untracked');
+			await openPlainAt('zz_wrapped_custom.ts', 0);
+			await vscode.commands.executeCommand('workbench.view.scm');
+
+			await Promise.all([nextChange(), nextChange(), nextChange()]);
+			await expectCursorAt('zz_wrapped_custom.ts', 21);
+			await previousChange();
+			await expectCursorAt('zz_wrapped_custom.ts', 14);
+		} finally {
+			await navConfig.update('newFileNavLineJump', previousJump, vscode.ConfigurationTarget.Global);
+			await editorConfig.update('wordWrap', previousWordWrap, vscode.ConfigurationTarget.Global);
+		}
 	});
 
 	test('newFileNavLineJump custom value is respected', async () => {

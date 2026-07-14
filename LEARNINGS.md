@@ -21,6 +21,7 @@ Each entry looks like:
 
 ## Release installation policy
 
+- Better Git code fixes requested by Ethan include completing the Marketplace release by default unless he explicitly says not to release that change.
 - Ethan's normal VS Code must end every release task on the **Marketplace-installed** copy of `EthanSK.better-git-vscode`, never a development VSIX.
 - Prefer the Extension Development Host for testing. Install a locally-packaged VSIX into Ethan's normal VS Code only when that exact integration check is genuinely required, and treat it as temporary.
 - After publishing, first prove the requested version is downloadable from the version-specific Marketplace gallery endpoint. Marketplace list/search metadata may lag or disagree briefly after a successful publish, so do not uninstall the working copy based only on `vsce show` ordering.
@@ -30,6 +31,16 @@ Each entry looks like:
 ## Entries
 
 (newest first)
+
+---
+**Date:** 2026-07-14T17:40:00Z
+**Trigger:** Ethan 2026-07-14: Option+`>` on a new untracked file jumps five lines once, then repeated next stops; previous became glitchier after the v1.2.22 rewrite
+**Symptom:** The defect is specific to the plain-editor untracked-file stepper. In an isolated real Extension Development Host on Ethan's actual 156-line untracked TypeScript file with `editor.wordWrap=on`, sticky context, Dvorak physical Option+`>` (`Alt+V`), and Source Control retaining focus, v1.2.23 did not preserve the configured logical progression: L1->L6->L13->L20 and rapid reverse stepping ended at L9 instead of L1. Editor-focused/default-unwrapped E2E paths could still pass, which hid the production setup failure.
+**Root cause:** v1.2.22 made `visibleRanges.top` do two incompatible jobs: visual edge/scroll state and the next configured ±5 logical-line anchor. With wrapping/sticky context, `revealRange(AtTop)` can legitimately publish a logical top several lines away from the requested line. The exact-top waiter then timed out/calibrated/retried and finally pinned the caret to that reported achieved top. The next press advanced from the shifted viewport again, causing +7/-3 drift; a stale/unchanged reported top could recompute the same target and reproduce the one-step-then-stop shape. The second retry anchor also caused the newly reported backward flicker.
+**Fix:** `src/extension.ts`: keep viewport top/bottom as the source of truth only for visible file-edge detection, but use the caret pinned by the prior Better Git step as the exact configured ±N progression anchor. Always pin the requested target line rather than substituting `visibleRanges.top`. Preserve the editor-scoped forcing reveal needed when Source Control owns focus; retain one bounded exact-top retry only when `editor.wordWrap=off`, where exact top is attainable and tall-hunk cursor/view coupling needs it. Wrapped editors skip the unattainable second retry, removing the extra flicker.
+**Commit:** pending on `codex/fix-untracked-repeat-scroll`
+**Guard:** `src/test/suite/navigation.test.ts` now builds variable-length, sticky-scroll TypeScript fixtures and covers four real-host wrapped/untracked scenarios: SCM-focused exact next/previous, rapid queued repeats plus direction reversals, editor<->SCM focus switching, and custom seven-line jumps under rapid input. Isolated manual result on the actual file is exactly L1->L6->L11->L16->L21->L26 and back to L1 while SCM stays focused. Full real VS Code Extension Development Host suite: 24/24 passing; TypeScript, webpack, and ESLint green. Normal VS Code was not touched and remains on the Marketplace build.
+---
 
 ---
 **Date:** 2026-07-14T13:25:40Z

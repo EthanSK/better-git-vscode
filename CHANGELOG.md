@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.24] (ethansk fork) — reliable wrapped untracked-file stepping
+
+- **Fixed: Option+`>` could step once and then stop in a new/untracked file, while Option+`<` became irregular.** Wrapped TypeScript editors with sticky context do not always report the exact logical line requested with `revealRange(AtTop)`. The v1.2.22 fallback treated that reported viewport top as the next five-line anchor, causing shifted +7/-3 steps, stale repeated targets, and extra retry flicker.
+- New-file navigation now uses the caret pinned by the prior Better Git step as the exact configured logical-line progression anchor, while the live viewport remains authoritative for deciding when the file edge is actually visible. The default remains an exact five logical lines in either direction.
+- The focus-independent editor-scoped reveal remains intact for Source Control workflows. Wrapped editors no longer perform an unattainable second exact-top retry; ordinary unwrapped editors retain the bounded retry needed for tall-hunk cursor/view coupling.
+- Real Extension Development Host coverage now includes variable-length wrapped TypeScript with sticky context, Source Control focus, rapid repeated presses and direction reversals, editor/SCM focus switching, and a custom seven-line jump. Full suite: 24/24 passing.
+
 ## [1.2.23] (ethansk fork) — reveal files from worktrees outside Explorer
 
 - **Fixed: `Open & reveal current file in Explorer` silently failed for files whose linked worktree was visible in Source Control but not present as an Explorer workspace folder.** Source Control can open a repository independently, but Explorer has no tree node it can select until that worktree root belongs to the workspace.
