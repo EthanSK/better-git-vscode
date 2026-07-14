@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review — jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.25",
+  "version": "1.2.26",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -179,8 +179,8 @@
         },
         "better-git-vscode.collapseWorktreesOnStartup": {
           "type": "boolean",
-          "default": false,
-          "description": "Off by default; turn on to enable. When you have multiple git worktrees / repositories open in one window, VS Code's Source Control panel shows each as its own section and renders them all EXPANDED on every window open / reload — noisy with several worktrees. With this ON, the extension collapses the OTHER worktree/repository sections shortly after the window loads, but keeps your PRIMARY / main repository (the one at the top — your main working copy) EXPANDED, since that's the one you're working in. It only acts when there are 2+ repositories, and it briefly focuses the Source Control view to do so (a workaround because VS Code has no API to persist/default the section collapse state, nor to collapse/expand a single repository). To re-expand the primary it opens one of that repo's changed files in a preview tab, which relies on scm.autoReveal being on (VS Code default) — if you turn scm.autoReveal off, or the primary has no changes, the primary is collapsed along with the rest. Regardless of this setting, you can always fold manually via the 'Collapse all worktree / repository sections in Source Control' command (which also keeps the primary expanded)."
+          "default": true,
+          "description": "When 2+ git worktrees / repositories are open, collapse every repository section shortly after window load or an extension-host restart so Source Control does not come back fully expanded. Enabled by default; turn off to leave VS Code's expansion state alone. VS Code exposes no API to persist individual repository expansion state, so this uses its collapse-all view action and briefly opens/focuses Source Control while it runs. It does not open a file or re-expand the primary repository. The same plain collapse is always available from the 'Collapse all worktree / repository sections in Source Control' command."
         },
         "better-git-vscode.newFileNavLineJump": {
           "type": "number",

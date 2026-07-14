@@ -1,5 +1,14 @@
 # Change Log
 
+## [1.2.26] (ethansk fork) — stable caret-owned navigation and restart collapse
+
+- **Removed the visible overshoot-and-return in new files and large diff hunks.** The v1.2.22 workaround forced an off-screen reveal and then returned to the requested line. It looked “jumpy jumpy,” and it mistook a legitimate unchanged viewport (caused by VS Code's sticky/cursor-surrounding context) for a dropped scroll.
+- **New-file and tall-hunk stepping now share one symmetric caret-owned contract.** Every press advances from the current caret by the configured logical step, a final partial press lands on the exact file/hunk edge, and only a later press changes hunk or file. Previous always reverses from the current caret; it never resets to the bottom.
+- **Wrapped final lines are fully presented before rollover.** With word wrap enabled, the last visual segment—not merely the first visible segment of the same logical line—must appear before navigation can leave the file/hunk. Unwrapped long lines retain column 0 and are not horizontally yanked.
+- **Backward cross-file entry now lands tall diffs at the last hunk's exact bottom.** Normal Previous, no-context Previous, and stage-and-Previous use the same landing helper, so the next Previous reviews upward instead of skipping the hunk.
+- **Repository/worktree headers collapse after window reloads and extension-host restarts by default.** Startup now uses the same plain collapse-all behavior as the manual command. It no longer re-expands the primary through `scm.autoReveal` or opens a preview file as a side effect. VS Code still provides no public API for persisting individual repository header states.
+- Expanded the real Extension Development Host suite to 35 tests: sticky-context one-line steps, rapid input, direction reversal, full forward/backward boundaries, wrapped variable-length hunks, wrapped final segments, partially staged phantom-hunk protection, stage-and-Previous landing, renderer-event monotonicity, and final-edge-before-rollover ordering.
+
 ## [1.2.25] (ethansk fork) — always present new-file edges before rollover
 
 - **Fixed: new/untracked-file navigation changed files as soon as EOF or line 1 merely entered the viewport.** The cursor could still be several steps away, so Next skipped the final remaining lines and Previous unexpectedly opened the prior file at its bottom.
