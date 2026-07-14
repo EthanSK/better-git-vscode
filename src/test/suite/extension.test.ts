@@ -46,4 +46,44 @@ suite('Extension Test Suite', () => {
 		assert.ok(setting, 'autoAddWorktreeOnReveal setting is missing from package.json');
 		assert.strictEqual(setting.default, true, 'autoAddWorktreeOnReveal must remain on by default');
 	});
+
+	test('Dvorak Option+>/< aliases always use canonical change navigation', () => {
+		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
+		assert.ok(extension, 'Better Git extension manifest was not loaded by the extension test host');
+		const keybindings = extension.packageJSON.contributes?.keybindings as
+			| Array<{ command?: string; key?: string; mac?: string; when?: string }>
+			| undefined;
+		assert.ok(keybindings, 'Better Git keybindings are missing from package.json');
+
+		const dvorakWhen = 'config.better-git-vscode.dvorakMode';
+		const hasBinding = (command: string, key: string) =>
+			keybindings.some(binding =>
+				binding.command === command &&
+				binding.key === key &&
+				binding.mac === key &&
+				binding.when === dvorakWhen
+			);
+
+		for (const key of ['alt+v', 'alt+.']) {
+			assert.ok(hasBinding('better-git-vscode.next-scm-change', key), `Dvorak next alias ${key} is missing`);
+		}
+		for (const key of ['alt+w', 'alt+,']) {
+			assert.ok(hasBinding('better-git-vscode.previous-scm-change', key), `Dvorak previous alias ${key} is missing`);
+		}
+		for (const key of ['shift+alt+v', 'shift+alt+.']) {
+			assert.ok(hasBinding('better-git-vscode.stage-and-next-changed-file', key), `Dvorak stage-next alias ${key} is missing`);
+		}
+		for (const key of ['shift+alt+w', 'shift+alt+,']) {
+			assert.ok(hasBinding('better-git-vscode.stage-and-previous-changed-file', key), `Dvorak stage-previous alias ${key} is missing`);
+		}
+
+		const smartKeyboardDefaults = keybindings.filter(binding =>
+			binding.command === 'better-git-vscode.smart-forward' || binding.command === 'better-git-vscode.smart-back'
+		);
+		assert.deepStrictEqual(
+			smartKeyboardDefaults,
+			[],
+			'smart mouse commands must not own keyboard defaults; their reversed review direction hijacks Option+>/< navigation'
+		);
+	});
 });

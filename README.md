@@ -185,18 +185,19 @@ remap over the one canonical navigation behaviour; it never changes what the com
 
 | Action (physical key) | QWERTY default | Dvorak mode |
 | --- | --- | --- |
-| Next change (`>` key) | `Alt+.` | `Alt+V` |
-| Previous change (`<` key) | `Alt+,` | `Alt+W` |
-| Stage current file + next change (`Shift+>`) | `Shift+Alt+.` | `Shift+Alt+V` |
-| Stage current file + previous change (`Shift+<`) | `Shift+Alt+,` | `Shift+Alt+W` |
+| Next change (`>` key) | `Alt+.` | `Alt+V` (also accepts `Alt+.`) |
+| Previous change (`<` key) | `Alt+,` | `Alt+W` (also accepts `Alt+,`) |
+| Stage current file + next change (`Shift+>`) | `Shift+Alt+.` | `Shift+Alt+V` (also accepts `Shift+Alt+.`) |
+| Stage current file + previous change (`Shift+<`) | `Shift+Alt+,` | `Shift+Alt+W` (also accepts `Shift+Alt+,`) |
 
-When the toggle is on, the QWERTY defaults for those four commands are automatically
-disabled and the Dvorak-character keys take over (it uses VS Code's native
-`config.better-git-vscode.dvorakMode` when-clauses — no extension restart trick).
+When the toggle is on, the Dvorak-character keys take over and the punctuation aliases
+route to those same canonical commands. The aliases cover macOS layouts/input methods
+that report Option+the physical `>` / `<` keys as punctuation instead of `V` / `W`
+(it uses VS Code's native `config.better-git-vscode.dvorakMode` when-clauses — no
+extension restart trick).
 Changed-file nav (`Cmd/Ctrl+Alt+.` / `,`), revert (`Alt+Q`) and reveal (`Alt+R`) are
-**left on their defaults** in both modes. In Dvorak mode the freed-up `Alt+.` / `Alt+,`
-characters additionally map to the smart forward/back mouse commands (they sit on
-different physical keys there, so nothing collides).
+**left on their defaults** in both modes. Smart forward/back are mouse-oriented commands
+with no default keyboard shortcut; Ethan's F13/F17 mouse bindings remain independent.
 
 > Your own `keybindings.json` entries always win, so you can still hand-tune any of these
 > on top of the toggle (see *Overriding any keybinding* below).

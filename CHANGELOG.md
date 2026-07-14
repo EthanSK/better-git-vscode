@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.24] (ethansk fork) — reliable Dvorak Option+`>` / `<` navigation
+
+- **Fixed: with Dvorak mode enabled, Option+the physical `>` / `<` keys could invoke the reversed smart-mouse commands instead of canonical next/previous navigation.** On Ethan's macOS `DVORAK - QWERTY CMD` setup, a live Option+`.` reproduction moved an untracked file backward from line 10 to line 1; the direct `Better Git: Next git change` command moved and scrolled line 5 to line 10 correctly, proving the scroll engine was healthy and the shortcut route was wrong.
+- Dvorak mode now keeps `Alt+V` / `Alt+W` for the usual physical positions and also accepts `Alt+.` / `Alt+,` aliases for hosts/input methods that report those physical Option chords as punctuation. Every keyboard alias routes to canonical next/previous change; stage-and-advance gets the same alias coverage.
+- Removed the remaining Dvorak keyboard defaults from `smart-forward` / `smart-back`. Those commands retain their intentional mouse-button direction flip and remain available through Ethan's independent F13/F17 user bindings, but can no longer hijack the keyboard `>` / `<` review workflow.
+
 ## [1.2.23] (ethansk fork) — reveal files from worktrees outside Explorer
 
 - **Fixed: `Open & reveal current file in Explorer` silently failed for files whose linked worktree was visible in Source Control but not present as an Explorer workspace folder.** Source Control can open a repository independently, but Explorer has no tree node it can select until that worktree root belongs to the workspace.
