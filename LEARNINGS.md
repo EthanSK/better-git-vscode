@@ -24,6 +24,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-14T13:06:51Z
+**Trigger:** Ethan 2026-07-14: Shift+Cmd+E reveal does not work for worktree files; modify Better Git VS Code to support it
+**Symptom:** `better-git-vscode.reveal-current-file-in-explorer` opened/resolved worktree files but could not select them when their linked worktree appeared in Source Control without being an Explorer workspace folder.
+**Root cause:** Source Control repositories and Explorer workspace folders are separate models. `revealInExplorer` only selects an existing Explorer tree node, so a valid on-disk `file:` URI still silently no-ops when no workspace folder contains it. A second race existed after `updateWorkspaceFolders`: `workspaceFolders` can reflect the root before Explorer's queued folder-change event, so subscribing after the add can miss the event and reveal too early.
+**Fix:** v1.2.23: reveal now opens the editable file first, resolves the owning worktree with the existing git-API/`.git`-walk logic, subscribes for the workspace-folder event before adding the missing root through one shared add helper, waits for Explorer, then calls `revealInExplorer`. Opening first preserves the target across VS Code's required single-folder -> multi-root host restart. The explicit add-worktree command reuses the same helper. `better-git-vscode.autoAddWorktreeOnReveal` gates the mutation and defaults true; when false the command opens the file, leaves workspace folders untouched, and explains why no Explorer node can be selected.
+**Commit:** pending
+**Guard:** Real VS Code Extension Development Host regressions create linked worktrees outside a multi-root workspace. Default-on test opens a file-backed `TabInputTextDiff`, runs reveal, and asserts the root is added and the active tab becomes the editable `file:` document; toggle-off test asserts the second worktree remains outside the workspace while its editable file still opens. Manifest test pins the setting default to true. Test worktree lifetime is owned by the parent runner because removing a newly-discovered repo while VS Code git has delayed checks queued emits spurious `Repository not initialized` rejections. Full suite, lint, TypeScript, production package, VSIX inspection, Marketplace publish, and installed-version verification are release gates.
+---
+
+---
 **Date:** 2026-07-13T22:36:12Z
 **Trigger:** Coordinator follow-through approval after v1.2.21, 2026-07-13
 **Symptom:** Scroll-stepping (alt+./alt+, through new files and tall hunks) silently no-oped whenever editor focus was elsewhere (SCM view, other split, unfocused/background window). Surfaced as 5/17 E2E tests timing out at 'viewport ... (at 0)' in the unfocused Mini test host during v1.2.21 verification.

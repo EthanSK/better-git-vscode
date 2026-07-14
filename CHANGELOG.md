@@ -1,5 +1,13 @@
 # Change Log
 
+## [1.2.23] (ethansk fork) — reveal files from worktrees outside Explorer
+
+- **Fixed: `Open & reveal current file in Explorer` silently failed for files whose linked worktree was visible in Source Control but not present as an Explorer workspace folder.** Source Control can open a repository independently, but Explorer has no tree node it can select until that worktree root belongs to the workspace.
+- The reveal command now opens the real editable file, resolves its owning worktree, automatically adds the missing worktree root to the workspace, waits for Explorer's folder-change event, and then reveals the file. Existing in-workspace behavior and cursor/scroll restoration are unchanged.
+- New setting **`better-git-vscode.autoAddWorktreeOnReveal`** defaults to on. Turn it off to keep workspace folders unchanged; reveal will still open the editable file and clearly explain why it could not select an Explorer node.
+- A single-folder window still requires VS Code's normal quick restart when it becomes multi-root. The editable file is opened before requesting that transition so it survives the restart and VS Code's normal active-file auto-reveal can select it afterward.
+- Added real Extension Development Host coverage that creates a linked Git worktree outside a multi-root test workspace, opens a diff backed by that worktree, runs the reveal command, and verifies the root is added and the editable file becomes active.
+
 ## [1.2.22] (ethansk fork) — focus-independent scroll stepping
 
 - **Fixed: new-file and tall-hunk stepping silently failed when the target editor was not focused.** The v1.2.18 workaround called VS Code's global `editorScroll` command, which scrolls only the focused editor widget and ignores the `TextEditor` the extension intended to move. Review commands launched from Source Control, another split, or an unfocused/background VS Code window could therefore pin the caret while leaving the viewport stuck at line 1.

@@ -56,9 +56,11 @@ If you work with **git worktrees** (or several repos in one window), VS Code's S
 
 Reviewing a file that lives in another git **worktree** and want it in your workspace? Run **`Better Git: Add current file's git worktree to workspace`** (`better-git-vscode.add-current-worktree-to-workspace`) from the Command Palette. It finds the worktree the current (or under-review) file belongs to and adds that worktree's root as a workspace folder, so it shows up in your Explorer / Source Control sidebar.
 
+The **`Open & reveal current file in Explorer`** command (`better-git-vscode.reveal-current-file-in-explorer`, `Option+R` by default) now does this automatically when needed. If the current diff/file belongs to a worktree that Source Control knows about but Explorer does not contain, one press opens the real editable file, adds that worktree root, waits for Explorer to register it, and reveals the file there. The explicit add-worktree command remains useful when you want to add the root without switching away from the diff. Turn off **Auto-add worktree on reveal** (`better-git-vscode.autoAddWorktreeOnReveal`) if you prefer reveal to open the file without changing workspace folders; it is on by default.
+
 - Works from a diff, a plain editor, or while focus is in the Source Control panel — it uses the same "file under review" detection as the navigation commands.
 - If the file isn't inside any git repository, it just tells you so (no error). If the worktree is already a workspace folder, it says so and does nothing.
-- **Note:** if your window currently has a single folder open, adding the first extra folder turns it into a *multi-root* workspace, which triggers a quick window reload (VS Code restarts the extension host on that transition). The command warns you and performs the add as its very last step, so nothing is lost.
+- **Note:** if your window currently has a single folder open, adding the first extra folder turns it into a *multi-root* workspace, which triggers a quick window reload (VS Code restarts the extension host on that transition). Better Git warns you; the explicit add command performs the add as its very last step, while reveal opens the editable file first so it survives the restart and auto-reveals afterward.
 
 ## Keybindings
 
@@ -223,6 +225,7 @@ A few behaviours are configurable under **Settings → Better Git VS Code**:
 - **Dvorak mode** — swap the navigation keys to Dvorak-comfortable positions with one toggle (`better-git-vscode.dvorakMode`, see the *Dvorak mode* section above).
 - **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
 - **Auto-collapse extra worktrees** — fold the other worktree/repository sections on window open while keeping your main repo expanded (`better-git-vscode.collapseWorktreesOnStartup`, off by default — turn on to enable; see *Tidy worktrees* above).
+- **Auto-add worktree on reveal** — when reveal targets a worktree outside Explorer, add that worktree root as a workspace folder and reveal the file (`better-git-vscode.autoAddWorktreeOnReveal`, on by default; see *Pull a worktree into your sidebar* above).
 - **New-file line step** — how many lines the change keys step through a brand-new file (`better-git-vscode.newFileNavLineJump`, default 5).
 - **Tall-hunk staging** — step through a hunk taller than your screen in stages with the same next/previous keys, instead of the rest running off the bottom (`better-git-vscode.hunkStagingEnabled`, default on — see *Step through tall hunks in stages* above). Tune the engage threshold (`hunkStagingThreshold`, 0 = auto/viewport), the per-step scroll (`hunkStagingLineStep`, 0 = auto), and the overlap kept between steps (`hunkStagingOverlap`, default 4).
 - **List vs Tree view** in Source Control (`better-git-vscode.treeView`).

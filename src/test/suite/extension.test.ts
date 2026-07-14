@@ -36,4 +36,14 @@ suite('Extension Test Suite', () => {
 		 */
 		assert.strictEqual(stageAndAdvanceContribution.group, 'navigation@100');
 	});
+
+	test('auto-add worktree on reveal defaults to enabled', () => {
+		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
+		assert.ok(extension, 'Better Git extension manifest was not loaded by the extension test host');
+		const setting = extension.packageJSON.contributes?.configuration?.properties?.[
+			'better-git-vscode.autoAddWorktreeOnReveal'
+		];
+		assert.ok(setting, 'autoAddWorktreeOnReveal setting is missing from package.json');
+		assert.strictEqual(setting.default, true, 'autoAddWorktreeOnReveal must remain on by default');
+	});
 });

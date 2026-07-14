@@ -550,15 +550,8 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage("Better Git: The current file isn't inside a git repository / worktree.");
             return;
         }
-        const name = path.basename(worktreeRoot.fsPath) || worktreeRoot.fsPath;
-        // 3. Already a workspace folder? Don't add a duplicate. Compare on normalised on-disk paths (case-
-        //    insensitive, trailing separators stripped) via the shared sameRootPath helper.
-        const folders = vscode.workspace.workspaceFolders ?? [];
-        if (folders.some((f) => sameRootPath(f.uri, worktreeRoot))) {
-            vscode.window.showInformationMessage(`Better Git: "${name}" is already in the workspace.`);
-            return;
-        }
-        // 4. Add it as a workspace folder — THE LAST THING THIS HANDLER DOES (see caveat below).
+        // 3. Add it as a workspace folder — THE LAST THING THIS HANDLER DOES (see caveat below). The shared
+        //    helper also dedupes roots and owns every user-facing success/failure/restart message.
         //
         // ── EXTENSION-HOST-RESTART CAVEAT (VS Code docs for workspace.updateWorkspaceFolders) ────────────────
         // Adding the FIRST extra folder to a SINGLE-FOLDER window transitions it to a MULTI-ROOT workspace,
@@ -568,26 +561,7 @@ export function activate(context: vscode.ExtensionContext) {
         // value in the non-transition case (adding to an already-multi-root workspace does NOT restart the host,
         // so `false` there genuinely means the add failed). `willBecomeMultiRoot` distinguishes the two: exactly
         // one existing folder AND no .code-workspace file open == the single→multi transition that restarts.
-        const willBecomeMultiRoot = folders.length === 1 && !vscode.workspace.workspaceFile;
-        if (willBecomeMultiRoot) {
-            // Brief heads-up so the imminent window reload isn't a surprise (the ext host restarts on transition).
-            vscode.window.showInformationMessage(
-                `Better Git: Adding worktree "${name}" — this window becomes a multi-root workspace (quick reload).`
-            );
-        }
-        try {
-            // Insert at the END of the current folder list (index = folders.length), delete 0, add this worktree.
-            const ok = vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: worktreeRoot, name });
-            // `ok` is only reliable when NO restart is expected. In the single→multi transition the host may
-            // already be restarting, so a falsy return there is not a real failure — only report failure when we
-            // did NOT expect a restart to swallow the rest of this handler.
-            if (!ok && !willBecomeMultiRoot) {
-                vscode.window.showErrorMessage(`Better Git: Failed to add worktree "${name}" to the workspace.`);
-            }
-        } catch (e) {
-            // updateWorkspaceFolders should not throw, but never let a command surface an unhandled error.
-            vscode.window.showErrorMessage(`Better Git: Failed to add worktree to the workspace: ${e}`);
-        }
+        addWorktreeRootToWorkspace(worktreeRoot, true);
         // NOTHING AFTER THIS POINT — the ext-host restart (single→multi transition) can cut the handler off here.
     });
 
@@ -640,8 +614,9 @@ export function activate(context: vscode.ExtensionContext) {
     // so reveal has nothing to select (open upstream bug: microsoft/vscode#240657). getActiveFileUri already
     // resolves that git: uri back to the on-disk file: uri (via the git: query's {path}), and revealInExplorer
     // is a supported command that reveals any file: uri (microsoft/vscode#94720). So we resolve, then reveal
-    // THAT. Bind to cmd+shift+e (when: isInDiffEditor) to make reveal work from staged diffs. Works from
-    // unstaged diffs and plain editors too (getActiveFileUri handles all three).
+    // THAT. If its git worktree is not already an Explorer workspace folder, add that root first — Explorer
+    // cannot reveal out-of-workspace files. Bind to cmd+shift+e (when: isInDiffEditor) to make reveal work from
+    // staged diffs. Works from unstaged diffs and plain editors too (getActiveFileUri handles all three).
     let disposable11 = vscode.commands.registerCommand("better-git-vscode.reveal-current-file-in-explorer", async () => {
         // Capture the cursor + scroll position of the diff you're viewing FIRST (synchronously, before any
         // await), so the working file can open at the SAME spot instead of jumping to the top.
@@ -655,9 +630,9 @@ export function activate(context: vscode.ExtensionContext) {
         if (!uri) {
             return;
         }
-        // Reveal/select in the Explorer, then OPEN the real working-tree file in a normal editor (reveal alone
-        // only highlights the tree node; this opens the editable on-disk file so you don't press Space/Enter).
-        await vscode.commands.executeCommand("revealInExplorer", uri);
+        // OPEN FIRST. Usually the reveal follows immediately, but adding the first extra workspace folder can
+        // restart the extension host. Opening first makes that transition safe: the real editable file survives
+        // the quick reload and VS Code auto-reveals it once its newly-added worktree root appears in Explorer.
         const editor = await vscode.window.showTextDocument(uri, { preview: false });
 
         // Restore cursor + scroll. Clamp to the working file's length: a partially-staged file's index content
@@ -675,6 +650,41 @@ export function activate(context: vscode.ExtensionContext) {
         } else if (cursor) {
             editor.revealRange(editor.selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
         }
+
+        // Explorer has no node for a file outside all workspace roots. Resolve its owning git worktree and add
+        // that root automatically, reusing the same implementation as the explicit Command Palette action.
+        if (!vscode.workspace.getWorkspaceFolder(uri)) {
+            const autoAddWorktree = vscode.workspace
+                .getConfiguration("better-git-vscode")
+                .get<boolean>("autoAddWorktreeOnReveal", true);
+            if (!autoAddWorktree) {
+                vscode.window.showInformationMessage(
+                    "Better Git: Opened the file, but its worktree isn't in the workspace and auto-add on reveal is turned off."
+                );
+                return;
+            }
+            const worktreeRoot = resolveWorktreeRootUri(uri);
+            if (!worktreeRoot) {
+                vscode.window.showInformationMessage(
+                    "Better Git: Opened the file, but it isn't inside a workspace folder or git worktree to reveal."
+                );
+                return;
+            }
+            // Subscribe BEFORE updateWorkspaceFolders: workspaceFolders can reflect the new root synchronously
+            // while Explorer's change event is still queued, and subscribing afterward can miss that event.
+            const workspaceFolderReady = waitForFileWorkspaceFolder(uri);
+            const addResult = addWorktreeRootToWorkspace(worktreeRoot, false);
+            if (addResult === "failed" || addResult === "restart-expected") {
+                return; // restart path continues via VS Code's normal active-file auto-reveal after reload
+            }
+            if (addResult === "added") {
+                await workspaceFolderReady;
+            }
+        }
+
+        // The file now has an Explorer node, so select it. Opening happened above because reveal alone only
+        // highlights the tree node; this command promises both a normal editable file and its Explorer location.
+        await vscode.commands.executeCommand("revealInExplorer", uri);
     });
 
     // MIRROR IMAGE of disposable11: that command goes diff -> working file at the same spot; THIS one goes
@@ -966,6 +976,77 @@ const resolveWorktreeRootUri = (fileUri: vscode.Uri): vscode.Uri | undefined => 
         // fs error (permissions etc.) — give up; caller treats undefined as "not in a git repo".
     }
     return undefined;
+};
+
+// Add one resolved git worktree root to Explorer and report what happened. This is shared by the explicit
+// "Add current worktree" command and reveal-current-file: revealing a file outside every workspace folder is
+// impossible because Explorer has no tree node for it, so reveal now pulls that worktree into the workspace
+// automatically instead of silently no-oping.
+//
+// IMPORTANT: a single-folder -> multi-root transition restarts the extension host. Callers must do anything
+// that has to survive that transition BEFORE calling this helper. reveal-current-file therefore opens the real
+// working file first; VS Code preserves that active editor across the quick restart and Explorer's normal
+// auto-reveal selects it once the new worktree root exists.
+const addWorktreeRootToWorkspace = (
+    worktreeRoot: vscode.Uri,
+    showAlreadyPresentMessage: boolean
+): "already-present" | "added" | "restart-expected" | "failed" => {
+    const name = path.basename(worktreeRoot.fsPath) || worktreeRoot.fsPath;
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.some((folder) => sameRootPath(folder.uri, worktreeRoot))) {
+        if (showAlreadyPresentMessage) {
+            vscode.window.showInformationMessage(`Better Git: "${name}" is already in the workspace.`);
+        }
+        return "already-present";
+    }
+
+    // VS Code restarts the extension host when an ordinary single-folder window becomes multi-root. A saved
+    // .code-workspace already has stable workspace identity, so adding its second folder does not use this path.
+    const willBecomeMultiRoot = folders.length === 1 && !vscode.workspace.workspaceFile;
+    if (willBecomeMultiRoot) {
+        vscode.window.showInformationMessage(
+            `Better Git: Adding worktree "${name}" — this window becomes a multi-root workspace (quick reload).`
+        );
+    }
+    try {
+        const ok = vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: worktreeRoot, name });
+        // During the single-folder -> multi-root transition the host can start restarting before the return
+        // value is trustworthy. Preserve the explicit command's established behaviour: only treat false as a
+        // real failure when no restart is expected.
+        if (!ok && !willBecomeMultiRoot) {
+            vscode.window.showErrorMessage(`Better Git: Failed to add worktree "${name}" to the workspace.`);
+            return "failed";
+        }
+        return willBecomeMultiRoot ? "restart-expected" : "added";
+    } catch (e) {
+        vscode.window.showErrorMessage(`Better Git: Failed to add worktree to the workspace: ${e}`);
+        return "failed";
+    }
+};
+
+// updateWorkspaceFolders starts an asynchronous Explorer-model update. Wait for the target file to acquire a
+// workspace folder before asking revealInExplorer to select it; otherwise a fast reveal can race the new root
+// and reproduce the same silent no-op this feature fixes. The timeout is only a safety valve — after it we still
+// attempt the reveal, because the folder update may have completed without delivering an event to this host.
+const waitForFileWorkspaceFolder = async (fileUri: vscode.Uri, timeout = 2000): Promise<void> => {
+    if (vscode.workspace.getWorkspaceFolder(fileUri)) {
+        return;
+    }
+    await new Promise<void>((resolve) => {
+        let listener: vscode.Disposable | undefined;
+        const timer = setTimeout(() => {
+            listener?.dispose();
+            resolve();
+        }, timeout);
+        listener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            if (!vscode.workspace.getWorkspaceFolder(fileUri)) {
+                return;
+            }
+            clearTimeout(timer);
+            listener?.dispose();
+            resolve();
+        });
+    });
 };
 
 // SHARED merge-editor predicate (v1.2.9). A 3-way MERGE editor (git conflict) is a TabInputTextMerge tab.

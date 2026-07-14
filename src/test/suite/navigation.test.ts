@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import * as vscode from 'vscode';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -230,6 +230,106 @@ suite('SCM change navigation E2E', () => {
 		await expectViewportTopAt('zz_new.txt', 0);
 		// stepping never leaves the file
 		assert.strictEqual(activeTabPath(), wsUri('zz_new.txt').path);
+	});
+
+	test('reveal from an out-of-workspace worktree diff adds its root and opens the editable file', async () => {
+		const worktreePath = process.env.BGV_REVEAL_WORKTREE_PATH;
+		assert.ok(worktreePath, 'runTest.ts must provide the linked worktree fixture path');
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousSetting = config.inspect<boolean>('autoAddWorktreeOnReveal')?.globalValue;
+		const changedRelativePath = path.join('committed', 'mod_a.txt');
+		const changedPath = path.join(worktreePath, changedRelativePath);
+		const changedUri = vscode.Uri.file(changedPath);
+		const originalPath = path.join(path.dirname(worktreePath), 'mod_a-original.txt');
+		const originalUri = vscode.Uri.file(originalPath);
+
+		try {
+			await config.update('autoAddWorktreeOnReveal', true, vscode.ConfigurationTarget.Global);
+			fs.copyFileSync(changedPath, originalPath);
+			fs.appendFileSync(changedPath, 'revealed from linked worktree\n');
+
+			// Open a real side-by-side diff whose modified side is the worktree file. The built-in git provider
+			// cannot serve a git: index URI until its repository is in the workspace — that discovery is exactly
+			// what this command is adding — so this file:-backed diff isolates the same TabInputTextDiff resolver.
+			await vscode.commands.executeCommand(
+				'vscode.diff',
+				originalUri,
+				changedUri,
+				'mod_a.txt (Linked Worktree)',
+				{ preview: false }
+			);
+			await poll(
+				() => vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
+				'linked-worktree staged diff to become active'
+			);
+			assert.strictEqual(
+				vscode.workspace.getWorkspaceFolder(changedUri),
+				undefined,
+				'test precondition: linked worktree must start outside Explorer'
+			);
+
+			await vscode.commands.executeCommand('better-git-vscode.reveal-current-file-in-explorer');
+
+			await poll(
+				() => vscode.workspace.getWorkspaceFolder(changedUri),
+				'linked worktree root to be added to the workspace'
+			);
+			await poll(() => {
+				const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+				return input instanceof vscode.TabInputText && input.uri.path === changedUri.path;
+			}, 'reveal command to open the editable linked-worktree file');
+		} finally {
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			execFileSync('git', ['reset', '--hard', baseSha], { cwd: worktreePath, stdio: 'pipe' });
+			fs.rmSync(originalPath, { force: true });
+			await config.update('autoAddWorktreeOnReveal', previousSetting, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('reveal leaves an out-of-workspace worktree alone when auto-add is disabled', async () => {
+		const worktreePath = process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH;
+		assert.ok(worktreePath, 'runTest.ts must provide the disabled linked-worktree fixture path');
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousSetting = config.inspect<boolean>('autoAddWorktreeOnReveal')?.globalValue;
+		const changedRelativePath = path.join('committed', 'mod_a.txt');
+		const changedPath = path.join(worktreePath, changedRelativePath);
+		const changedUri = vscode.Uri.file(changedPath);
+		const originalPath = path.join(path.dirname(worktreePath), 'mod_a-disabled-original.txt');
+		const originalUri = vscode.Uri.file(originalPath);
+
+		try {
+			await config.update('autoAddWorktreeOnReveal', false, vscode.ConfigurationTarget.Global);
+			fs.copyFileSync(changedPath, originalPath);
+			fs.appendFileSync(changedPath, 'opened without adding linked worktree\n');
+			await vscode.commands.executeCommand(
+				'vscode.diff',
+				originalUri,
+				changedUri,
+				'mod_a.txt (Auto-add Disabled)',
+				{ preview: false }
+			);
+			await poll(
+				() => vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
+				'disabled linked-worktree diff to become active'
+			);
+
+			await vscode.commands.executeCommand('better-git-vscode.reveal-current-file-in-explorer');
+
+			assert.strictEqual(
+				vscode.workspace.getWorkspaceFolder(changedUri),
+				undefined,
+				'auto-add disabled must leave the worktree outside the workspace'
+			);
+			await poll(() => {
+				const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+				return input instanceof vscode.TabInputText && input.uri.path === changedUri.path;
+			}, 'disabled reveal command to still open the editable linked-worktree file');
+		} finally {
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			execFileSync('git', ['reset', '--hard', baseSha], { cwd: worktreePath, stdio: 'pipe' });
+			fs.rmSync(originalPath, { force: true });
+			await config.update('autoAddWorktreeOnReveal', previousSetting, vscode.ConfigurationTarget.Global);
+		}
 	});
 
 	test('untracked new file: rapid repeated next presses are serialized and none are lost', async () => {

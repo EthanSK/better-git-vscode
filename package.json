@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast keyboard-driven git diff review — jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.22",
+  "version": "1.2.23",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -151,6 +151,11 @@
           "type": "boolean",
           "default": false,
           "description": "Experimental: also select/highlight staged files in the Source Control view while navigating (works around a VS Code limitation where staged diffs can't be auto-revealed). May cause a brief flash of the file, and for partially-staged files highlights the unstaged copy. Requires scm.autoReveal (on by default)."
+        },
+        "better-git-vscode.autoAddWorktreeOnReveal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically add a file's git worktree as a workspace folder when Open & reveal current file in Explorer cannot reveal it because that worktree is outside the current Explorer workspace. Turn this off to open the editable file without changing workspace folders."
         },
         "better-git-vscode.currentFileBadge": {
           "type": "string",
