@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  better-git-vscode marketplace icon (original artwork, authored for this fork).
+  agentic-git marketplace icon (original artwork, authored for this fork).
   Motif: keyboard-driven git-diff navigation.
     - A vertical git "spine" with up/down chevron arrows = jumping between changes.
     - Two change-marker nodes on the spine: a green "+" (added) node at the

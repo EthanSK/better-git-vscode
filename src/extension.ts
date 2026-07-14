@@ -9,26 +9,26 @@ import * as path from "path";
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
-// DEBUG LOGGING — "Better Git" OutputChannel (v1.2.10)
+// DEBUG LOGGING — "Agentic Git" OutputChannel (v1.2.10)
 //
 // WHY this exists: the tall-hunk stepping logic (stepTallHunk) makes a live caret/viewport decision on every
 // next/previous-change press, and when it gets it wrong (e.g. the v1.2.9 stuck-near-the-bottom-of-a-tall-hunk
 // bug) there was NO way to see WHY without re-deriving the geometry by hand from screenshots. This channel logs
 // every step decision — direction, viewport height, hunk extent, top/bottom visible lines, caret, computed
 // target, and the DECISION taken — so the NEXT stuck case is diagnosable instantly instead of
-// guessed. Open it via View → Output → pick "Better Git" from the dropdown.
+// guessed. Open it via View → Output → pick "Agentic Git" from the dropdown.
 //
-// Gated behind the `better-git-vscode.debugLogging` setting (default false) so it's silent for normal use and
+// Gated behind the `agentic-git.debugLogging` setting (default false) so it's silent for normal use and
 // only writes when Ethan flips it on to diagnose something. The channel itself is created lazily on first log
 // (so we don't allocate an Output channel for users who never enable logging) and reused thereafter.
-let betterGitOutputChannel: vscode.OutputChannel | undefined;
+let agenticGitOutputChannel: vscode.OutputChannel | undefined;
 
 // True only when the user has turned on verbose logging. Read live (not cached) so toggling the setting takes
 // effect on the very next press without a reload.
 const debugLoggingEnabled = (): boolean =>
-    vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("debugLogging", false);
+    vscode.workspace.getConfiguration("agentic-git").get<boolean>("debugLogging", false);
 
-// Append one timestamped line to the "Better Git" output channel, but ONLY when debug logging is enabled.
+// Append one timestamped line to the "Agentic Git" output channel, but ONLY when debug logging is enabled.
 // Lazily creates the channel on first use. Never throws (logging must never break navigation) — a failure to
 // log is swallowed. Pass a short tag (e.g. "tall-hunk") + the human-readable message.
 const debugLog = (tag: string, message: string): void => {
@@ -36,11 +36,11 @@ const debugLog = (tag: string, message: string): void => {
         if (!debugLoggingEnabled()) {
             return;
         }
-        if (!betterGitOutputChannel) {
-            betterGitOutputChannel = vscode.window.createOutputChannel("Better Git");
+        if (!agenticGitOutputChannel) {
+            agenticGitOutputChannel = vscode.window.createOutputChannel("Agentic Git");
         }
         const ts = new Date().toISOString().split("T")[1]?.replace("Z", "") ?? "";
-        betterGitOutputChannel.appendLine(`[${ts}] [${tag}] ${message}`);
+        agenticGitOutputChannel.appendLine(`[${ts}] [${tag}] ${message}`);
     } catch {
         // logging is best-effort telemetry — never let it interfere with the actual command
     }
@@ -91,14 +91,14 @@ let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file 
 // in Settings takes effect on the next stage without any restart; activate() ALSO wires an
 // onDidChangeConfiguration listener so flipping it OFF hides the item immediately (and ON re-shows it).
 const showLastStagedEnabled = (): boolean =>
-    vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("showLastStagedInStatusBar", true);
+    vscode.workspace.getConfiguration("agentic-git").get<boolean>("showLastStagedInStatusBar", true);
 
 // The editor-title action row is inherently dynamic: VS Code adds/removes diff, revision, whitespace and
 // layout buttons for different file states, so no menu order can keep the + at one exact pixel. The status
 // bar is independent of editor type. This live setting gates a second click target there while preserving the
 // existing editor-title + for users who like both.
 const showStageAndAdvanceStatusBarEnabled = (): boolean =>
-    vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("showStageAndAdvanceInStatusBar", true);
+    vscode.workspace.getConfiguration("agentic-git").get<boolean>("showStageAndAdvanceInStatusBar", true);
 
 // Records `uri` as the last-staged file and refreshes the status bar item. Called from the SINGLE stage
 // chokepoint (stageThroughExtension) so EVERY stage path the extension performs updates the indicator —
@@ -112,7 +112,7 @@ const recordLastStaged = (uri: vscode.Uri): void => {
     const basename = uri.path.split("/").pop() ?? uri.fsPath; // bar text: just the file name, keep it short
     const relPath = vscode.workspace.asRelativePath(uri); // tooltip: workspace-relative full path for context
     lastStagedStatusBarItem.text = `$(check) Staged: ${basename}`; // $(check) renders VS Code's codicon checkmark
-    lastStagedStatusBarItem.tooltip = `${relPath}\nLast file staged via Better Git — click to reopen its diff`;
+    lastStagedStatusBarItem.tooltip = `${relPath}\nLast file staged via Agentic Git — click to reopen its diff`;
     lastStagedStatusBarItem.show(); // persists for the rest of the session (the whole point: a lasting record)
 };
 
@@ -248,7 +248,7 @@ const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void =
     // Fallback matches the package.json default (true). The manual
     // 'collapse-worktrees' command still works regardless of this setting.
     const enabled = vscode.workspace
-        .getConfiguration("better-git-vscode")
+        .getConfiguration("agentic-git")
         .get<boolean>("collapseWorktreesOnStartup", true);
     if (!enabled) {
         return; // user opted out — never auto-collapse, but the manual command still works
@@ -328,8 +328,8 @@ export function activate(context: vscode.ExtensionContext) {
     // is active, and a never-moving target is the whole point of this alternative.
     const stageAndAdvanceStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 101);
     stageAndAdvanceStatusBarItem.text = "$(add) Stage & Next";
-    stageAndAdvanceStatusBarItem.tooltip = "Better Git: stage the current changed file and advance in the last navigation direction";
-    stageAndAdvanceStatusBarItem.command = "better-git-vscode.stage-current-file-and-advance";
+    stageAndAdvanceStatusBarItem.tooltip = "Agentic Git: stage the current changed file and advance in the last navigation direction";
+    stageAndAdvanceStatusBarItem.command = "agentic-git.stage-current-file-and-advance";
     if (showStageAndAdvanceStatusBarEnabled()) {
         stageAndAdvanceStatusBarItem.show();
     }
@@ -338,45 +338,45 @@ export function activate(context: vscode.ExtensionContext) {
     // reasonable position. Starts HIDDEN — there's nothing to show until the first stage of the session. Its
     // .command points at our reveal command (registered below) so a click reopens the staged file's diff.
     lastStagedStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    lastStagedStatusBarItem.command = "better-git-vscode.reveal-last-staged-file";
+    lastStagedStatusBarItem.command = "agentic-git.reveal-last-staged-file";
     lastStagedStatusBarItem.hide();
     // Every forward nav command records lastNavDirection = "next"; every backward one records "previous".
     // This is what the editor-title "+" button reads to decide which way to advance after staging (v1.2.7).
-    let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", async () => {
+    let disposable = vscode.commands.registerCommand("agentic-git.next-scm-change", async () => {
         lastNavDirection = "next"; // he just jumped FORWARD through changes -> "+" should advance forward
         await goToNextDiff();
     });
 
-    let disposable2 = vscode.commands.registerCommand("better-git-vscode.previous-scm-change", async () => {
+    let disposable2 = vscode.commands.registerCommand("agentic-git.previous-scm-change", async () => {
         lastNavDirection = "previous"; // he just jumped BACKWARD -> "+" should advance backward
         await goToPreviousDiff();
     });
 
-    let disposable3 = vscode.commands.registerCommand("better-git-vscode.next-changed-file", async () => {
+    let disposable3 = vscode.commands.registerCommand("agentic-git.next-changed-file", async () => {
         lastNavDirection = "next";
         await goToFirstOrNextFile();
     });
 
-    let disposable4 = vscode.commands.registerCommand("better-git-vscode.previous-changed-file", async () => {
+    let disposable4 = vscode.commands.registerCommand("agentic-git.previous-changed-file", async () => {
         lastNavDirection = "previous";
         await goToLastOrPreviousFile();
     });
 
-    let disposable5 = vscode.commands.registerCommand("better-git-vscode.revert-and-save", async () => {
+    let disposable5 = vscode.commands.registerCommand("agentic-git.revert-and-save", async () => {
         await vscode.commands.executeCommand("git.revertSelectedRanges");
         await vscode.commands.executeCommand("workbench.action.files.save");
     });
 
     // The keyboard stage-and-advance commands also count as a "jump" — pressing shift+alt+. means Ethan is
     // reviewing top-to-bottom, so the "+" button should keep advancing forward after this, and vice versa.
-    let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async () => {
+    let disposable6 = vscode.commands.registerCommand("agentic-git.stage-and-next-changed-file", async () => {
         lastNavDirection = "next";
         await stageCurrentFileAndAdvance("next");
     });
 
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
     // PREVIOUS unstaged file instead of the next. Bound to "shift + previous" so it parallels "shift + next".
-    let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async () => {
+    let disposable7 = vscode.commands.registerCommand("agentic-git.stage-and-previous-changed-file", async () => {
         lastNavDirection = "previous";
         await stageCurrentFileAndAdvance("previous");
     });
@@ -384,7 +384,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Legacy command: stage the current file WITHOUT navigating. Kept registered so anyone who bound it keeps
     // that behaviour, but as of v1.2.7 it is NO LONGER what the editor-title "+" button runs — the button now
     // runs stage-current-file-and-advance (disposable15 below) for the mouse-only review flow.
-    let disposable8 = vscode.commands.registerCommand("better-git-vscode.stage-current-file", async () => {
+    let disposable8 = vscode.commands.registerCommand("agentic-git.stage-current-file", async () => {
         await stageCurrentFile();
     });
 
@@ -395,7 +395,7 @@ export function activate(context: vscode.ExtensionContext) {
     // behaviour (staging, advance target, cross-file rollover, last-staged status bar) is byte-identical to the
     // keyboard shortcut. On a non-diff / non-change editor stageCurrentFileAndAdvance safely no-ops (its
     // isChangedFile guard), so the button never errors even when "advance" is meaningless.
-    let disposable15 = vscode.commands.registerCommand("better-git-vscode.stage-current-file-and-advance", async () => {
+    let disposable15 = vscode.commands.registerCommand("agentic-git.stage-current-file-and-advance", async () => {
         await stageCurrentFileAndAdvance(lastNavDirection);
     });
 
@@ -407,7 +407,7 @@ export function activate(context: vscode.ExtensionContext) {
     // primary's first change in a PREVIEW TAB to re-reveal it, and that tab popping open was annoying. A
     // plain collapse has none of that. v1.2.26 makes the startup path use this exact same clean behavior. No
     // ≥2-repo gate — if you ask for it explicitly, we act on whatever's there.
-    let disposable14 = vscode.commands.registerCommand("better-git-vscode.collapse-worktrees", async () => {
+    let disposable14 = vscode.commands.registerCommand("agentic-git.collapse-worktrees", async () => {
         await collapseScmRepositories();
     });
 
@@ -415,27 +415,27 @@ export function activate(context: vscode.ExtensionContext) {
     // file lives in into the VS Code workspace as a workspace folder, so Ethan can bring a worktree into his
     // sidebar without leaving the editor. Handler flow is: resolve the file -> resolve its worktree root ->
     // dedupe against existing folders -> add. See the ext-host-restart caveat at the add call (it MUST be last).
-    let disposable16 = vscode.commands.registerCommand("better-git-vscode.add-current-worktree-to-workspace", async () => {
+    let disposable16 = vscode.commands.registerCommand("agentic-git.add-current-worktree-to-workspace", async () => {
         // 1. Which file are we acting on? Prefer the SHARED "file under review" predicate (currentReviewFileUri
         //    handles diff / merge / new-file / deleted / binary review tabs, and — crucially for Ethan's flow —
         //    still resolves when keyboard focus is in the SCM panel so activeTextEditor is stale/undefined). Fall
         //    back to the focused text editor for a plainly-opened file.
         const fileUri = currentReviewFileUri() ?? vscode.window.activeTextEditor?.document.uri;
         if (!fileUri) {
-            vscode.window.showInformationMessage("Better Git: No active file to resolve a git worktree from.");
+            vscode.window.showInformationMessage("Agentic Git: No active file to resolve a git worktree from.");
             return;
         }
         // Normalise any diff-side / git: uri to the on-disk file path before we look up its repo.
         const onDiskUri = toFilePathUri(fileUri);
         if (!onDiskUri) {
-            vscode.window.showInformationMessage("Better Git: Couldn't resolve the current file to a path on disk.");
+            vscode.window.showInformationMessage("Agentic Git: Couldn't resolve the current file to a path on disk.");
             return;
         }
         // 2. Resolve the worktree root the file belongs to (git API primary, .git-walk fallback). Not in any git
         //    repo -> info message + return (NOT an error — this is a valid, expected situation).
         const worktreeRoot = resolveWorktreeRootUri(onDiskUri);
         if (!worktreeRoot) {
-            vscode.window.showInformationMessage("Better Git: The current file isn't inside a git repository / worktree.");
+            vscode.window.showInformationMessage("Agentic Git: The current file isn't inside a git repository / worktree.");
             return;
         }
         // 3. Add it as a workspace folder — THE LAST THING THIS HANDLER DOES (see caveat below). The shared
@@ -489,10 +489,10 @@ export function activate(context: vscode.ExtensionContext) {
     // years (since ~1.67), but if it's ever unavailable (very old host) the `instanceof` check simply
     // evaluates false and we fall back to plain navigation — a safe default. Any unexpected throw also
     // falls back to plain navigation so a mouse click never becomes a no-op.
-    let disposable9 = vscode.commands.registerCommand("better-git-vscode.smart-forward", async () => {
+    let disposable9 = vscode.commands.registerCommand("agentic-git.smart-forward", async () => {
         await smartNavigate("forward");
     });
-    let disposable10 = vscode.commands.registerCommand("better-git-vscode.smart-back", async () => {
+    let disposable10 = vscode.commands.registerCommand("agentic-git.smart-back", async () => {
         await smartNavigate("back");
     });
 
@@ -505,7 +505,7 @@ export function activate(context: vscode.ExtensionContext) {
     // THAT. If its git worktree is not already an Explorer workspace folder, add that root first — Explorer
     // cannot reveal out-of-workspace files. Bind to cmd+shift+e (when: isInDiffEditor) to make reveal work from
     // staged diffs. Works from unstaged diffs and plain editors too (getActiveFileUri handles all three).
-    let disposable11 = vscode.commands.registerCommand("better-git-vscode.reveal-current-file-in-explorer", async () => {
+    let disposable11 = vscode.commands.registerCommand("agentic-git.reveal-current-file-in-explorer", async () => {
         // Capture the cursor + scroll position of the diff you're viewing FIRST (synchronously, before any
         // await), so the working file can open at the SAME spot instead of jumping to the top.
         // vscode.window.activeTextEditor is the diff's focused side: selection.active is the cursor,
@@ -543,18 +543,18 @@ export function activate(context: vscode.ExtensionContext) {
         // that root automatically, reusing the same implementation as the explicit Command Palette action.
         if (!vscode.workspace.getWorkspaceFolder(uri)) {
             const autoAddWorktree = vscode.workspace
-                .getConfiguration("better-git-vscode")
+                .getConfiguration("agentic-git")
                 .get<boolean>("autoAddWorktreeOnReveal", true);
             if (!autoAddWorktree) {
                 vscode.window.showInformationMessage(
-                    "Better Git: Opened the file, but its worktree isn't in the workspace and auto-add on reveal is turned off."
+                    "Agentic Git: Opened the file, but its worktree isn't in the workspace and auto-add on reveal is turned off."
                 );
                 return;
             }
             const worktreeRoot = resolveWorktreeRootUri(uri);
             if (!worktreeRoot) {
                 vscode.window.showInformationMessage(
-                    "Better Git: Opened the file, but it isn't inside a workspace folder or git worktree to reveal."
+                    "Agentic Git: Opened the file, but it isn't inside a workspace folder or git worktree to reveal."
                 );
                 return;
             }
@@ -580,7 +580,7 @@ export function activate(context: vscode.ExtensionContext) {
     // side-by-side "changes" view opens scrolled to the EXACT cursor + top line you were just looking at
     // (instead of git.openChange's default of jumping to the first change in the file). Bind it yourself in
     // keybindings.json — we intentionally ship NO default key for this one.
-    let disposable12 = vscode.commands.registerCommand("better-git-vscode.open-change-at-position", async () => {
+    let disposable12 = vscode.commands.registerCommand("agentic-git.open-change-at-position", async () => {
         // CAPTURE BEFORE OPENING THE DIFF. This is critical: git.openChange swaps the active editor to the
         // diff and typically moves the cursor to the file's first change — so if we read selection/scroll
         // AFTER the call we'd get the diff's position, not the working-file position we actually want to mirror.
@@ -646,8 +646,8 @@ export function activate(context: vscode.ExtensionContext) {
                 // Control panel ignores decoration `color` (its renderer forces colors:false), so the emoji's
                 // own color is what makes it pop there; the `color` still applies in the Explorer + editor tabs.
                 // Default badge is double fire 🔥🔥 (Ethan's preferred default; still user-overridable via the
-                // better-git-vscode.currentFileBadge setting). The package.json config default MUST match this literal.
-                const badgeSetting = vscode.workspace.getConfiguration("better-git-vscode").get<string>("currentFileBadge", "🔥🔥");
+                // agentic-git.currentFileBadge setting). The package.json config default MUST match this literal.
+                const badgeSetting = vscode.workspace.getConfiguration("agentic-git").get<string>("currentFileBadge", "🔥🔥");
                 if (!badgeSetting) {
                     return undefined; // empty setting => badge disabled
                 }
@@ -662,7 +662,7 @@ export function activate(context: vscode.ExtensionContext) {
                 } catch {
                     badge = Array.from(badgeSetting).slice(0, 2).join(""); // fallback by code point if Segmenter is unavailable
                 }
-                return { badge, tooltip: "Better Git VS Code: reviewing this file", color: new vscode.ThemeColor("charts.blue"), propagate: false };
+                return { badge, tooltip: "Agentic Git: reviewing this file", color: new vscode.ThemeColor("charts.blue"), propagate: false };
             }
             return undefined;
         },
@@ -692,7 +692,7 @@ export function activate(context: vscode.ExtensionContext) {
     // look up the STAGED entry for lastStagedUri in that list and hand it to openChangeEntry. There is NO
     // extension API to focus a Source Control row, hence opening the diff (which is what lets him unstage) is
     // the most useful click action. Internal command (registered, but contributed with no keybinding).
-    let disposable13 = vscode.commands.registerCommand("better-git-vscode.reveal-last-staged-file", async () => {
+    let disposable13 = vscode.commands.registerCommand("agentic-git.reveal-last-staged-file", async () => {
         if (!lastStagedUri) {
             return; // nothing staged via the extension yet this session
         }
@@ -713,19 +713,19 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Live-react to the feature toggle: flipping better-git-vscode.showLastStagedInStatusBar OFF hides the
+    // Live-react to the feature toggle: flipping agentic-git.showLastStagedInStatusBar OFF hides the
     // item immediately; flipping it back ON re-shows the current last-staged file (if any) without waiting for
     // the next stage. We react live (rather than only reading at update time) so the bar disappears the moment
     // Ethan unchecks the setting — less surprising than it lingering until the next stage.
     let configListener = vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("better-git-vscode.showStageAndAdvanceInStatusBar")) {
+        if (e.affectsConfiguration("agentic-git.showStageAndAdvanceInStatusBar")) {
             if (showStageAndAdvanceStatusBarEnabled()) {
                 stageAndAdvanceStatusBarItem.show();
             } else {
                 stageAndAdvanceStatusBarItem.hide();
             }
         }
-        if (e.affectsConfiguration("better-git-vscode.showLastStagedInStatusBar") && lastStagedStatusBarItem) {
+        if (e.affectsConfiguration("agentic-git.showLastStagedInStatusBar") && lastStagedStatusBarItem) {
             if (showLastStagedEnabled() && lastStagedUri) {
                 recordLastStaged(lastStagedUri); // re-render + show with the file we last staged
             } else {
@@ -883,7 +883,7 @@ const addWorktreeRootToWorkspace = (
     const folders = vscode.workspace.workspaceFolders ?? [];
     if (folders.some((folder) => sameRootPath(folder.uri, worktreeRoot))) {
         if (showAlreadyPresentMessage) {
-            vscode.window.showInformationMessage(`Better Git: "${name}" is already in the workspace.`);
+            vscode.window.showInformationMessage(`Agentic Git: "${name}" is already in the workspace.`);
         }
         return "already-present";
     }
@@ -893,7 +893,7 @@ const addWorktreeRootToWorkspace = (
     const willBecomeMultiRoot = folders.length === 1 && !vscode.workspace.workspaceFile;
     if (willBecomeMultiRoot) {
         vscode.window.showInformationMessage(
-            `Better Git: Adding worktree "${name}" — this window becomes a multi-root workspace (quick reload).`
+            `Agentic Git: Adding worktree "${name}" — this window becomes a multi-root workspace (quick reload).`
         );
     }
     try {
@@ -902,12 +902,12 @@ const addWorktreeRootToWorkspace = (
         // value is trustworthy. Preserve the explicit command's established behaviour: only treat false as a
         // real failure when no restart is expected.
         if (!ok && !willBecomeMultiRoot) {
-            vscode.window.showErrorMessage(`Better Git: Failed to add worktree "${name}" to the workspace.`);
+            vscode.window.showErrorMessage(`Agentic Git: Failed to add worktree "${name}" to the workspace.`);
             return "failed";
         }
         return willBecomeMultiRoot ? "restart-expected" : "added";
     } catch (e) {
-        vscode.window.showErrorMessage(`Better Git: Failed to add worktree to the workspace: ${e}`);
+        vscode.window.showErrorMessage(`Agentic Git: Failed to add worktree to the workspace: ${e}`);
         return "failed";
     }
 };
@@ -1195,7 +1195,7 @@ const getFileChanges = async (): Promise<FileChange[]> => {
     if (!activeRepo) {
         return []; // no repositories populated yet / non-git workspace -> no changes, callers no-op gracefully
     }
-    const isTreeView = vscode.workspace.getConfiguration("better-git-vscode").get("treeView");
+    const isTreeView = vscode.workspace.getConfiguration("agentic-git").get("treeView");
 
     // Keep the git status alongside the uri for staged entries: openChangeEntry needs it to choose which
     // diff sides exist (a newly-staged INDEX_ADDED file has no HEAD blob; a staged INDEX_DELETED file has no
@@ -1386,7 +1386,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
         }
         return;
     }
-    // OPT-IN WORKAROUND (better-git-vscode.revealStagedInSourceControl): highlight the staged file in the
+    // OPT-IN WORKAROUND (agentic-git.revealStagedInSourceControl): highlight the staged file in the
     // Source Control view. VS Code's built-in `scm.autoReveal` can't do this for staged files because the
     // staged diff opens with a `git:` uri and autoReveal only matches sidebar rows by their `file:` path
     // (there is NO extension API to select an SCM row directly). Trick: briefly make the plain file the
@@ -1395,7 +1395,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
     // selection on a no-match, so the staged row stays highlighted while the diff is shown. Caveats, which
     // is why this is off by default: a brief flash of the file before the diff, and for a partially-staged
     // (dual-state) file autoReveal picks the working-tree row instead (it scans groups back-to-front).
-    const revealStaged = vscode.workspace.getConfiguration("better-git-vscode").get("revealStagedInSourceControl");
+    const revealStaged = vscode.workspace.getConfiguration("agentic-git").get("revealStagedInSourceControl");
     if (revealStaged) {
         try {
             await vscode.window.showTextDocument(entry.uri, { preview: true }); // fires autoReveal -> selects the staged row
@@ -1451,7 +1451,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
 };
 
 const openFirstFile = async () => {
-    const shouldOpenScmView = vscode.workspace.getConfiguration("better-git-vscode").get("shouldOpenScmView");
+    const shouldOpenScmView = vscode.workspace.getConfiguration("agentic-git").get("shouldOpenScmView");
     if (shouldOpenScmView) {
         await vscode.commands.executeCommand("workbench.view.scm");
     }
@@ -1462,7 +1462,7 @@ const openFirstFile = async () => {
         // Keep the feedback quiet in the status bar (never a popup that interrupts the review flow), while
         // still making the otherwise-empty keypress explain itself to the user and the debug output channel.
         debugLog("nav", "next: no active file context -> no changes to navigate");
-        vscode.window.setStatusBarMessage("Better Git: No changes to navigate", 4000);
+        vscode.window.setStatusBarMessage("Agentic Git: No changes to navigate", 4000);
         return;
     }
 
@@ -1481,7 +1481,7 @@ const openFirstFile = async () => {
 };
 
 const openLastFile = async () => {
-    const shouldOpenScmView = vscode.workspace.getConfiguration("better-git-vscode").get("shouldOpenScmView");
+    const shouldOpenScmView = vscode.workspace.getConfiguration("agentic-git").get("shouldOpenScmView");
     if (shouldOpenScmView) {
         await vscode.commands.executeCommand("workbench.view.scm");
     }
@@ -1491,7 +1491,7 @@ const openLastFile = async () => {
         // Mirror openFirstFile: reaching a clean repo backward is expected after staging the final file, so use
         // the same quiet status-bar acknowledgement rather than an error/warning popup.
         debugLog("nav", "previous: no active file context -> no changes to navigate");
-        vscode.window.setStatusBarMessage("Better Git: No changes to navigate", 4000);
+        vscode.window.setStatusBarMessage("Agentic Git: No changes to navigate", 4000);
         return;
     }
 
@@ -1822,7 +1822,7 @@ const newFileScrollEditor = (): vscode.TextEditor | undefined => {
 // rendering the tab, and editor-scoped revealRange works without keyboard/OS focus, so keep and operate on that
 // object. Selection still updates; VS Code draws the caret whenever the editor next receives focus.
 const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" | "up"): Promise<boolean> => {
-    const configured = vscode.workspace.getConfiguration("better-git-vscode").get<number>("newFileNavLineJump", 5);
+    const configured = vscode.workspace.getConfiguration("agentic-git").get<number>("newFileNavLineJump", 5);
     // Guard bad user values: 0 / negative / NaN would "step" in place forever — a permanent no-op. Floor
     // fractional values; anything non-usable falls back to the default 5.
     const step = Number.isFinite(configured) && (configured as number) >= 1 ? Math.floor(configured as number) : 5;
@@ -1960,7 +1960,7 @@ interface ModifiedHunk {
 // height (a blind fixed page-jump loses your place; viewport-relative feels right). Bad/absent values fall
 // back to sane defaults — never NaN/0 that could freeze stepping in place.
 const hunkStagingConfig = (visLines: number) => {
-    const cfg = vscode.workspace.getConfiguration("better-git-vscode");
+    const cfg = vscode.workspace.getConfiguration("agentic-git");
     const enabled = cfg.get<boolean>("hunkStagingEnabled", true);
     // Overlap: lines kept on screen between consecutive steps so reading context carries across (default 4).
     const rawOverlap = cfg.get<number>("hunkStagingOverlap", 4);
@@ -2148,7 +2148,7 @@ interface HunkStageContext {
 
 const getHunkStageContext = async (): Promise<HunkStageContext | undefined> => {
     // A quick viewport-independent gate read first (visLines only affects the numeric knobs, not enablement).
-    if (!vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("hunkStagingEnabled", true)) {
+    if (!vscode.workspace.getConfiguration("agentic-git").get<boolean>("hunkStagingEnabled", true)) {
         return undefined;
     }
     // ONLY side-by-side text diffs have hunk geometry to step through. Plain-editor tabs (new files,
@@ -3051,7 +3051,7 @@ async function smartNavigate(direction: "forward" | "back") {
     // stayed correct. Keyboard >/< now binds the canonical scm-change commands directly in package.json.
     //
     // BUG 3 FIX (v1.2.9 — smart mouse corrupted lastNavDirection, making the "+" button advance the WRONG way):
-    // the review branch used to delegate via executeCommand("better-git-vscode.next-scm-change"/"previous-...").
+    // the review branch used to delegate via executeCommand("agentic-git.next-scm-change"/"previous-...").
     // Those two COMMAND HANDLERS write the module-level lastNavDirection (next-scm-change sets "next",
     // previous-scm-change sets "previous"). Because of the flip above, the smart-FORWARD button routed to
     // previous-scm-change and set lastNavDirection="previous"; so after reviewing FORWARD with the mouse, the

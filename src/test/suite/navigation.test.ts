@@ -169,8 +169,8 @@ suite('SCM change navigation E2E', () => {
 		return editor;
 	};
 
-	const nextChange = () => vscode.commands.executeCommand('better-git-vscode.next-scm-change');
-	const previousChange = () => vscode.commands.executeCommand('better-git-vscode.previous-scm-change');
+	const nextChange = () => vscode.commands.executeCommand('agentic-git.next-scm-change');
+	const previousChange = () => vscode.commands.executeCommand('agentic-git.previous-scm-change');
 
 	// Wait until the active tab shows `rel` — the standard "navigation advanced to file X" assertion.
 	const expectActiveTab = (rel: string) =>
@@ -250,7 +250,7 @@ suite('SCM change navigation E2E', () => {
 
 		// Make sure OUR extension is active before the first executeCommand (onStartupFinished usually
 		// beats us here, but don't rely on the race).
-		await vscode.extensions.getExtension<any>('EthanSK.better-git-vscode')!.activate();
+		await vscode.extensions.getExtension<any>('EthanSK.agentic-git')!.activate();
 	});
 
 	// Every test starts from a pristine base commit + empty editor area, so tests are order-independent
@@ -301,9 +301,9 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('reveal from an out-of-workspace worktree diff adds its root and opens the editable file', async () => {
-		const worktreePath = process.env.BGV_REVEAL_WORKTREE_PATH;
+		const worktreePath = process.env.AGENTIC_GIT_REVEAL_WORKTREE_PATH;
 		assert.ok(worktreePath, 'runTest.ts must provide the linked worktree fixture path');
-		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const config = vscode.workspace.getConfiguration('agentic-git');
 		const previousSetting = config.inspect<boolean>('autoAddWorktreeOnReveal')?.globalValue;
 		const changedRelativePath = path.join('committed', 'mod_a.txt');
 		const changedPath = path.join(worktreePath, changedRelativePath);
@@ -336,7 +336,7 @@ suite('SCM change navigation E2E', () => {
 				'test precondition: linked worktree must start outside Explorer'
 			);
 
-			await vscode.commands.executeCommand('better-git-vscode.reveal-current-file-in-explorer');
+			await vscode.commands.executeCommand('agentic-git.reveal-current-file-in-explorer');
 
 			await poll(
 				() => vscode.workspace.getWorkspaceFolder(changedUri),
@@ -355,9 +355,9 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('reveal leaves an out-of-workspace worktree alone when auto-add is disabled', async () => {
-		const worktreePath = process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH;
+		const worktreePath = process.env.AGENTIC_GIT_DISABLED_REVEAL_WORKTREE_PATH;
 		assert.ok(worktreePath, 'runTest.ts must provide the disabled linked-worktree fixture path');
-		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const config = vscode.workspace.getConfiguration('agentic-git');
 		const previousSetting = config.inspect<boolean>('autoAddWorktreeOnReveal')?.globalValue;
 		const changedRelativePath = path.join('committed', 'mod_a.txt');
 		const changedPath = path.join(worktreePath, changedRelativePath);
@@ -381,7 +381,7 @@ suite('SCM change navigation E2E', () => {
 				'disabled linked-worktree diff to become active'
 			);
 
-			await vscode.commands.executeCommand('better-git-vscode.reveal-current-file-in-explorer');
+			await vscode.commands.executeCommand('agentic-git.reveal-current-file-in-explorer');
 
 			assert.strictEqual(
 				vscode.workspace.getWorkspaceFolder(changedUri),
@@ -497,7 +497,7 @@ suite('SCM change navigation E2E', () => {
 
 	test('untracked wrapped file: custom jump remains exact with SCM focus and rapid presses', async () => {
 		const editorConfig = vscode.workspace.getConfiguration('editor');
-		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const navConfig = vscode.workspace.getConfiguration('agentic-git');
 		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
 		const previousJump = navConfig.inspect<number>('newFileNavLineJump')?.globalValue;
 		try {
@@ -519,7 +519,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('newFileNavLineJump custom value is respected', async () => {
-		const cfg = () => vscode.workspace.getConfiguration('better-git-vscode');
+		const cfg = () => vscode.workspace.getConfiguration('agentic-git');
 		await cfg().update('newFileNavLineJump', 7, vscode.ConfigurationTarget.Global);
 		try {
 			await poll(() => cfg().get<number>('newFileNavLineJump') === 7, 'custom new-file jump setting to become visible');
@@ -809,7 +809,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('MODIFIED tall hunk: sticky-context rapid one-line steps are caret-owned and reversible', async () => {
-		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const navConfig = vscode.workspace.getConfiguration('agentic-git');
 		const editorConfig = vscode.workspace.getConfiguration('editor');
 		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
 		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
@@ -854,7 +854,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('MODIFIED tall hunk: exact edges are consumed before forward/backward file rollover', async () => {
-		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const navConfig = vscode.workspace.getConfiguration('agentic-git');
 		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
 		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
 		try {
@@ -920,7 +920,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('stage-and-Previous lands at the bottom of the previous tall diff', async () => {
-		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const navConfig = vscode.workspace.getConfiguration('agentic-git');
 		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
 		try {
 			await navConfig.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
@@ -936,7 +936,7 @@ suite('SCM change navigation E2E', () => {
 			);
 			await openPlainAt('zz_current.txt', 0);
 
-			await vscode.commands.executeCommand('better-git-vscode.stage-and-previous-changed-file');
+			await vscode.commands.executeCommand('agentic-git.stage-and-previous-changed-file');
 			await expectCursorVisibleAt('committed/tall_e.txt', 229);
 			assert.ok(inIndex('zz_current.txt', 1), 'stage-and-Previous did not stage the current file');
 		} finally {
@@ -945,7 +945,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('MODIFIED wrapped tall hunk: SCM-focused rapid steps and reversal stay exact and monotonic', async () => {
-		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const navConfig = vscode.workspace.getConfiguration('agentic-git');
 		const editorConfig = vscode.workspace.getConfiguration('editor');
 		const diffConfig = vscode.workspace.getConfiguration('diffEditor');
 		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
@@ -995,7 +995,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('partially staged tall file: unstaged navigation ignores the staged phantom region', async () => {
-		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const navConfig = vscode.workspace.getConfiguration('agentic-git');
 		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
 		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
 		try {
@@ -1037,7 +1037,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('MODIFIED tall hunk: rapid final-step plus rollover presents the hunk end first', async () => {
-		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const navConfig = vscode.workspace.getConfiguration('agentic-git');
 		const editorConfig = vscode.workspace.getConfiguration('editor');
 		const diffConfig = vscode.workspace.getConfiguration('diffEditor');
 		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;

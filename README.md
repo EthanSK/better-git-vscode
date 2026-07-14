@@ -1,64 +1,77 @@
 <p align="center">
-  <img src="src/icon.png" width="120" alt="Better Git VS Code icon" />
+  <img src="src/icon.png" width="120" alt="Agentic Git icon" />
 </p>
 
-<h1 align="center">Better Git VS Code</h1>
+<h1 align="center">Agentic Git</h1>
 
 <p align="center">
-  <b>Fast, keyboard-driven git diff review.</b> Jump between changes and changed files,
-  stage-and-advance, and revert — all without touching the mouse.
+  <b>Fast, keyboard-driven Git review for the agentic age.</b>
+</p>
+
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=EthanSK.agentic-git"><b>Install from the VS Code Marketplace</b></a>
+  ·
+  <a href="https://github.com/EthanSK/agentic-git">GitHub</a>
 </p>
 
 ---
 
-Review your git changes at the speed of thought — one hand on the keyboard, no mouse, no Source Control panel hunting. Three features do the heavy lifting:
+AI can write a changeset in seconds. You still need to review every line. Agentic Git turns that review into one continuous loop inside VS Code: move through each change, inspect it in context, stage the file when it is right, and keep going without reaching for the mouse or hunting through Source Control.
 
-### 🔥 Jump between every git change, instantly
+## The review loop
 
-VS Code's built-in change navigation is a clunky, click-heavy chore. **This fixes it.** One key flies you to the next (or previous) change — and when you hit the end of a file, it rolls straight into the next changed file automatically. No scrolling, no clicking through the SCM tree, no losing your place. Fly through an entire AI-generated changeset like it's nothing.
+### 1. Jump between every Git change
+
+One key flies to the next or previous change. At the end of a file, it continues into the next changed file automatically. No scrolling, clicking through the SCM tree, or losing your place in a large AI-generated changeset.
 
 `Option+.` next · `Option+,` previous — literally the `>` / `<` keys, pointing the way.
 
-### Hold Shift to stage as you review
+### 2. Hold Shift to stage and continue
 
 Approve as you go. Holding **Shift** on the nav key stages the file you're looking at and jumps you straight to the next *unstaged* change — so reviewing and staging become one continuous flow. No reaching for the mouse, no detour to the Source Control panel. Sweep through, approving each file with a flick of the same key.
 
 `Shift+Option+.` stage & next · `Shift+Option+,` stage & previous.
 
-### Jump from a staged diff straight to the real file — same line
+### 3. Fix something without losing your place
 
 When you open a *staged* file, what you see is a frozen, read-only snapshot of what's staged — you can't actually edit it there. Spot a bug mid-review and you'd normally have to go hunt down the real file. **One key does it for you:** it opens the actual, editable working file at the *exact* line and scroll position you were looking at. See it, fix it, on the spot.
 
 `Option+R` — open & reveal the real file *(remap to anything you like; see overrides below)*.
 
-### Read every line of brand-new files, too
+That is the core workflow. The same navigation keys also handle the awkward cases that ordinary hunk navigation skips: brand-new files and changes larger than the editor viewport.
 
-Reviewing an AI changeset that adds whole new files? A brand-new file is one big new-diff with no per-change hunks to jump between, so change-navigation used to fly straight past it — you never actually read it. Now, on a fully-added file (untracked / staged-new), the next/previous-change keys **step the cursor a few lines at a time** so you page through and review the entire file, then roll on to the next change as usual. Tune the step with `better-git-vscode.newFileNavLineJump` (default 5). Modified files are never affected — they always navigate change-to-change.
+## Review edge cases without leaving the keyboard
+
+### Read every line of brand-new files
+
+Reviewing an AI changeset that adds whole new files? A brand-new file is one big new-diff with no per-change hunks to jump between, so change-navigation used to fly straight past it — you never actually read it. Now, on a fully-added file (untracked / staged-new), the next/previous-change keys **step the cursor a few lines at a time** so you page through and review the entire file, then roll on to the next change as usual. Tune the step with `agentic-git.newFileNavLineJump` (default 5). Modified files are never affected — they always navigate change-to-change.
 
 ### Step through tall hunks in stages — no more reaching for the scrollbar
 
 Some hunks are **taller than your screen.** One press of next-change lands you at the *top* — and the rest runs off the bottom, so you'd have to take your hands off the keyboard, scroll, then press next again. Now the **same key steps through it in stages:** next-change lands at the top; press next **again** and it scrolls down about a screenful *within that same hunk*. The final partial step always lands on and presents the exact hunk end (including the last visual segment of a wrapped line); only the following press moves on. `previous-change` mirrors it at the hunk start. Reverse direction any time and it continues from the current caret instead of teleporting.
 
-Hunks that already fit on screen are untouched — one press still jumps straight to the next/previous hunk. Staging kicks in **only when a hunk is taller than your visible editor** (measured live, so it adapts to your window size), and each step keeps a few lines of overlap so you never lose your place. Tune it with `better-git-vscode.hunkStagingThreshold`, `hunkStagingLineStep`, and `hunkStagingOverlap`, or turn it off with `hunkStagingEnabled`.
+Hunks that already fit on screen are untouched — one press still jumps straight to the next/previous hunk. Staging kicks in **only when a hunk is taller than your visible editor** (measured live, so it adapts to your window size), and each step keeps a few lines of overlap so you never lose your place. Tune it with `agentic-git.hunkStagingThreshold`, `hunkStagingLineStep`, and `hunkStagingOverlap`, or turn it off with `hunkStagingEnabled`.
+
+For the exact boundary rules and the engineering behind the navigation fix, see [How Agentic Git navigation works](docs/navigation-behavior.md).
 
 ## Tidy worktrees after reloads and extension restarts
 
-If you work with **git worktrees** (or several repos in one window), VS Code's Source Control panel can bring every repository section back **expanded** after a window reload or extension-host restart. Better Git folds all of those repository headers shortly after the repositories populate, so the panel returns to a compact state.
+If you work with **git worktrees** (or several repos in one window), VS Code's Source Control panel can bring every repository section back **expanded** after a window reload or extension-host restart. Agentic Git folds all of those repository headers shortly after the repositories populate, so the panel returns to a compact state.
 
-- **Setting `better-git-vscode.collapseWorktreesOnStartup`** (boolean, **on by default**) toggles the behavior. It only acts when there are 2+ repositories open. Turn it off if you want VS Code to control the sections without intervention.
-- **Command `Better Git: Collapse all worktree / repository sections in Source Control`** (`better-git-vscode.collapse-worktrees`) runs the same plain collapse on demand whenever the sections have crept back open.
+- **Setting `agentic-git.collapseWorktreesOnStartup`** (boolean, **on by default**) toggles the behavior. It only acts when there are 2+ repositories open. Turn it off if you want VS Code to control the sections without intervention.
+- **Command `Agentic Git: Collapse all worktree / repository sections in Source Control`** (`agentic-git.collapse-worktrees`) runs the same plain collapse on demand whenever the sections have crept back open.
 
-> **How it works, and its honest limit.** VS Code has no public API to remember or set each repository header's expansion state. Its available view action collapses all repositories and only works while Source Control is active, so Better Git briefly opens/focuses that view and runs the action after repository discovery (with a few bounded repeats to beat restart rendering races). It does not open or replace an editor tab.
+> **How it works, and its honest limit.** VS Code has no public API to remember or set each repository header's expansion state. Its available view action collapses all repositories and only works while Source Control is active, so Agentic Git briefly opens/focuses that view and runs the action after repository discovery (with a few bounded repeats to beat restart rendering races). It does not open or replace an editor tab.
 
 ## Pull a worktree into your sidebar without leaving the editor
 
-Reviewing a file that lives in another git **worktree** and want it in your workspace? Run **`Better Git: Add current file's git worktree to workspace`** (`better-git-vscode.add-current-worktree-to-workspace`) from the Command Palette. It finds the worktree the current (or under-review) file belongs to and adds that worktree's root as a workspace folder, so it shows up in your Explorer / Source Control sidebar.
+Reviewing a file that lives in another git **worktree** and want it in your workspace? Run **`Agentic Git: Add current file's git worktree to workspace`** (`agentic-git.add-current-worktree-to-workspace`) from the Command Palette. It finds the worktree the current (or under-review) file belongs to and adds that worktree's root as a workspace folder, so it shows up in your Explorer / Source Control sidebar.
 
-The **`Open & reveal current file in Explorer`** command (`better-git-vscode.reveal-current-file-in-explorer`, `Option+R` by default) now does this automatically when needed. If the current diff/file belongs to a worktree that Source Control knows about but Explorer does not contain, one press opens the real editable file, adds that worktree root, waits for Explorer to register it, and reveals the file there. The explicit add-worktree command remains useful when you want to add the root without switching away from the diff. Turn off **Auto-add worktree on reveal** (`better-git-vscode.autoAddWorktreeOnReveal`) if you prefer reveal to open the file without changing workspace folders; it is on by default.
+The **`Open & reveal current file in Explorer`** command (`agentic-git.reveal-current-file-in-explorer`, `Option+R` by default) now does this automatically when needed. If the current diff/file belongs to a worktree that Source Control knows about but Explorer does not contain, one press opens the real editable file, adds that worktree root, waits for Explorer to register it, and reveals the file there. The explicit add-worktree command remains useful when you want to add the root without switching away from the diff. Turn off **Auto-add worktree on reveal** (`agentic-git.autoAddWorktreeOnReveal`) if you prefer reveal to open the file without changing workspace folders; it is on by default.
 
 - Works from a diff, a plain editor, or while focus is in the Source Control panel — it uses the same "file under review" detection as the navigation commands.
 - If the file isn't inside any git repository, it just tells you so (no error). If the worktree is already a workspace folder, it says so and does nothing.
-- **Note:** if your window currently has a single folder open, adding the first extra folder turns it into a *multi-root* workspace, which triggers a quick window reload (VS Code restarts the extension host on that transition). Better Git warns you; the explicit add command performs the add as its very last step, while reveal opens the editable file first so it survives the restart and auto-reveals afterward.
+- **Note:** if your window currently has a single folder open, adding the first extra folder turns it into a *multi-root* workspace, which triggers a quick window reload (VS Code restarts the extension host on that transition). Agentic Git warns you; the explicit add command performs the add as its very last step, while reveal opens the editable file first so it survives the restart and auto-reveals afterward.
 
 ## Keybindings
 
@@ -87,7 +100,7 @@ All bindings ship as defaults and are fully overridable (see below).
 > deliberately reversed for mouse thumb-buttons — which made keyboard `>` / `<` navigate
 > backwards on QWERTY. Fixed: they now run the real change-navigation commands.)
 
-> **Smart forward / back** (`better-git-vscode.smart-forward` / `.smart-back`) are
+> **Smart forward / back** (`agentic-git.smart-forward` / `.smart-back`) are
 > **mouse-button commands** with no default keyboard key: in a diff they go to the
 > previous/next change (direction intentionally reversed for thumb-buttons), elsewhere
 > they do normal editor back/forward. Bind them to your mouse's Forward/Back buttons
@@ -118,10 +131,10 @@ setup the author uses.
 
 | Mouse button | → F-key | → Command | What it does |
 | --- | --- | --- | --- |
-| **Back** (thumb rear) | `F13` | `better-git-vscode.smart-back` | In a review view: **next** change. Elsewhere: browser Back. |
-| **Forward** (thumb front) | `F17` | `better-git-vscode.smart-forward` | In a review view: **previous** change. Elsewhere: browser Forward. |
-| (extra button) | `F18` | `better-git-vscode.stage-and-next-changed-file` | Stage current file **+ next** change. |
-| (extra button) | `F19` | `better-git-vscode.stage-and-previous-changed-file` | Stage current file **+ previous** change. |
+| **Back** (thumb rear) | `F13` | `agentic-git.smart-back` | In a review view: **next** change. Elsewhere: browser Back. |
+| **Forward** (thumb front) | `F17` | `agentic-git.smart-forward` | In a review view: **previous** change. Elsewhere: browser Forward. |
+| (extra button) | `F18` | `agentic-git.stage-and-next-changed-file` | Stage current file **+ next** change. |
+| (extra button) | `F19` | `agentic-git.stage-and-previous-changed-file` | Stage current file **+ previous** change. |
 
 **Why the "smart" commands are dual-mode.** `smart-back` / `smart-forward` detect whether you're in a
 diff/review view (a diff, a brand-new/untracked file, a deleted file, a merge-conflict editor, or a
@@ -157,12 +170,12 @@ clause to get wrong:
 ```jsonc
 [
   // Mouse BACK button  (Karabiner sends F13) -> smart-back:    next change while reviewing, else browser Back
-  { "key": "f13", "command": "better-git-vscode.smart-back" },
+  { "key": "f13", "command": "agentic-git.smart-back" },
   // Mouse FORWARD button (Karabiner sends F17) -> smart-forward: previous change while reviewing, else Forward
-  { "key": "f17", "command": "better-git-vscode.smart-forward" },
+  { "key": "f17", "command": "agentic-git.smart-forward" },
   // Extra mouse buttons (Karabiner sends F18 / F19) -> stage-and-advance in each direction
-  { "key": "f18", "command": "better-git-vscode.stage-and-next-changed-file" },
-  { "key": "f19", "command": "better-git-vscode.stage-and-previous-changed-file" }
+  { "key": "f18", "command": "agentic-git.stage-and-next-changed-file" },
+  { "key": "f19", "command": "agentic-git.stage-and-previous-changed-file" }
 ]
 ```
 
@@ -175,8 +188,8 @@ The change-nav defaults live on the **physical `>` and `<` keys**. On QWERTY tho
 type `.` and `,`; on **Dvorak** the *same physical keys* type `v` and `w`, so the QWERTY
 character bindings would land under the wrong fingers.
 
-Flip the single setting **`better-git-vscode.dvorakMode`** (Settings → Better Git VS Code,
-or add `"better-git-vscode.dvorakMode": true` to your `settings.json`) and the bindings
+Flip the single setting **`agentic-git.dvorakMode`** (Settings → Agentic Git,
+or add `"agentic-git.dvorakMode": true` to your `settings.json`) and the bindings
 swap to the Dvorak characters for the *same physical keys* — same commands, same
 behaviour, same finger positions, different keycap labels. Dvorak mode is a thin key
 remap over the one canonical navigation behaviour; it never changes what the commands do:
@@ -190,7 +203,7 @@ remap over the one canonical navigation behaviour; it never changes what the com
 
 When the toggle is on, the QWERTY defaults for those four commands are automatically
 disabled and the Dvorak-character keys take over (it uses VS Code's native
-`config.better-git-vscode.dvorakMode` when-clauses — no extension restart trick).
+`config.agentic-git.dvorakMode` when-clauses — no extension restart trick).
 Changed-file nav (`Cmd/Ctrl+Alt+.` / `,`), revert (`Alt+Q`) and reveal (`Alt+R`) are
 **left on their defaults** in both modes. In Dvorak mode the freed-up `Alt+.` / `Alt+,`
 characters additionally map to the smart forward/back mouse commands (they sit on
@@ -203,37 +216,37 @@ different physical keys there, so nothing collides).
 
 Every default ships from the extension and can be overridden per command. To change one,
 open *Preferences: Open Keyboard Shortcuts*, search for the command (they're all under the
-`better-git-vscode.*` namespace — e.g. `better-git-vscode.smart-forward`), and assign your
+`agentic-git.*` namespace — e.g. `agentic-git.smart-forward`), and assign your
 own key. To disable a default instead, add a rule prefixed with `-` in `keybindings.json`:
 
 ```jsonc
-{ "key": "alt+.", "command": "-better-git-vscode.next-scm-change" }
+{ "key": "alt+.", "command": "-agentic-git.next-scm-change" }
 ```
 
 > Tip: many people prefer to map **Open & reveal current file in Explorer**
-> (`better-git-vscode.reveal-current-file-in-explorer`) to something like `Shift+Cmd+E`.
+> (`agentic-git.reveal-current-file-in-explorer`) to something like `Shift+Cmd+E`.
 > We ship the default as `Option+R` rather than `Shift+Cmd+E` because the latter is already
 > a built-in VS Code shortcut — but you're free to override it to `Shift+Cmd+E` (or anything
 > else) in your own `keybindings.json` if you don't mind reclaiming that combo.
 
 ## Settings
 
-A few behaviours are configurable under **Settings → Better Git VS Code**:
+A few behaviours are configurable under **Settings → Agentic Git**:
 
-- **Dvorak mode** — swap the navigation keys to Dvorak-comfortable positions with one toggle (`better-git-vscode.dvorakMode`, see the *Dvorak mode* section above).
-- **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
-- **Auto-collapse worktrees** — fold all repository sections after window open or an extension-host restart (`better-git-vscode.collapseWorktreesOnStartup`, on by default; see *Tidy worktrees* above).
-- **Auto-add worktree on reveal** — when reveal targets a worktree outside Explorer, add that worktree root as a workspace folder and reveal the file (`better-git-vscode.autoAddWorktreeOnReveal`, on by default; see *Pull a worktree into your sidebar* above).
-- **New-file line step** — how many lines the change keys step through a brand-new file (`better-git-vscode.newFileNavLineJump`, default 5).
-- **Tall-hunk staging** — step through a hunk taller than your screen in stages with the same next/previous keys, instead of the rest running off the bottom (`better-git-vscode.hunkStagingEnabled`, default on — see *Step through tall hunks in stages* above). Tune the engage threshold (`hunkStagingThreshold`, 0 = auto/viewport), the per-step scroll (`hunkStagingLineStep`, 0 = auto), and the overlap kept between steps (`hunkStagingOverlap`, default 4).
-- **List vs Tree view** in Source Control (`better-git-vscode.treeView`).
+- **Dvorak mode** — swap the navigation keys to Dvorak-comfortable positions with one toggle (`agentic-git.dvorakMode`, see the *Dvorak mode* section above).
+- **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `agentic-git.showLastStagedInStatusBar` (default on).
+- **Auto-collapse worktrees** — fold all repository sections after window open or an extension-host restart (`agentic-git.collapseWorktreesOnStartup`, on by default; see *Tidy worktrees* above).
+- **Auto-add worktree on reveal** — when reveal targets a worktree outside Explorer, add that worktree root as a workspace folder and reveal the file (`agentic-git.autoAddWorktreeOnReveal`, on by default; see *Pull a worktree into your sidebar* above).
+- **New-file line step** — how many lines the change keys step through a brand-new file (`agentic-git.newFileNavLineJump`, default 5).
+- **Tall-hunk staging** — step through a hunk taller than your screen in stages with the same next/previous keys, instead of the rest running off the bottom (`agentic-git.hunkStagingEnabled`, default on — see *Step through tall hunks in stages* above). Tune the engage threshold (`hunkStagingThreshold`, 0 = auto/viewport), the per-step scroll (`hunkStagingLineStep`, 0 = auto), and the overlap kept between steps (`hunkStagingOverlap`, default 4).
+- **List vs Tree view** in Source Control (`agentic-git.treeView`).
 - Whether the Source Control panel opens on navigation (`shouldOpenScmView`).
 - The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥).
 - Experimental staged-file highlighting (`revealStagedInSourceControl`).
 
 ## Credits
 
-Better Git VS Code is a fork of the original git-diff-navigation extension by
+Agentic Git is a fork of the original git-diff-navigation extension by
 [**Alfred Birk**](https://github.com/alfredbirk), extended with a stage-and-advance
 review flow, staged-diff navigation, smart forward/back, and the QWERTY `<` / `>`
 default keys. Thanks to Alfred Birk for the original extension.

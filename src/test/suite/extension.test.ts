@@ -8,20 +8,34 @@ import * as vscode from 'vscode';
 suite('Extension Test Suite', () => {
 	vscode.window.showInformationMessage('Start all tests.');
 
-	test('Sample test', () => {
-		assert.strictEqual(-1, [1, 2, 3].indexOf(5));
-		assert.strictEqual(-1, [1, 2, 3].indexOf(0));
+	test('ships the complete Agentic Git identity and namespace', () => {
+		const extension = vscode.extensions.getExtension('EthanSK.agentic-git');
+		assert.ok(extension, 'Agentic Git extension manifest was not loaded by the extension test host');
+		const manifest = extension.packageJSON;
+
+		assert.strictEqual(manifest.name, 'agentic-git');
+		assert.strictEqual(manifest.displayName, 'Agentic Git');
+		assert.strictEqual(manifest.description, 'Fast, keyboard-driven Git review for the agentic age.');
+		assert.strictEqual(manifest.repository?.url, 'https://github.com/EthanSK/agentic-git');
+
+		const commandIds = (manifest.contributes?.commands as Array<{ command: string }>).map(item => item.command);
+		assert.ok(commandIds.length > 0, 'Agentic Git must contribute commands');
+		assert.ok(commandIds.every(id => id.startsWith('agentic-git.')), 'every contributed command must use agentic-git.*');
+
+		const settingIds = Object.keys(manifest.contributes?.configuration?.properties ?? {});
+		assert.ok(settingIds.length > 0, 'Agentic Git must contribute settings');
+		assert.ok(settingIds.every(id => id.startsWith('agentic-git.')), 'every contributed setting must use agentic-git.*');
 	});
 
 	test('stage-and-advance editor-title button stays pinned to the far right', () => {
-		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
-		assert.ok(extension, 'Better Git extension manifest was not loaded by the extension test host');
+		const extension = vscode.extensions.getExtension('EthanSK.agentic-git');
+		assert.ok(extension, 'Agentic Git extension manifest was not loaded by the extension test host');
 
 		const editorTitleContributions = extension.packageJSON.contributes?.menus?.['editor/title'] as
 			| Array<{ command?: string; group?: string }>
 			| undefined;
 		const stageAndAdvanceContribution = editorTitleContributions?.find(
-			contribution => contribution.command === 'better-git-vscode.stage-current-file-and-advance'
+			contribution => contribution.command === 'agentic-git.stage-current-file-and-advance'
 		);
 		assert.ok(stageAndAdvanceContribution, 'Stage-and-advance editor/title contribution is missing from package.json');
 
@@ -38,20 +52,20 @@ suite('Extension Test Suite', () => {
 	});
 
 	test('auto-add worktree on reveal defaults to enabled', () => {
-		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
-		assert.ok(extension, 'Better Git extension manifest was not loaded by the extension test host');
+		const extension = vscode.extensions.getExtension('EthanSK.agentic-git');
+		assert.ok(extension, 'Agentic Git extension manifest was not loaded by the extension test host');
 		const setting = extension.packageJSON.contributes?.configuration?.properties?.[
-			'better-git-vscode.autoAddWorktreeOnReveal'
+			'agentic-git.autoAddWorktreeOnReveal'
 		];
 		assert.ok(setting, 'autoAddWorktreeOnReveal setting is missing from package.json');
 		assert.strictEqual(setting.default, true, 'autoAddWorktreeOnReveal must remain on by default');
 	});
 
 	test('repository sections collapse after startup/restart by default', () => {
-		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
-		assert.ok(extension, 'Better Git extension manifest was not loaded by the extension test host');
+		const extension = vscode.extensions.getExtension('EthanSK.agentic-git');
+		assert.ok(extension, 'Agentic Git extension manifest was not loaded by the extension test host');
 		const setting = extension.packageJSON.contributes?.configuration?.properties?.[
-			'better-git-vscode.collapseWorktreesOnStartup'
+			'agentic-git.collapseWorktreesOnStartup'
 		];
 		assert.ok(setting, 'collapseWorktreesOnStartup setting is missing from package.json');
 		assert.strictEqual(setting.default, true, 'restart collapse must remain enabled by default');

@@ -1,8 +1,8 @@
 {
-  "name": "better-git-vscode",
-  "displayName": "Better Git VS Code",
-  "description": "Fast keyboard-driven git diff review — jump between changes and changed files, stage-and-advance, revert, all without the mouse.",
-  "version": "1.2.26",
+  "name": "agentic-git",
+  "displayName": "Agentic Git",
+  "description": "Fast, keyboard-driven Git review for the agentic age.",
+  "version": "2.0.0",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -16,6 +16,10 @@
     "shortcut",
     "hotkey",
     "git",
+    "agentic",
+    "ai",
+    "review",
+    "keyboard-driven",
     "scm",
     "source control",
     "cycle",
@@ -23,11 +27,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/EthanSK/better-git-vscode"
+    "url": "https://github.com/EthanSK/agentic-git"
   },
   "publisher": "EthanSK",
   "categories": [
-    "Other"
+    "SCM Providers"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -36,92 +40,92 @@
   "contributes": {
     "commands": [
       {
-        "command": "better-git-vscode.next-scm-change",
-        "category": "Better Git",
+        "command": "agentic-git.next-scm-change",
+        "category": "Agentic Git",
         "title": "Next git change"
       },
       {
-        "command": "better-git-vscode.previous-scm-change",
-        "category": "Better Git",
+        "command": "agentic-git.previous-scm-change",
+        "category": "Agentic Git",
         "title": "Previous git change"
       },
       {
-        "command": "better-git-vscode.next-changed-file",
-        "category": "Better Git",
+        "command": "agentic-git.next-changed-file",
+        "category": "Agentic Git",
         "title": "Next changed file"
       },
       {
-        "command": "better-git-vscode.previous-changed-file",
-        "category": "Better Git",
+        "command": "agentic-git.previous-changed-file",
+        "category": "Agentic Git",
         "title": "Previous changed file"
       },
       {
-        "command": "better-git-vscode.revert-and-save",
-        "category": "Better Git",
+        "command": "agentic-git.revert-and-save",
+        "category": "Agentic Git",
         "title": "Revert selected changes and save"
       },
       {
-        "command": "better-git-vscode.stage-and-next-changed-file",
-        "category": "Better Git",
+        "command": "agentic-git.stage-and-next-changed-file",
+        "category": "Agentic Git",
         "title": "Stage current file and advance to next unstaged change"
       },
       {
-        "command": "better-git-vscode.stage-and-previous-changed-file",
-        "category": "Better Git",
+        "command": "agentic-git.stage-and-previous-changed-file",
+        "category": "Agentic Git",
         "title": "Stage current file and advance to previous unstaged change"
       },
       {
-        "command": "better-git-vscode.stage-current-file",
-        "category": "Better Git",
+        "command": "agentic-git.stage-current-file",
+        "category": "Agentic Git",
         "title": "Stage current file",
         "icon": "$(add)"
       },
       {
-        "command": "better-git-vscode.stage-current-file-and-advance",
-        "category": "Better Git",
+        "command": "agentic-git.stage-current-file-and-advance",
+        "category": "Agentic Git",
         "title": "Stage current file and advance in last-navigated direction",
         "icon": "$(add)"
       },
       {
-        "command": "better-git-vscode.smart-forward",
-        "category": "Better Git",
+        "command": "agentic-git.smart-forward",
+        "category": "Agentic Git",
         "title": "Smart forward (next change in a diff, else navigate forward)"
       },
       {
-        "command": "better-git-vscode.smart-back",
-        "category": "Better Git",
+        "command": "agentic-git.smart-back",
+        "category": "Agentic Git",
         "title": "Smart back (previous change in a diff, else navigate back)"
       },
       {
-        "command": "better-git-vscode.reveal-current-file-in-explorer",
-        "category": "Better Git",
+        "command": "agentic-git.reveal-current-file-in-explorer",
+        "category": "Agentic Git",
         "title": "Open & reveal current file in Explorer (works from staged diffs)"
       },
       {
-        "command": "better-git-vscode.open-change-at-position",
-        "category": "Better Git",
+        "command": "agentic-git.open-change-at-position",
+        "category": "Agentic Git",
         "title": "Open changes (diff) at current cursor/scroll position"
       },
       {
-        "command": "better-git-vscode.reveal-last-staged-file",
-        "category": "Better Git",
-        "title": "Reopen the diff of the last file staged via Better Git"
+        "command": "agentic-git.reveal-last-staged-file",
+        "category": "Agentic Git",
+        "title": "Reopen the diff of the last file staged via Agentic Git"
       },
       {
-        "command": "better-git-vscode.collapse-worktrees",
-        "category": "Better Git",
+        "command": "agentic-git.collapse-worktrees",
+        "category": "Agentic Git",
         "title": "Collapse all worktree / repository sections in Source Control"
       },
       {
-        "command": "better-git-vscode.add-current-worktree-to-workspace",
-        "category": "Better Git",
+        "command": "agentic-git.add-current-worktree-to-workspace",
+        "category": "Agentic Git",
         "title": "Add current file's git worktree to workspace"
       }
     ],
     "menus": {
       "editor/title": [
         {
-          "command": "better-git-vscode.stage-current-file-and-advance",
+          "command": "agentic-git.stage-current-file-and-advance",
           "_comment_editorTitleOrder": "Keep the + at navigation@100. VS Code's right-aligned editor-title navigation group sorts actions by ascending order, so the highest order is farthest right: @100 gives + the stable far-right hover spot promised in v1.2.16, while VS Code's built-in diff Previous/Next Change arrows at orders 10/11 stay to its LEFT. The v1.2.19 attempt to use @9 was a regression because it swapped + to the other side of those arrows, producing the user-reported 'inverse buttons' order and breaking that muscle memory. On crowded diffs, + may deliberately overflow into the ... menu at @100; v1.2.20's always-visible status-bar Stage & Next button now handles that case as the overflow-proof fallback, so preserving the stable title-bar position is the intentional tradeoff.",
           "group": "navigation@100",
           "when": "gitOpenRepositoryCount != 0"
@@ -129,92 +133,92 @@
       ],
       "commandPalette": [
         {
-          "command": "better-git-vscode.add-current-worktree-to-workspace",
+          "command": "agentic-git.add-current-worktree-to-workspace",
           "when": "gitOpenRepositoryCount != 0"
         }
       ]
     },
     "configuration": {
-      "title": "Better Git VS Code",
+      "title": "Agentic Git",
       "properties": {
-        "better-git-vscode.treeView": {
+        "agentic-git.treeView": {
           "type": "boolean",
           "default": false,
           "description": "Check this If you use Tree view (as opposed to List view)"
         },
-        "better-git-vscode.shouldOpenScmView": {
+        "agentic-git.shouldOpenScmView": {
           "type": "boolean",
           "default": true,
           "description": "Controls whether the source control side panel should open when going to next/previous change"
         },
-        "better-git-vscode.revealStagedInSourceControl": {
+        "agentic-git.revealStagedInSourceControl": {
           "type": "boolean",
           "default": false,
           "description": "Experimental: also select/highlight staged files in the Source Control view while navigating (works around a VS Code limitation where staged diffs can't be auto-revealed). May cause a brief flash of the file, and for partially-staged files highlights the unstaged copy. Requires scm.autoReveal (on by default)."
         },
-        "better-git-vscode.autoAddWorktreeOnReveal": {
+        "agentic-git.autoAddWorktreeOnReveal": {
           "type": "boolean",
           "default": true,
           "description": "Automatically add a file's git worktree as a workspace folder when Open & reveal current file in Explorer cannot reveal it because that worktree is outside the current Explorer workspace. Turn this off to open the editable file without changing workspace folders."
         },
-        "better-git-vscode.currentFileBadge": {
+        "agentic-git.currentFileBadge": {
           "type": "string",
           "default": "🔥🔥",
           "description": "The badge shown on the file you're currently reviewing, in the Source Control panel (and Explorer/tabs). Max 2 characters — an emoji renders in colour and is the most visible option (the Source Control panel ignores decoration colours). Default is double fire 🔥🔥. Loud choices: 🔥 🔴 🚨 🟥 ❗ ⭐ 👉. Tip: two emoji (e.g. 🔥🔥) is allowed and renders a bit wider. Set to empty to disable the badge."
         },
-        "better-git-vscode.dvorakMode": {
+        "agentic-git.dvorakMode": {
           "type": "boolean",
           "default": false,
           "description": "Keep navigation on the same PHYSICAL '>' and '<' keys under a Dvorak layout: next/previous change become alt+v / alt+w (and stage-and-advance shift+alt+v / shift+alt+w) — the characters a Dvorak keyboard types on the keys where QWERTY has '.' and ','. Same commands and behaviour as the QWERTY alt+. / alt+, defaults, just remapped characters. Your own keybindings.json entries always take precedence."
         },
-        "better-git-vscode.showLastStagedInStatusBar": {
+        "agentic-git.showLastStagedInStatusBar": {
           "type": "boolean",
           "default": true,
           "description": "Show a status bar item (bottom-left) with the last file you staged through this extension (stage-and-advance or the editor-title + button). Useful when stage-and-advance jumps so fast you don't notice what got staged — click the item to reopen that file's staged diff and unstage it if it was a mistake. Turn off to hide the indicator."
         },
-        "better-git-vscode.showStageAndAdvanceInStatusBar": {
+        "agentic-git.showStageAndAdvanceInStatusBar": {
           "type": "boolean",
           "default": true,
           "description": "Show a persistent '+ Stage & Next' button in the bottom-left status bar. Unlike editor-title actions, its position does not change when VS Code adds or removes file-type-specific diff buttons. Clicking it stages the current changed file and advances in the last navigation direction. Turn off to keep only the editor-title + button."
         },
-        "better-git-vscode.collapseWorktreesOnStartup": {
+        "agentic-git.collapseWorktreesOnStartup": {
           "type": "boolean",
           "default": true,
           "description": "When 2+ git worktrees / repositories are open, collapse every repository section shortly after window load or an extension-host restart so Source Control does not come back fully expanded. Enabled by default; turn off to leave VS Code's expansion state alone. VS Code exposes no API to persist individual repository expansion state, so this uses its collapse-all view action and briefly opens/focuses Source Control while it runs. It does not open a file or re-expand the primary repository. The same plain collapse is always available from the 'Collapse all worktree / repository sections in Source Control' command."
         },
-        "better-git-vscode.newFileNavLineJump": {
+        "agentic-git.newFileNavLineJump": {
           "type": "number",
           "default": 5,
           "minimum": 1,
           "description": "For a genuinely NEW file (untracked / staged-new / intent-to-add) shown as a plain editor, the next/previous-change shortcuts have no per-change hunks to jump between — so instead they step the cursor this many lines down/up, letting you scroll through and review the entire new file. When you reach the bottom (or top), they fall through to the next (or previous) changed file as usual. Never affects modified, deleted or renamed files, or any side-by-side diff — those always navigate change-to-change."
         },
-        "better-git-vscode.hunkStagingEnabled": {
+        "agentic-git.hunkStagingEnabled": {
           "type": "boolean",
           "default": true,
           "description": "Step through a TALL hunk (one taller than the visible editor) in stages using the same next/previous-change keys, instead of the rest running off the bottom of the screen. next-change lands at the top of a tall hunk; pressing next again scrolls DOWN by ~a screenful within that same hunk; repeat until the bottom is on screen, then the next press advances to the next hunk. previous-change mirrors it (step UP in stages, then advance to the previous hunk). Hunks that already fit on screen are unaffected — one press goes straight to the next/previous hunk exactly as before. Turn this off to always jump hunk-to-hunk."
         },
-        "better-git-vscode.hunkStagingThreshold": {
+        "agentic-git.hunkStagingThreshold": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Minimum hunk height, in lines, before tall-hunk staging engages. 0 (default) = AUTO: use the real height of your visible editor (from the viewport), so staging kicks in exactly when a hunk can't fit on one screen — and adapts automatically to your window size. Set a positive number to override with a fixed line count (e.g. 40 = only stage hunks taller than 40 lines). Only applies when Tall-hunk staging is enabled."
         },
-        "better-git-vscode.hunkStagingLineStep": {
+        "agentic-git.hunkStagingLineStep": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "How many lines each within-hunk step scrolls while stepping through a tall hunk. 0 (default) = AUTO: one viewport height minus the overlap, so each press advances roughly a screenful while keeping a few lines of context. Set a positive number to override with a fixed step (e.g. 30). Only applies when Tall-hunk staging is enabled."
         },
-        "better-git-vscode.hunkStagingOverlap": {
+        "agentic-git.hunkStagingOverlap": {
           "type": "number",
           "default": 4,
           "minimum": 0,
           "description": "How many lines of overlap to keep on screen between consecutive tall-hunk steps, so reading context carries across each step (a blind full-page jump loses your place). Default 4. Used by the AUTO step size (viewport minus this overlap) and to decide when the remaining tail of a hunk is too small to bother stepping (it just advances to the next hunk instead). Only applies when Tall-hunk staging is enabled."
         },
-        "better-git-vscode.debugLogging": {
+        "agentic-git.debugLogging": {
           "type": "boolean",
           "default": false,
-          "description": "Log tall-hunk stepping decisions to the 'Better Git' output channel (View → Output → pick 'Better Git' from the dropdown). Each next/previous-change press logs the direction, viewport height, hunk extent, top/bottom visible lines, caret line, computed target, remaining lines, and the decision taken (stepped / advanced / reached-end). Off by default (no noise); turn on only when diagnosing a stepping issue."
+          "description": "Log tall-hunk stepping decisions to the 'Agentic Git' output channel (View → Output → pick 'Agentic Git' from the dropdown). Each next/previous-change press logs the direction, viewport height, hunk extent, top/bottom visible lines, caret line, computed target, remaining lines, and the decision taken (stepped / advanced / reached-end). Off by default (no noise); turn on only when diagnosing a stepping issue."
         }
       }
     },
@@ -236,7 +240,7 @@
       "  shift + the same physical key = stage-and-next / stage-and-previous, in BOTH layouts",
       "  (QWERTY shift+alt+. / shift+alt+, ; Dvorak shift+alt+v / shift+alt+w).",
       "The gate is VS Code's native `config.<settingId>` when-clause support on the boolean setting",
-      "`better-git-vscode.dvorakMode` — `when: config...dvorakMode` enables the Dvorak-character entry,",
+      "`agentic-git.dvorakMode` — `when: config...dvorakMode` enables the Dvorak-character entry,",
       "`!config...dvorakMode` enables the QWERTY-character entry. Exactly one entry per command is live at",
       "a time; toggling the setting swaps them with no restart. User keybindings.json entries still win.",
       "",
@@ -269,7 +273,7 @@
       "supported directly inside contributes.keybindings (the manifest keybindings go through the SAME",
       "resolver as a user keybindings.json, so the args-bearing form works identically here — no extension",
       "code needed). We use it so one chord does two things in sequence:",
-      "  1. better-git-vscode.open-change-at-position — open the active file's side-by-side diff scrolled to",
+      "  1. agentic-git.open-change-at-position — open the active file's side-by-side diff scrolled to",
       "     the EXACT cursor + top line you were viewing in the plain file (our new mirror-of-reveal command).",
       "  2. workbench.view.scm — then focus/open the Source Control pane so the file is highlighted there.",
       "WHY ctrl+shift+g: it shadows VS Code's default 'show Source Control' chord, which only did step 2 —",
@@ -280,82 +284,82 @@
     ],
     "keybindings": [
       {
-        "command": "better-git-vscode.next-scm-change",
+        "command": "agentic-git.next-scm-change",
         "key": "alt+.",
         "mac": "alt+.",
-        "when": "!config.better-git-vscode.dvorakMode"
+        "when": "!config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.next-scm-change",
+        "command": "agentic-git.next-scm-change",
         "key": "alt+v",
         "mac": "alt+v",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.previous-scm-change",
+        "command": "agentic-git.previous-scm-change",
         "key": "alt+,",
         "mac": "alt+,",
-        "when": "!config.better-git-vscode.dvorakMode"
+        "when": "!config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.previous-scm-change",
+        "command": "agentic-git.previous-scm-change",
         "key": "alt+w",
         "mac": "alt+w",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.smart-forward",
+        "command": "agentic-git.smart-forward",
         "key": "alt+.",
         "mac": "alt+.",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.smart-back",
+        "command": "agentic-git.smart-back",
         "key": "alt+,",
         "mac": "alt+,",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.next-changed-file",
+        "command": "agentic-git.next-changed-file",
         "key": "ctrl+alt+.",
         "mac": "cmd+alt+."
       },
       {
-        "command": "better-git-vscode.previous-changed-file",
+        "command": "agentic-git.previous-changed-file",
         "key": "ctrl+alt+,",
         "mac": "cmd+alt+,"
       },
       {
-        "command": "better-git-vscode.stage-and-next-changed-file",
+        "command": "agentic-git.stage-and-next-changed-file",
         "key": "shift+alt+.",
         "mac": "shift+alt+.",
-        "when": "!config.better-git-vscode.dvorakMode"
+        "when": "!config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.stage-and-next-changed-file",
+        "command": "agentic-git.stage-and-next-changed-file",
         "key": "shift+alt+v",
         "mac": "shift+alt+v",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.stage-and-previous-changed-file",
+        "command": "agentic-git.stage-and-previous-changed-file",
         "key": "shift+alt+,",
         "mac": "shift+alt+,",
-        "when": "!config.better-git-vscode.dvorakMode"
+        "when": "!config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.stage-and-previous-changed-file",
+        "command": "agentic-git.stage-and-previous-changed-file",
         "key": "shift+alt+w",
         "mac": "shift+alt+w",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.agentic-git.dvorakMode"
       },
       {
-        "command": "better-git-vscode.revert-and-save",
+        "command": "agentic-git.revert-and-save",
         "key": "alt+q",
         "mac": "alt+q"
       },
       {
-        "command": "better-git-vscode.reveal-current-file-in-explorer",
+        "command": "agentic-git.reveal-current-file-in-explorer",
         "key": "alt+r",
         "mac": "alt+r"
       },
@@ -365,7 +369,7 @@
         "mac": "ctrl+shift+g",
         "args": {
           "commands": [
-            "better-git-vscode.open-change-at-position",
+            "agentic-git.open-change-at-position",
             "workbench.view.scm"
           ]
         }
