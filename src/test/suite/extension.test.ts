@@ -71,13 +71,13 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(setting.default, true, 'autoAddWorktreeOnReveal must remain on by default');
 	});
 
-	test('repository sections collapse after startup/restart by default', () => {
+	test('Better Git restores per-workspace SCM expansion state by default', () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');
 		const setting = extension.packageJSON.contributes?.configuration?.properties?.[
 			'better-git-vscode.collapseWorktreesOnStartup'
 		];
 		assert.ok(setting, 'collapseWorktreesOnStartup setting is missing from package.json');
-		assert.strictEqual(setting.default, true, 'restart collapse must remain enabled by default');
+		assert.strictEqual(setting.default, false, 'Better Git must not overwrite VS Code\'s restored SCM tree by default');
 	});
 });

@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.30] — preserve Source Control expansion state
+
+- **Worktrees, repositories, Changes groups, and Staged Changes groups now reopen exactly as you left them.** Better Git no longer overwrites VS Code's saved tree with its old default-on collapse, and it repairs the current VS Code restart regression that otherwise reopens saved-collapsed repositories and groups.
+- `better-git-vscode.collapseWorktreesOnStartup` is now **off by default**. Existing explicit `true` overrides still opt into the legacy collapse-all behavior, and the manual **Collapse all worktree / repository sections in Source Control** command remains available.
+- Added a two-launch isolated Extension Development Host regression. It seeds one repository open and one closed plus independently mixed nested group state, exits, relaunches the same workspace/profile, and compares the exact saved expanded-node set after Better Git's restoration.
+
 ## [1.2.29] — Copy Worktree Name at the top
 
 - **Moved Copy Worktree Name to the top of the worktree-header right-click menu.** It now appears before VS Code's built-in Git repository actions, keeping this frequent clipboard action immediately reachable.

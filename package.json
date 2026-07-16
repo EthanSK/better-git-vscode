@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.29",
+  "version": "1.2.30",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -215,8 +215,8 @@
         },
         "better-git-vscode.collapseWorktreesOnStartup": {
           "type": "boolean",
-          "default": true,
-          "description": "When 2+ git worktrees / repositories are open, collapse every repository section shortly after window load or an extension-host restart so Source Control does not come back fully expanded. Enabled by default; turn off to leave VS Code's expansion state alone. VS Code exposes no API to persist individual repository expansion state, so this uses its collapse-all view action and briefly opens/focuses Source Control while it runs. It does not open a file or re-expand the primary repository. The same plain collapse is always available from the 'Collapse all worktree / repository sections in Source Control' command."
+          "default": false,
+          "description": "Opt in to collapsing every repository/worktree section shortly after window load or an extension-host restart when 2+ repositories are open. Disabled by default so Better Git restores the exact saved Source Control tree, including individual repositories/worktrees and their Changes or Staged Changes groups. Enabling this intentionally overrides that per-workspace state with collapse-all and briefly opens/focuses Source Control while it runs. The same plain collapse remains available on demand from the 'Collapse all worktree / repository sections in Source Control' command."
         },
         "better-git-vscode.newFileNavLineJump": {
           "type": "number",
@@ -417,7 +417,8 @@
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "test:scm-state": "node scripts/test-scm-state-persistence.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.83.0",

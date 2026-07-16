@@ -29,6 +29,14 @@ To reuse an existing VS Code executable instead of downloading another test buil
 BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm test
 ```
 
+Changes that can affect Source Control repository/group expansion must also run the dedicated two-launch restart regression:
+
+```sh
+BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm run test:scm-state
+```
+
+It uses one isolated profile across two Extension Development Host launches and proves that Better Git restores the same mixed repository/worktree and Changes-group expansion state. It never loads, reloads, installs, or updates the extension in the normal VS Code profile.
+
 Also validate the production package before release:
 
 ```sh
