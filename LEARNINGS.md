@@ -32,6 +32,15 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-16T17:05:28Z
+**Trigger:** Ethan 2026-07-16: “copy work tree name should be at the top of the right click menu as well let's release a new version with that please”
+**Symptom:** Better Git v1.2.28 supplied **Copy Worktree Name** on linked-worktree headers, but it appeared below VS Code's built-in **Open Worktree** actions instead of at the top of the right-click menu.
+**Root cause:** The contribution used `1_worktree@3`, while the built-in Git extension owns `1_worktree@1` and `1_worktree@2`. VS Code sorts those items together by order, so Better Git deliberately landed third. The separate `navigation` group renders before `1_worktree`; Git's own header actions in that group start at `navigation@1`.
+**Fix:** Better Git v1.2.29 moves `better-git-vscode.copy-worktree-name` to `navigation@-1000`, putting it before every built-in Git header action while preserving the worktree-only when-clause and existing clipboard handler. PR #51 merged as `dca11f976c1d72e257fb9dfb1ae73f8374acdc85`. Marketplace publication completed and the required verifier confirmed the authenticated version was `Validated`, the public validated-only result exposed v1.2.29 as latest, and the downloaded package was byte-identical to the tested VSIX (`sha256:d9999b962daf7ec60e3347b192213271e8248116e619bc89714bcf82f427b93d`).
+**Guard:** `src/test/suite/navigation.test.ts` pins the exact `scm/sourceControl` contribution to `navigation@-1000`; all 36 isolated Extension Development Host tests, TypeScript, webpack, ESLint, `git diff --check`, production archive/manifest/bundle inspection, and `scripts/verify-marketplace-release.mjs` passed. The release verifier printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED`; normal VS Code was not installed, updated, reloaded, or restarted.
+---
+
+---
 **Date:** 2026-07-16T16:44:54Z
 **Trigger:** Ethan 2026-07-16: “now the right click thing for index html is in bettergit can you remove the other one, how was the other one working was it global what was it has it gone now”
 **Symptom:** After Better Git v1.2.28 supplied the index-browser context action, the older identically titled action could still be invoked from Ethan's normal VS Code and activated `ethansk.open-index-in-system-browser@0.0.1`.
