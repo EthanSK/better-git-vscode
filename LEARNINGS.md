@@ -32,6 +32,15 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-16T16:44:54Z
+**Trigger:** Ethan 2026-07-16: “now the right click thing for index html is in bettergit can you remove the other one, how was the other one working was it global what was it has it gone now”
+**Symptom:** After Better Git v1.2.28 supplied the index-browser context action, the older identically titled action could still be invoked from Ethan's normal VS Code and activated `ethansk.open-index-in-system-browser@0.0.1`.
+**Root cause:** The old action was a private, pinned, user-installed VSIX in the default extension store (`~/.vscode/extensions`), not Marketplace code or part of this repository. Its manifest contributed `ethansk.openIndexInSystemBrowser` to `scm/resourceState/context` for every Git resource and activated on command; its handler then accepted VS Code's URI/resource-state argument forms, rejected anything except a local `index.html`, and called `vscode.env.openExternal`. It was user/profile scoped (`source: vsix`, not application-scoped or machine-scoped), which made it available across workspaces in the default profile and profiles inheriting default extensions, but not system-wide for every macOS user.
+**Fix:** After confirming Better Git v1.2.28 was gallery-installed, run VS Code's official `--uninstall-extension ethansk.open-index-in-system-browser` command without reloading or restarting VS Code. The CLI reported success, removed the helper from `extensions.json`, and both the default and Agents profile extension lists retained only `ethansk.better-git-vscode@1.2.28`; the running VS Code shared-process log independently reported `Extensions removed from another source ethansk.open-index-in-system-browser`.
+**Guard:** Distinguish logical uninstall from physical garbage collection. An activated extension's extracted directory may remain until a later normal extension-host/app restart even after it is absent from every profile registry; that inert directory is not evidence the extension remains installed. Do not manually delete it or restart Ethan's active VS Code merely for cleanup. Require the official CLI/profile lists and extension registry to exclude the helper while Better Git remains gallery-installed.
+---
+
+---
 **Date:** 2026-07-16T16:23:05Z
 **Trigger:** Ethan 2026-07-16: “Why isn't it released yet I'm literally on VSCode, and. Two seven is the latest version”
 **Symptom:** VS Code correctly continued to show v1.2.27 as the latest version after VSCE reported v1.2.28 published and the exact v1.2.28 package could already be downloaded and matched the uploaded hash.
