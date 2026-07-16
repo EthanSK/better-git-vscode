@@ -38,6 +38,17 @@ npx @vscode/vsce package
 
 Inspect the resulting VSIX manifest and file tree. It must identify `EthanSK.better-git-vscode`, contain the production bundle and documentation, and exclude development output or credentials.
 
+## Marketplace release verification
+
+`vsce publish` confirms that Marketplace accepted an upload; it does not prove that Microsoft has validated the version or that VS Code can see it. After publishing, run the repository's hard release gate against the exact VSIX that was uploaded:
+
+```sh
+VSCE_PAT="$VSCE_PAT" node scripts/verify-marketplace-release.mjs \
+  --vsix /absolute/path/to/better-git-vscode-X.Y.Z.vsix
+```
+
+The verifier waits for the authenticated publisher version to become `Validated`, independently requires the public validated-only Gallery query used by VS Code to return the same version, downloads the version-specific package, checks its identity and archive, and byte-compares it with the uploaded VSIX. A release is complete only when the command exits zero and prints `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` for the expected version. Until then, describe the state as **uploaded; Marketplace validation pending**.
+
 ## Navigation changes
 
 New-file stepping and tall-hunk stepping share one caret-owned boundary contract. In particular:

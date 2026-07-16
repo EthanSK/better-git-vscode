@@ -1,6 +1,8 @@
 .github/**
 .vscode/**
 .agents/**
+AGENTS.md
+scripts/**
 .gitignore
 out/**
 src/test/**
