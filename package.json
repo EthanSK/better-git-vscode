@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.28",
+  "version": "1.2.29",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -165,7 +165,7 @@
       "scm/sourceControl": [
         {
           "command": "better-git-vscode.copy-worktree-name",
-          "group": "1_worktree@3",
+          "group": "navigation@-1000",
           "when": "scmProvider == git && scmProviderContext == worktree"
         }
       ]

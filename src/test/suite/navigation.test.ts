@@ -292,7 +292,9 @@ suite('SCM change navigation E2E', () => {
 			menus['scm/sourceControl'].find(({ command }) => command === copyWorktreeNameCommand),
 			{
 				command: copyWorktreeNameCommand,
-				group: '1_worktree@3',
+				// The built-in Git extension puts its first header actions at navigation@1/@2.
+				// A negative order keeps this frequent action at the very top of the menu.
+				group: 'navigation@-1000',
 				when: 'scmProvider == git && scmProviderContext == worktree'
 			}
 		);

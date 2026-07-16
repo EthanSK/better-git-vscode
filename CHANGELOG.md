@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.29] — Copy Worktree Name at the top
+
+- **Moved Copy Worktree Name to the top of the worktree-header right-click menu.** It now appears before VS Code's built-in Git repository actions, keeping this frequent clipboard action immediately reachable.
+- Pinned the top-menu contribution order in the real Extension Development Host manifest regression test.
+
 ## [1.2.28] — Source Control context-menu shortcuts
 
 - **Open changed `index.html` files in the system browser.** Right-click a local `index.html` in Source Control and choose **Open index.html in System Browser**. This folds the previously separate `ethansk.open-index-in-system-browser` helper into Better Git VS Code and keeps the action hidden for every other filename.
