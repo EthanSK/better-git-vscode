@@ -270,6 +270,47 @@ suite('SCM change navigation E2E', () => {
 		await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 	});
 
+	test('contributes the index browser and worktree-name context actions', async () => {
+		const extension = vscode.extensions.getExtension<any>('EthanSK.better-git-vscode')!;
+		const contributedCommands = extension.packageJSON.contributes.commands as Array<{ command: string }>;
+		const menus = extension.packageJSON.contributes.menus as Record<string, Array<Record<string, string>>>;
+
+		const openIndexCommand = 'better-git-vscode.open-index-in-system-browser';
+		const copyWorktreeNameCommand = 'better-git-vscode.copy-worktree-name';
+		assert.ok(contributedCommands.some(({ command }) => command === openIndexCommand));
+		assert.ok(contributedCommands.some(({ command }) => command === copyWorktreeNameCommand));
+
+		assert.deepStrictEqual(
+			menus['scm/resourceState/context'].find(({ command }) => command === openIndexCommand),
+			{
+				command: openIndexCommand,
+				group: 'navigation@-1000',
+				when: "scmProvider == git && resourceScheme == file && resourceFilename == 'index.html'"
+			}
+		);
+		assert.deepStrictEqual(
+			menus['scm/sourceControl'].find(({ command }) => command === copyWorktreeNameCommand),
+			{
+				command: copyWorktreeNameCommand,
+				group: '1_worktree@3',
+				when: 'scmProvider == git && scmProviderContext == worktree'
+			}
+		);
+
+		const registeredCommands = await vscode.commands.getCommands(true);
+		assert.ok(registeredCommands.includes(openIndexCommand), 'browser command must be registered at runtime');
+		assert.ok(registeredCommands.includes(copyWorktreeNameCommand), 'copy command must be registered at runtime');
+
+		const originalClipboard = await vscode.env.clipboard.readText();
+		try {
+			const worktreeRoot = vscode.Uri.file(path.join(path.dirname(ws), 'feature-copy-name'));
+			await vscode.commands.executeCommand(copyWorktreeNameCommand, { rootUri: worktreeRoot });
+			assert.strictEqual(await vscode.env.clipboard.readText(), 'feature-copy-name');
+		} finally {
+			await vscode.env.clipboard.writeText(originalClipboard);
+		}
+	});
+
 	// ────────────────────────────────────────────────────────────────────────────────────────
 	// UNTRACKED NEW FILE — the feature itself
 	// ────────────────────────────────────────────────────────────────────────────────────────

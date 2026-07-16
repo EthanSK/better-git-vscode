@@ -21,7 +21,7 @@ Each entry looks like:
 
 ## Release installation policy
 
-- Better Git VS Code code fixes requested by Ethan include completing the Marketplace release by default unless he explicitly says not to release that change.
+- Every completed Better Git VS Code code change requested by Ethan—features, fixes, and maintenance—must be released to the Marketplace and have its exact version-specific gallery package downloaded and verified by default, unless he explicitly says not to release that change. "Done" never means stopping at local implementation, tests, a commit, a PR, or a locally packaged VSIX.
 - Release work must **not install, uninstall, update, reload, or restart** Better Git VS Code in Ethan's normal VS Code. Ethan will install Marketplace updates himself after they appear.
 - Test only in isolated Extension Development Hosts. A release is complete when Marketplace publication succeeds and the exact version-specific gallery package is downloadable and valid; the local installed version is not a release gate.
 - Do not run `code --install-extension`, `code --uninstall-extension`, or any equivalent normal-VS-Code mutation unless Ethan explicitly asks for that installation action in the current task. Permission to code, test, publish, or "release" does not imply permission to install.
@@ -30,6 +30,15 @@ Each entry looks like:
 ## Entries
 
 (newest first)
+
+---
+**Date:** 2026-07-16T15:53:00Z
+**Trigger:** Ethan 2026-07-16: “make better git have the right click menu for open index in browser, and add an item in right click menu for worktrees to copy the name”
+**Symptom:** `Open index.html in System Browser` appeared in Ethan's Source Control file menu, but it was unclear whether Better Git VS Code owned it; linked-worktree repository headers had no quick way to copy the worktree name.
+**Root cause:** The browser action came from a separate private sideloaded extension, `ethansk.open-index-in-system-browser@0.0.1`; Better Git v1.2.27 contributed neither action. Source Control file actions belong in `scm/resourceState/context`, while repository/worktree header actions belong in `scm/sourceControl`. The latter passes the clicked `SourceControl` object, whose vscode.git label is only `Git`; its `rootUri` basename is the useful visible worktree identity.
+**Fix:** Better Git v1.2.28 contributes `better-git-vscode.open-index-in-system-browser` only when `scmProvider == git`, the resource is local, and `resourceFilename == 'index.html'`; its tolerant handler accepts VS Code's URI, resource-state, or multi-select argument shapes and revalidates the exact local filename before calling `vscode.env.openExternal`. It also contributes `better-git-vscode.copy-worktree-name` only when `scmProviderContext == worktree`, copying `path.basename(sourceControl.rootUri.fsPath)` silently. The misleading local-test executable example in `CONTRIBUTING.md` was corrected from the non-executable `Contents/MacOS/Electron` placeholder to the verified `Contents/MacOS/Code` binary.
+**Guard:** `src/test/suite/navigation.test.ts` asserts the exact commands, menu IDs, when-clauses, runtime registrations, and clipboard output; all 36 real Extension Development Host tests passed using `BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code"`. TypeScript, webpack, ESLint, `git diff --check`, production VSIX archive integrity, manifest identity/version/menu inspection, and bundled-handler inspection passed. The normal VS Code installation was not installed, uninstalled, updated, reloaded, or restarted.
+---
 
 ---
 **Date:** 2026-07-14T23:10:32Z

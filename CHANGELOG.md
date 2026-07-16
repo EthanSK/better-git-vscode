@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.28] — Source Control context-menu shortcuts
+
+- **Open changed `index.html` files in the system browser.** Right-click a local `index.html` in Source Control and choose **Open index.html in System Browser**. This folds the previously separate `ethansk.open-index-in-system-browser` helper into Better Git VS Code and keeps the action hidden for every other filename.
+- **Copy a linked worktree's name from its repository header.** Right-click a worktree header in Source Control and choose **Copy Worktree Name**. It silently copies the worktree root folder name, matching VS Code's built-in clipboard actions and keeping the frequent action fast.
+- Added real Extension Development Host coverage for both manifest contributions, both runtime command registrations, and the worktree-name clipboard result.
+
 ## [1.2.27] — Better Git VS Code
 
 - **Restored the original Better Git VS Code identity everywhere.** The Marketplace identifier remains `EthanSK.better-git-vscode`, command and setting IDs remain `better-git-vscode.*`, and the repository, documentation, runtime strings, test fixtures, and active personal shortcuts all use the established name again.

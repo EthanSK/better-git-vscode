@@ -320,6 +320,54 @@ const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void =
     }
 };
 
+// Resolve the selected Source Control file from the argument shapes VS Code uses for resource context-menu
+// commands. A single resource can arrive as a Uri or as a SourceControlResourceState-like object; multi-select
+// commands can wrap either shape in an array. Keep this tolerant so the browser action works for staged,
+// unstaged, and untracked index.html entries without depending on vscode.git's private resource-state class.
+const findScmResourceUri = (targets: readonly unknown[]): vscode.Uri | undefined => {
+    for (const target of targets) {
+        if (target instanceof vscode.Uri) {
+            return target;
+        }
+        if (Array.isArray(target)) {
+            const nestedUri = findScmResourceUri(target);
+            if (nestedUri) {
+                return nestedUri;
+            }
+            continue;
+        }
+        if (typeof target === "object" && target !== null && "resourceUri" in target) {
+            const resourceUri = (target as { resourceUri?: unknown }).resourceUri;
+            if (resourceUri instanceof vscode.Uri) {
+                return resourceUri;
+            }
+        }
+    }
+    return undefined;
+};
+
+// Repository/worktree header commands receive the clicked SourceControl object. VS Code's public SourceControl
+// label is just "Git" for vscode.git, while the visible header identity comes from its root, so the useful
+// worktree name is the root folder basename (the same text users recognize in the Source Control header).
+const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefined => {
+    for (const target of targets) {
+        if (Array.isArray(target)) {
+            const nestedUri = findWorktreeRootUri(target);
+            if (nestedUri) {
+                return nestedUri;
+            }
+            continue;
+        }
+        if (typeof target === "object" && target !== null && "rootUri" in target) {
+            const rootUri = (target as { rootUri?: unknown }).rootUri;
+            if (rootUri instanceof vscode.Uri) {
+                return rootUri;
+            }
+        }
+    }
+    return undefined;
+};
+
 export function activate(context: vscode.ExtensionContext) {
     // Persistent fixed-location mouse target for stage-and-advance (v1.2.20). Priority 101 places it directly
     // beside, and just before, the existing last-staged indicator at priority 100. Unlike editor/title, this
@@ -452,6 +500,43 @@ export function activate(context: vscode.ExtensionContext) {
         addWorktreeRootToWorkspace(worktreeRoot, true);
         // NOTHING AFTER THIS POINT — the ext-host restart (single→multi transition) can cut the handler off here.
     });
+
+    // Fold the existing one-off "Open index.html in System Browser" extension into Better Git. The manifest
+    // exposes this only on local index.html Source Control resources; the handler repeats that validation so a
+    // direct executeCommand call can never open an arbitrary URI by accident.
+    const openIndexInSystemBrowserCommand = vscode.commands.registerCommand(
+        "better-git-vscode.open-index-in-system-browser",
+        async (...targets: unknown[]) => {
+            const resourceUri = findScmResourceUri(targets);
+            if (!resourceUri) {
+                await vscode.window.showErrorMessage("Better Git: VS Code did not provide the selected Source Control file.");
+                return;
+            }
+            if (resourceUri.scheme !== "file" || path.basename(resourceUri.fsPath) !== "index.html") {
+                await vscode.window.showWarningMessage("Better Git: This command only opens local index.html files.");
+                return;
+            }
+            const opened = await vscode.env.openExternal(resourceUri);
+            if (!opened) {
+                await vscode.window.showErrorMessage(`Better Git: Couldn't open ${resourceUri.fsPath} in the system browser.`);
+            }
+        }
+    );
+
+    // Source Control's repository header menu passes the clicked SourceControl object. Copy the root folder's
+    // basename silently, matching VS Code's built-in clipboard commands and keeping this frequent action fast.
+    const copyWorktreeNameCommand = vscode.commands.registerCommand(
+        "better-git-vscode.copy-worktree-name",
+        async (...targets: unknown[]) => {
+            const rootUri = findWorktreeRootUri(targets);
+            const worktreeName = rootUri?.scheme === "file" ? path.basename(rootUri.fsPath) : "";
+            if (!worktreeName) {
+                await vscode.window.showErrorMessage("Better Git: VS Code did not provide the selected worktree.");
+                return;
+            }
+            await vscode.env.clipboard.writeText(worktreeName);
+        }
+    );
 
     // ──────────────────────────────────────────────────────────────────────────────────────────
     // SMART MOUSE-BUTTON COMMANDS (smart-forward / smart-back)
@@ -743,6 +828,8 @@ export function activate(context: vscode.ExtensionContext) {
         disposable, disposable2, disposable3, disposable4, disposable5, disposable6, disposable7, disposable8,
         disposable9, disposable10, disposable11, disposable12, disposable13, disposable14, disposable15,
         disposable16, // add-current-worktree-to-workspace (v1.2.14)
+        openIndexInSystemBrowserCommand,
+        copyWorktreeNameCommand,
         stageAndAdvanceStatusBarItem, // fixed-location Stage & Next mouse target (v1.2.20)
         lastStagedStatusBarItem, // disposed cleanly on deactivate
         configListener,

@@ -26,7 +26,7 @@ npm test
 To reuse an existing VS Code executable instead of downloading another test build:
 
 ```sh
-BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Electron" npm test
+BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm test
 ```
 
 Also validate the production package before release:

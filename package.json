@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.27",
+  "version": "1.2.28",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -120,6 +120,16 @@
         "command": "better-git-vscode.add-current-worktree-to-workspace",
         "category": "Better Git",
         "title": "Add current file's git worktree to workspace"
+      },
+      {
+        "command": "better-git-vscode.open-index-in-system-browser",
+        "category": "Better Git",
+        "title": "Open index.html in System Browser"
+      },
+      {
+        "command": "better-git-vscode.copy-worktree-name",
+        "category": "Better Git",
+        "title": "Copy Worktree Name"
       }
     ],
     "menus": {
@@ -135,6 +145,28 @@
         {
           "command": "better-git-vscode.add-current-worktree-to-workspace",
           "when": "gitOpenRepositoryCount != 0"
+        },
+        {
+          "command": "better-git-vscode.open-index-in-system-browser",
+          "when": "false"
+        },
+        {
+          "command": "better-git-vscode.copy-worktree-name",
+          "when": "false"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "better-git-vscode.open-index-in-system-browser",
+          "group": "navigation@-1000",
+          "when": "scmProvider == git && resourceScheme == file && resourceFilename == 'index.html'"
+        }
+      ],
+      "scm/sourceControl": [
+        {
+          "command": "better-git-vscode.copy-worktree-name",
+          "group": "1_worktree@3",
+          "when": "scmProvider == git && scmProviderContext == worktree"
         }
       ]
     },
