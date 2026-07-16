@@ -23,13 +23,22 @@ Each entry looks like:
 
 - Every completed Better Git VS Code code change requested by Ethan—features, fixes, and maintenance—must be released to the Marketplace and have its exact version-specific gallery package downloaded and verified by default, unless he explicitly says not to release that change. "Done" never means stopping at local implementation, tests, a commit, a PR, or a locally packaged VSIX.
 - Release work must **not install, uninstall, update, reload, or restart** Better Git VS Code in Ethan's normal VS Code. Ethan will install Marketplace updates himself after they appear.
-- Test only in isolated Extension Development Hosts. A release is complete when Marketplace publication succeeds and the exact version-specific gallery package is downloadable and valid; the local installed version is not a release gate.
+- Test only in isolated Extension Development Hosts. A release is complete only when Marketplace publication succeeds, the exact version-specific gallery package is downloadable and valid, the authenticated publisher API marks that exact version `Validated`, and a public Gallery query with `ExcludeNonValidated` returns it as the latest version. The local installed version is not a release gate.
 - Do not run `code --install-extension`, `code --uninstall-extension`, or any equivalent normal-VS-Code mutation unless Ethan explicitly asks for that installation action in the current task. Permission to code, test, publish, or "release" does not imply permission to install.
-- Marketplace list/search metadata may lag briefly after a successful publish. Remote verification may wait or poll, but it must never touch Ethan's installed extension while waiting.
+- Marketplace upload, package download, validation, and VS Code update visibility are separate states. A direct version-specific VSIX can already be downloadable while the version is still unvalidated and hidden from VS Code. Poll both the publisher validation flag and the validated-only public query; never call the release complete or ask Ethan to refresh repeatedly before both pass. Remote verification must never touch Ethan's installed extension while waiting.
 
 ## Entries
 
 (newest first)
+
+---
+**Date:** 2026-07-16T16:23:05Z
+**Trigger:** Ethan 2026-07-16: “Why isn't it released yet I'm literally on VSCode, and. Two seven is the latest version”
+**Symptom:** VS Code correctly continued to show v1.2.27 as the latest version after VSCE reported v1.2.28 published and the exact v1.2.28 package could already be downloaded and matched the uploaded hash.
+**Root cause:** Marketplace publication is asynchronous. The upload endpoint and version-specific package endpoint succeeded at 16:08Z, but v1.2.28 still had extension-version `flags: 0` (`None`) while Microsoft validated it. VS Code's Marketplace query excludes nonvalidated versions, so it intentionally kept offering v1.2.27. A downloadable version-specific package proved upload and storage, not release visibility.
+**Fix:** Poll the authenticated Gallery `getExtension` result for the exact version until its `ExtensionVersionFlags` becomes `Validated` (`1`), and independently poll a public Gallery query using `IncludeVersions | ExcludeNonValidated | IncludeLatestVersionOnly`. At 2026-07-16T16:23:05Z both gates passed and the public validated-only result changed to v1.2.28. While validation was pending, `getVerificationLog` returned `VerificationLogNotFoundException` with the explicit explanation that validation might still be in progress; do not republish or bump the version without an actual failure result.
+**Guard:** VSCE's `DONE Published` output, a 200 response from the version-specific package URL, archive validity, and a matching hash are necessary but insufficient release evidence. Never report a Better Git release complete until the exact version is both publisher-validated and visible through the validated-only query VS Code consumes.
+---
 
 ---
 **Date:** 2026-07-16T15:53:00Z
