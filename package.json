@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.31",
+  "version": "1.2.32",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -160,7 +160,14 @@
         {
           "command": "better-git-vscode.open-index-in-system-browser",
           "group": "navigation@-1000",
-          "when": "scmProvider == git && resourceScheme == file && resourceFilename == 'index.html'"
+          "when": "scmProvider == git"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "better-git-vscode.open-index-in-system-browser",
+          "group": "navigation@-1000",
+          "when": "resourceScheme == file && resourceFilename == 'index.html'"
         }
       ],
       "scm/sourceControl": [
@@ -424,6 +431,7 @@
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
+    "test:index-context-menu": "node scripts/test-index-context-menu.mjs",
     "test:scm-state": "npm run test:scm-state:disabled && npm run test:scm-state:enabled-inert && npm run test:scm-state:collapse",
     "test:scm-state:disabled": "node scripts/test-scm-state-persistence.mjs --expect-disabled",
     "test:scm-state:enabled-inert": "node scripts/test-scm-state-persistence.mjs --expect-enabled-inert",

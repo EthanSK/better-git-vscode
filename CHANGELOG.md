@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.32] — restore the index.html browser action
+
+- **Fixed the missing Source Control action.** VS Code does not provide `resourceFilename` or `resourceScheme` in an SCM resource menu's context-key overlay, so v1.2.28-v1.2.31's precise-looking `when` clause evaluated false for every changed file. The SCM contribution now uses the provider key VS Code actually exposes, while the existing command handler still refuses every non-local/non-`index.html` URI.
+- **Added the action to Explorer as well.** Right-clicking any local `index.html` now offers **Open index.html in System Browser** even when the file is unchanged; Explorer does expose the filename and scheme keys, so other Explorer files remain uncluttered.
+- **Replaced manifest-only confidence with a native-menu regression.** The isolated test opens real Source Control and Explorer context menus, reads the native menu items, verifies the exact VS Code PID/window is on the MacBook's Built-in Retina Display, and closes only that test window.
+
 ## [1.2.31] — Source Control tree automation off by default
 
 - **Turned every Better Git Source Control show/hide path off by default.** With `better-git-vscode.experimentalScmTreeStateManagement` left off, activation performs no SCM-state read, discovery timer, view reveal/focus, row selection/walk, or expand/collapse command. The rest of Better Git remains active.
