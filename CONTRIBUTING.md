@@ -37,6 +37,15 @@ BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/
 
 It creates eight repositories/worktrees with both staged and working-tree groups, then runs the same isolated profile across two Extension Development Host launches in three modes: experiment disabled, experiment enabled with startup collapse disabled, and double-opt-in collapse. The first two must keep an empty Better Git command trace beyond the removed loop interval; collapse mode must emit only `workbench.view.scm` and `workbench.scm.action.collapseAllRepositories`, exactly once per launch. The harness identifies the spawned process and numeric window ID, verifies `Built-in Retina Display`, captures only that window, and closes only that isolated window. It never loads, reloads, installs, or updates the extension in the normal VS Code profile.
 
+Changes to the `index.html` browser action or its context-menu contributions must also run the native-menu regression on macOS:
+
+```sh
+BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" \
+  npm run test:index-context-menu
+```
+
+It uses an independent temporary Git workspace and isolated profile, places the exact Extension Development Host window on the MacBook's `Built-in Retina Display`, and reads the native menus for a changed Source Control `index.html`, an unchanged Explorer `index.html`, and a non-index Explorer file. This is required because reading the extension manifest cannot prove a VS Code `when` clause evaluates true in the real menu context.
+
 Also validate the production package before release:
 
 ```sh

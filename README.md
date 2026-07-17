@@ -75,9 +75,9 @@ The **`Open & reveal current file in Explorer`** command (`better-git-vscode.rev
 - If the file isn't inside any git repository, it just tells you so (no error). If the worktree is already a workspace folder, it says so and does nothing.
 - **Note:** if your window currently has a single folder open, adding the first extra folder turns it into a *multi-root* workspace, which triggers a quick window reload (VS Code restarts the extension host on that transition). Better Git VS Code warns you; the explicit add command performs the add as its very last step, while reveal opens the editable file first so it survives the restart and auto-reveals afterward.
 
-## Useful Source Control right-click actions
+## Useful right-click actions
 
-- Right-click a changed local **`index.html`** file and choose **Open index.html in System Browser** to open that exact report/page in your default browser.
+- Right-click a local **`index.html`** in Explorer and choose **Open index.html in System Browser**, or use the same action on a changed `index.html` row in Source Control, to open that exact report/page in your default browser. VS Code does not expose filenames to SCM menu `when` clauses, so the Source Control action is visible on other Git rows too; its runtime guard refuses anything except a local `index.html`.
 - Right-click a linked **worktree header** and choose **Copy Worktree Name** to copy the worktree root folder name without a notification getting in the way.
 
 ## Keybindings

@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-17T01:38:03Z
+**Trigger:** Ethan 2026-07-17 after v1.2.31: “I hope you haven't removed the right click on the index html regardless of the workspace ... it's currently not happening right now ... make sure that's still in order it's been done properly.”
+**Symptom:** Both the v1.2.29 and v1.2.31 VSIX manifests and bundles contained `better-git-vscode.open-index-in-system-browser`, and the Extension Development Host test asserted its exact manifest entry, yet the real right-click menu for a changed Source Control `index.html` did not contain **Open index.html in System Browser**. The old one-off helper had been uninstalled after v1.2.28, so no working fallback remained.
+**Root cause:** VS Code's SCM resource-menu code creates context overlays from `scmProvider`, `scmResourceGroup`, and optional `scmResourceState`; it does not add `resourceFilename` or `resourceScheme`. Better Git v1.2.28-v1.2.31 gated the SCM item on both missing keys, so the precise-looking `when` clause evaluated false for every row. The test only reread `extension.packageJSON`, which proved contribution text and runtime registration but never asked VS Code to resolve the native menu.
+**Fix:** v1.2.32 restores the proven provider-level SCM contribution (`scmProvider == git`) and keeps exact local-`index.html` validation in the command handler, matching the original helper's safety model. It also contributes the same command to `explorer/context`, where VS Code does expose `resourceScheme` and `resourceFilename`, so an unchanged local `index.html` works across workspaces while non-index Explorer files remain uncluttered.
+**Commit:** pending merge and Marketplace publication
+**Guard:** `scripts/test-index-context-menu.mjs` launches an independent Git workspace and isolated Extension Development Host, identifies its exact PID and numeric window, verifies placement on `Built-in Retina Display`, opens the actual native Explorer and Source Control context menus through process-targeted Accessibility, and samples the native menu window by exact PID. It requires the action first on a clean Explorer `index.html`, absent on clean Explorer `notes.txt`, and first on a changed SCM `index.html`; it captures and visually inspects both the exact window and native menu, then closes only that isolated process. `src/test/suite/navigation.test.ts` separately pins the two correct menu contracts and runtime command registration.
+---
+
+---
 **Date:** 2026-07-17T00:53:49Z
 **Trigger:** Ethan 2026-07-17 after v1.2.30: “it's stuck in a loop of going and selecting and then it goes to the bottom and it just does it again”; turn all show/hide behavior off in the next version behind an experimental opt-in and test it properly on the MacBook display.
 **Symptom:** The v1.2.30 exact-state restorer visibly selected and walked Source Control rows, reached the bottom, and restarted. An eight-repository fixture reproduced incomplete discovery and incorrect final states: everything open, every nested group closed, or only the first and last repositories open. Source Control Graph remained visible as a second list in the same sidebar, making generic list focus ambiguous.

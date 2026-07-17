@@ -285,7 +285,17 @@ suite('SCM change navigation E2E', () => {
 			{
 				command: openIndexCommand,
 				group: 'navigation@-1000',
-				when: "scmProvider == git && resourceScheme == file && resourceFilename == 'index.html'"
+				// SCM resource menus do not expose resourceFilename/resourceScheme. Runtime URI validation
+				// keeps this provider-wide contribution safe; a native-menu regression covers visibility.
+				when: 'scmProvider == git'
+			}
+		);
+		assert.deepStrictEqual(
+			menus['explorer/context'].find(({ command }) => command === openIndexCommand),
+			{
+				command: openIndexCommand,
+				group: 'navigation@-1000',
+				when: "resourceScheme == file && resourceFilename == 'index.html'"
 			}
 		);
 		assert.deepStrictEqual(

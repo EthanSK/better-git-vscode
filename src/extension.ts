@@ -360,17 +360,18 @@ const runExperimentalScmStartup = (
     });
 };
 
-// Resolve the selected Source Control file from the argument shapes VS Code uses for resource context-menu
-// commands. A single resource can arrive as a Uri or as a SourceControlResourceState-like object; multi-select
-// commands can wrap either shape in an array. Keep this tolerant so the browser action works for staged,
-// unstaged, and untracked index.html entries without depending on vscode.git's private resource-state class.
-const findScmResourceUri = (targets: readonly unknown[]): vscode.Uri | undefined => {
+// Resolve the selected file from Explorer's direct Uri and the argument shapes VS Code uses for Source Control
+// resource context-menu commands. A single SCM resource can arrive as a Uri or as a
+// SourceControlResourceState-like object; multi-select commands can wrap either shape in an array. Keep this
+// tolerant so the browser action works from either menu and for staged, unstaged, and untracked index.html rows
+// without depending on vscode.git's private resource-state class.
+const findContextResourceUri = (targets: readonly unknown[]): vscode.Uri | undefined => {
     for (const target of targets) {
         if (target instanceof vscode.Uri) {
             return target;
         }
         if (Array.isArray(target)) {
-            const nestedUri = findScmResourceUri(target);
+            const nestedUri = findContextResourceUri(target);
             if (nestedUri) {
                 return nestedUri;
             }
@@ -547,15 +548,17 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         // NOTHING AFTER THIS POINT — the ext-host restart (single→multi transition) can cut the handler off here.
     });
 
-    // Fold the existing one-off "Open index.html in System Browser" extension into Better Git. The manifest
-    // exposes this only on local index.html Source Control resources; the handler repeats that validation so a
-    // direct executeCommand call can never open an arbitrary URI by accident.
+    // Fold the existing one-off "Open index.html in System Browser" extension into Better Git. Explorer exposes
+    // filename/scheme context keys, so its menu contribution is precise. Source Control does not: VS Code's SCM
+    // resource-menu overlay contains only provider/group/state keys, which means a filename-gated SCM item is
+    // hidden for every row. Keep that contribution provider-scoped, and repeat exact URI validation here so a
+    // non-index row or direct executeCommand call can never open an arbitrary URI by accident.
     const openIndexInSystemBrowserCommand = vscode.commands.registerCommand(
         "better-git-vscode.open-index-in-system-browser",
         async (...targets: unknown[]) => {
-            const resourceUri = findScmResourceUri(targets);
+            const resourceUri = findContextResourceUri(targets);
             if (!resourceUri) {
-                await vscode.window.showErrorMessage("Better Git: VS Code did not provide the selected Source Control file.");
+                await vscode.window.showErrorMessage("Better Git: VS Code did not provide the selected file.");
                 return;
             }
             if (resourceUri.scheme !== "file" || path.basename(resourceUri.fsPath) !== "index.html") {
