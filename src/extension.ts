@@ -128,18 +128,19 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
 };
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
-// OPTIONAL COLLAPSE OF WORKTREES / REPOSITORY SECTIONS ON STARTUP (v1.2.2, default-off in v1.2.30)
+// EXPERIMENTAL SOURCE CONTROL TREE-STATE MANAGEMENT (v1.2.31, default OFF)
 //
 // WHY this exists historically: Ethan works with git WORKTREES (e.g.
 // ~/Documents/claude-worktrees/<project>-<name>). When multiple worktrees / repositories are open in
 // one window, VS Code's built-in Source Control view renders EACH repository as its own collapsible
 // section header. Older Better Git releases deliberately collapsed all of them after every startup.
 //
-// v1.2.30 CORRECTION: Better Git's default-on collapse loop was overwriting VS Code's saved mixed tree,
-// and current VS Code then has a second regression where its async SCM rebuild reopens collapsed nodes.
-// The setting is now DEFAULT OFF and the restoration layer below reconstructs the saved per-repository
-// and per-group choices after discovery settles. Explicit `collapseWorktreesOnStartup: true` keeps the
-// legacy all-collapsed behavior instead.
+// v1.2.30 tried to reconstruct the exact saved tree by repeatedly driving generic `list.*` commands. With
+// many worktrees that routine was quadratic: it repeatedly jumped to an edge and visibly walked the same
+// rows again. v1.2.31 therefore puts EVERY automatic reveal/focus/expand/collapse path behind the single
+// `experimentalScmTreeStateManagement` master switch, which defaults OFF. When it is off, activation does
+// not read the SCM database, start discovery timers, reveal Source Control, focus/select a row, or execute
+// any expand/collapse command. The rest of Better Git remains fully active.
 //
 // HOW the opt-in collapse works — the ONLY reliable command exposed to extensions (verified against,
 // src/vs/workbench/contrib/scm/):
@@ -160,14 +161,45 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
 //
 // CRITICAL CAVEAT #2 — TIMING / POPULATE: the git extension discovers repositories asynchronously after
 // window load, and the SCM tree must have the repo nodes present before there's anything to collapse.
-// So the startup path POLLS the git API until repositories appear (or a timeout), then collapses; and it
-// also listens (briefly, only during a startup window) for late-appearing worktrees so those get
-// collapsed too. All best-effort and wrapped in try/catch — if the command doesn't exist on an old host,
-// or the git API isn't ready, we no-op safely and never break activation.
+// The double-opt-in startup path waits for the repository count to settle and dispatches one collapse.
+// It deliberately has no retry timer or repository-open listener: a late repository stays under vanilla
+// VS Code control rather than restarting foreground UI automation.
 
 // The built-in command id that collapses all SCM repository/worktree section headers. Kept as a const so
 // there's a single source of truth and it's easy to find/grep.
 const SCM_COLLAPSE_ALL_REPOS_COMMAND = "workbench.scm.action.collapseAllRepositories";
+
+// This setting is deliberately read live rather than cached. Turning the experiment off while the optional
+// one-shot startup collapse is waiting cancels it before its next tree command. A reload remains the cleanest
+// way to let vanilla VS Code rebuild the tree, but no row walk or restoration task exists in this release.
+const experimentalScmTreeStateManagementEnabled = (): boolean =>
+    vscode.workspace
+        .getConfiguration("better-git-vscode")
+        .get<boolean>("experimentalScmTreeStateManagement", false);
+
+class ScmTreeExperimentDisabledError extends Error {
+    constructor() {
+        super("experimental Source Control tree-state management is disabled");
+        this.name = "ScmTreeExperimentDisabledError";
+    }
+}
+
+// Exposed read-only through the extension's tiny test API. This records only Better Git's experimental SCM
+// tree commands (never unrelated navigation commands), allowing the isolated-host regression to prove that
+// default/off activation is truly inert and that the double-opt-in collapse is dispatched exactly once.
+const scmTreeCommandTrace: string[] = [];
+
+const ensureScmTreeExperimentEnabled = (): void => {
+    if (!experimentalScmTreeStateManagementEnabled()) {
+        throw new ScmTreeExperimentDisabledError();
+    }
+};
+
+const executeScmTreeCommand = async <T = unknown>(command: string, ...args: unknown[]): Promise<T> => {
+    ensureScmTreeExperimentEnabled();
+    scmTreeCommandTrace.push(command);
+    return vscode.commands.executeCommand<T>(command, ...args);
+};
 
 // Reveal the Source Control view (required — see CAVEAT #1) then run the collapse-all-repositories
 // command. Returns true if the collapse command was dispatched without throwing. Fully defensive: any
@@ -181,12 +213,13 @@ const collapseScmRepositories = async (): Promise<boolean> => {
     try {
         // Must make SCM the active sidebar container first, otherwise the view action can't resolve its
         // target view and no-ops. This focuses the Source Control panel.
-        await vscode.commands.executeCommand("workbench.view.scm");
+        await executeScmTreeCommand("workbench.view.scm");
         // Now the collapse command has a live view to act on — collapses every repo/worktree header.
-        await vscode.commands.executeCommand(SCM_COLLAPSE_ALL_REPOS_COMMAND);
+        await executeScmTreeCommand(SCM_COLLAPSE_ALL_REPOS_COMMAND);
         return true;
     } catch {
-        // Old VS Code without this command id, or the view wasn't resolvable — do nothing, safely.
+        // Old VS Code without this command id, a view-resolution failure, or a setting toggled off between
+        // the reveal and collapse commands — do nothing, safely.
         return false;
     }
 };
@@ -225,7 +258,7 @@ const getPrimaryRepository = (): any | undefined => {
         }
         return repos[0]; // fallback: first-discovered repo is the closest proxy for "primary"
     } catch {
-        return undefined; // git API not ready / shape changed — caller treats undefined as "can't re-expand"
+        return undefined; // git API not ready / shape changed — navigation treats this as no repository
     }
 };
 
@@ -241,567 +274,90 @@ const getOpenRepositoryCount = (): number => {
     }
 };
 
-// VS Code 1.129 still writes the exact SCM tree to `scm.viewState2`, but its current async tree
-// reconstruction defaults every repository and resource group open before the saved collapsed nodes
-// can be reapplied (microsoft/vscode#322318). Merely stopping Better Git's old startup collapse therefore
-// prevents one reset but does not preserve a genuinely mixed tree. The small restoration layer below:
-//   1. reads the previous window's workbench-owned state before VS Code overwrites it on shutdown;
-//   2. remaps opaque `scmN` provider handles to the current vscode.git providers by repository root;
-//   3. drives VS Code's own SCM/list commands from a known all-collapsed baseline; and
-//   4. restores every Git repository and visible Git resource group to its previous open/closed state.
-//
-// There is no public API for reading or setting these collapse bits. On modern desktop hosts we use
-// Node's built-in read-only SQLite API, so no native dependency is shipped. Older hosts that do not expose
-// `node:sqlite` safely fall back to VS Code's native restoration (which worked on the extension's original
-// VS Code 1.83 baseline). The routine is limited to multi-repository Git views and refuses to normalize a
-// mixed-provider SCM tree because collapsing unknown providers without a way to restore them would lose state.
-
-const SCM_VIEW_STATE_STORAGE_KEY = "scm.viewState2";
-const SCM_VISIBLE_REPOSITORIES_STORAGE_KEY = "scm:view:visibleRepositories";
-const SCM_PROVIDER_ROOTS_WORKSPACE_STATE_KEY = "betterGit.scmProviderRootsById";
-
-interface StoredScmViewState {
-    expanded: string[];
-}
-
-interface ScmStartupSnapshot {
-    viewState: StoredScmViewState;
-    visibleRepositoryKeys?: string[];
-    activeViewletId?: string;
-    sidebarHidden: boolean;
-}
-
-interface InternalScmGroup {
-    id: string;
-    hideWhenEmpty?: boolean;
-    resourceStates: readonly unknown[];
-}
-
-interface InternalSourceControl {
-    handle: number;
-    id: string;
-    label: string;
-    rootUri?: vscode.Uri;
-}
-
-interface InternalGitRepository {
-    root: string;
-    sourceControl: InternalSourceControl;
-    mergeGroup?: InternalScmGroup;
-    indexGroup?: InternalScmGroup;
-    workingTreeGroup?: InternalScmGroup;
-    untrackedGroup?: InternalScmGroup;
-}
-
-interface StoredVisibleRepositories {
-    all: string[];
-    visible: number[];
-}
-
-interface ScmTreeRestoreOutcome {
-    restored: boolean;
-    reason?: string;
+// VS Code exposes one reliable all-repository operation but no public API for reading or setting an
+// individual repository/group disclosure node. v1.2.31 intentionally does not inspect workbench SQLite,
+// capture semantic copies, or drive generic `list.*` commands. Exact mixed-state restoration is withdrawn
+// until VS Code offers a node-specific contract that can be tested without selecting or walking rows.
+interface ScmTreeStartupOutcome {
+    changed: boolean;
+    reason: string;
 }
 
 interface BetterGitExtensionApi {
-    whenScmTreeStateSettled: Promise<ScmTreeRestoreOutcome>;
+    whenScmTreeStateSettled: Promise<ScmTreeStartupOutcome>;
+    getScmTreeCommandTrace(): readonly string[];
 }
 
-const waitForScmUi = (milliseconds: number): Promise<void> =>
-    new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-const parseStoredJson = <T>(value: unknown): T | undefined => {
-    if (typeof value !== "string" || value.length === 0) {
-        return undefined;
-    }
-    try {
-        return JSON.parse(value) as T;
-    } catch {
-        return undefined;
-    }
-};
-
-// `context.storageUri` is `<workspaceStorage>/<workspace-id>/<extension-id>`, while the workbench's
-// state.vscdb lives one directory above it. Open read-only so this never competes with VS Code's writer.
-const readScmStartupSnapshot = (context: vscode.ExtensionContext): ScmStartupSnapshot | undefined => {
-    const storageUri = context.storageUri;
-    if (!storageUri || storageUri.scheme !== "file") {
-        return undefined;
-    }
-    const databasePath = path.join(path.dirname(storageUri.fsPath), "state.vscdb");
-    if (!fs.existsSync(databasePath)) {
-        return undefined;
-    }
-
-    let database: any;
-    try {
-        // webpack leaves this optional modern-Node builtin external. Requiring it on an older extension
-        // host throws here and cleanly selects the native-restoration fallback described above.
-        const sqlite = require("node:sqlite") as any;
-        database = new sqlite.DatabaseSync(databasePath, { readOnly: true });
-        const statement = database.prepare("select value from ItemTable where key = ?");
-        const readValue = (key: string): unknown => statement.get(key)?.value;
-
-        const rawViewState = parseStoredJson<Partial<StoredScmViewState>>(
-            readValue(SCM_VIEW_STATE_STORAGE_KEY)
-        );
-        if (!rawViewState || !Array.isArray(rawViewState.expanded) ||
-            !rawViewState.expanded.every((id) => typeof id === "string")) {
-            return undefined;
-        }
-
-        const repositoryState = parseStoredJson<Partial<StoredVisibleRepositories>>(
-            readValue(SCM_VISIBLE_REPOSITORIES_STORAGE_KEY)
-        );
-        const visibleRepositoryKeys = Array.isArray(repositoryState?.all) &&
-            repositoryState!.all.every((key) => typeof key === "string") &&
-            Array.isArray(repositoryState?.visible) &&
-            repositoryState!.visible.every((index) => Number.isInteger(index))
-            ? repositoryState!.visible
-                .map((index) => repositoryState!.all![index])
-                .filter((key): key is string => typeof key === "string")
-            : undefined;
-
-        const activeViewletId = readValue("workbench.sidebar.activeviewletid");
-        return {
-            viewState: { expanded: [...rawViewState.expanded] },
-            visibleRepositoryKeys,
-            activeViewletId: typeof activeViewletId === "string" ? activeViewletId : undefined,
-            sidebarHidden: readValue("workbench.sideBar.hidden") === "true",
-        };
-    } catch (error) {
-        debugLog("scm-state", `saved state unavailable: ${String(error)}`);
-        return undefined;
-    } finally {
-        try {
-            database?.close();
-        } catch {
-            // Read-only best effort; never let a close failure affect extension activation.
-        }
-    }
-};
-
-const getInternalGitRepositories = async (): Promise<InternalGitRepository[]> => {
-    try {
-        const extension = vscode.extensions.getExtension<any>("vscode.git");
-        if (!extension) {
-            return [];
-        }
-        const exports = extension.isActive ? extension.exports : await extension.activate();
-        const repositories = exports?.model?.repositories;
-        return Array.isArray(repositories) ? repositories as InternalGitRepository[] : [];
-    } catch {
-        return [];
-    }
-};
-
-const scmProviderId = (repository: InternalGitRepository): string =>
-    `scm${repository.sourceControl.handle}`;
-
-const scmProviderStorageKey = (repository: InternalGitRepository): string => {
-    const sourceControl = repository.sourceControl;
-    const rootUri = sourceControl.rootUri ?? vscode.Uri.file(repository.root);
-    return `${sourceControl.id}:${sourceControl.label}:${rootUri.toString()}`;
-};
-
-const normalizedRepositoryRoot = (value: string): string => {
-    try {
-        const uri = vscode.Uri.parse(value);
-        return uri.scheme === "file" ? uri.fsPath.toLowerCase() : uri.toString().toLowerCase();
-    } catch {
-        return value.toLowerCase();
-    }
-};
-
-const visibleScmGroups = (repository: InternalGitRepository): InternalScmGroup[] =>
-    [repository.mergeGroup, repository.indexGroup, repository.workingTreeGroup, repository.untrackedGroup]
-        .filter((group): group is InternalScmGroup =>
-            !!group && (!group.hideWhenEmpty || group.resourceStates.length > 0)
-        );
-
-const orderVisibleGitRepositories = (
-    repositories: InternalGitRepository[],
-    visibleRepositoryKeys?: string[]
-): InternalGitRepository[] => {
-    if (!visibleRepositoryKeys || visibleRepositoryKeys.length === 0) {
-        return [...repositories].sort((left, right) =>
-            left.sourceControl.handle - right.sourceControl.handle
-        );
-    }
-    const byStorageKey = new Map(repositories.map((repository) => [
-        scmProviderStorageKey(repository),
-        repository,
-    ]));
-    return visibleRepositoryKeys
-        .map((key) => byStorageKey.get(key))
-        .filter((repository): repository is InternalGitRepository => !!repository);
-};
-
-const remapExpandedScmIds = (
-    expandedIds: readonly string[],
-    repositories: InternalGitRepository[],
-    previousProviderRoots: Record<string, string>
-): Set<string> => {
-    const currentByProviderId = new Map(repositories.map((repository) => [
-        scmProviderId(repository),
-        repository,
-    ]));
-    const currentByRoot = new Map(repositories.map((repository) => [
-        normalizedRepositoryRoot((repository.sourceControl.rootUri ?? vscode.Uri.file(repository.root)).toString()),
-        repository,
-    ]));
-    const remapped = new Set<string>();
-
-    for (const id of expandedIds) {
-        const match = /^(repo:|resourceGroup:)(scm\d+)(\/.*)?$/.exec(id);
-        if (!match) {
-            continue;
-        }
-        const [, prefix, previousProviderId, suffix = ""] = match;
-        const previousRoot = previousProviderRoots[previousProviderId];
-        const repository = previousRoot
-            ? currentByRoot.get(normalizedRepositoryRoot(previousRoot))
-            : currentByProviderId.get(previousProviderId);
-        if (repository) {
-            remapped.add(`${prefix}${scmProviderId(repository)}${suffix}`);
-        }
-    }
-    return remapped;
-};
-
-const restoreSidebarAfterScmState = async (snapshot: ScmStartupSnapshot): Promise<void> => {
-    try {
-        if (snapshot.activeViewletId && snapshot.activeViewletId !== "workbench.view.scm") {
-            const commands = await vscode.commands.getCommands(true);
-            if (commands.includes(snapshot.activeViewletId)) {
-                await vscode.commands.executeCommand(snapshot.activeViewletId);
-            }
-        }
-        if (snapshot.sidebarHidden) {
-            await vscode.commands.executeCommand("workbench.action.toggleSidebarVisibility");
-        } else {
-            await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
-        }
-    } catch {
-        // Restoring focus is cosmetic; the saved SCM expansion state is the important result.
-    }
-};
-
-const collapseAllScmRepositoryHeaders = async (
-    repositories: InternalGitRepository[]
-): Promise<void> => {
-    if (repositories.length === 0) {
-        return;
-    }
-    await vscode.commands.executeCommand(SCM_COLLAPSE_ALL_REPOS_COMMAND);
-    await waitForScmUi(700);
-
-    // `SCMViewPane.focus()` prefers the first rendered commit-input widget when the tree has no current
-    // focus. That leaves ListService.lastFocusedList pointing somewhere else, so every generic `list.*`
-    // command below can silently no-op. Once every repository header is collapsed there are no rendered
-    // commit inputs; focusing the SCM view therefore has only one possible target: its Changes tree.
-    // VS Code's queued tree operations outlive executeCommand, so keep a settle window before addressing rows.
-    await vscode.commands.executeCommand("workbench.scm.focus");
-    await waitForScmUi(350);
-};
-
-const focusCollapsedScmRepository = async (
-    repositories: InternalGitRepository[],
-    repositoryIndex: number
-): Promise<void> => {
-    // With every repository header collapsed, the visible top-level rows are unambiguous. Focus the first
-    // header and walk down to the exact saved-order index. Do not use `list.select`: in VS Code's tree command
-    // implementation that command toggles the focused node's disclosure state, but it does NOT invoke
-    // SCMViewPane.open() and therefore does not change scmViewService.focusedRepository.
-    await collapseAllScmRepositoryHeaders(repositories);
-    await vscode.commands.executeCommand("list.focusFirst");
-    await waitForScmUi(350);
-    for (let index = 1; index <= repositoryIndex; index++) {
-        await vscode.commands.executeCommand("list.focusDown");
-        await waitForScmUi(350);
-    }
-};
-
-const restoreScmTreeState = async (
-    snapshot: ScmStartupSnapshot,
-    repositories: InternalGitRepository[],
-    desiredExpanded: Set<string>
-): Promise<ScmTreeRestoreOutcome> => {
-    let mutatedTree = false;
-    try {
-        await vscode.commands.executeCommand("workbench.view.scm");
-
-        const groupsByRepository = new Map(repositories.map((repository) => [
-            repository,
-            visibleScmGroups(repository),
-        ]));
-
-        // Each normalization pass first collapses every repository header and only then focuses the SCM view.
-        // The ordering matters: with an expanded repository, VS Code may focus its commit input instead of the
-        // tree; with all headers closed, `workbench.scm.focus` deterministically calls tree.domFocus(). The tree
-        // operation sequencer and AsyncDataTree expansion promises outlive executeCommand, so each step below has
-        // a conservative bounded settle window. The integration harness validates the workbench's flushed database
-        // after the isolated window closes; SQLite itself is not a live acknowledgement channel during the session.
-
-        for (let repositoryIndex = 0; repositoryIndex < repositories.length; repositoryIndex++) {
-            const repository = repositories[repositoryIndex];
-            const groups = groupsByRepository.get(repository) ?? [];
-
-            // Normalize this repository and all of its descendants without relying on
-            // scmViewService.focusedRepository. Expanding first ensures the async tree has materialized its
-            // children; recursive collapse then closes the header, every group, and every resource folder.
-            await focusCollapsedScmRepository(repositories, repositoryIndex);
-            await vscode.commands.executeCommand("list.expand");
-            await waitForScmUi(650);
-            await vscode.commands.executeCommand("list.collapseAllToFocus");
-            await waitForScmUi(650);
-            mutatedTree = true;
-
-            if (groups.length === 0) {
-                continue;
-            }
-
-            // Reopen only the repository header temporarily. All group rows are now collapsed and adjacent
-            // at the end of its child list. With every other repository header collapsed, list.focusLast plus
-            // one focusUp per later repository lands exactly on this repository's last group, regardless of
-            // whether an SCM input box or action button precedes the groups.
-            await vscode.commands.executeCommand("list.expand");
-            await waitForScmUi(650);
-            await vscode.commands.executeCommand("list.focusLast");
-            await waitForScmUi(350);
-            for (let laterRepository = repositoryIndex + 1;
-                laterRepository < repositories.length;
-                laterRepository++) {
-                await vscode.commands.executeCommand("list.focusUp");
-                await waitForScmUi(250);
-            }
-
-            const reversedGroups = [...groups].reverse();
-            for (let groupIndex = 0; groupIndex < reversedGroups.length; groupIndex++) {
-                const group = reversedGroups[groupIndex];
-                const groupId = `resourceGroup:${scmProviderId(repository)}/${group.id}`;
-                if (desiredExpanded.has(groupId)) {
-                    await vscode.commands.executeCommand("list.expand");
-                    await waitForScmUi(450);
-                }
-                if (groupIndex + 1 < reversedGroups.length) {
-                    await vscode.commands.executeCommand("list.focusUp");
-                    await waitForScmUi(250);
-                }
-            }
-        }
-
-        // Repository collapse is non-recursive and therefore preserves the group bits just restored. With
-        // every header closed, focusLast/focusUp has an unambiguous row sequence; validate each focus change
-        // through a bottom-to-top row walk before expanding only the saved-open headers.
-        await collapseAllScmRepositoryHeaders(repositories);
-        mutatedTree = true;
-
-        const reversedRepositories = [...repositories].reverse();
-        await vscode.commands.executeCommand("list.focusLast");
-        await waitForScmUi(400);
-        for (let index = 0; index < reversedRepositories.length; index++) {
-            const repository = reversedRepositories[index];
-            const repositoryId = `repo:${scmProviderId(repository)}`;
-            if (desiredExpanded.has(repositoryId)) {
-                await vscode.commands.executeCommand("list.expand");
-                await waitForScmUi(500);
-            }
-            if (index + 1 < reversedRepositories.length) {
-                await vscode.commands.executeCommand("list.focusUp");
-                await waitForScmUi(400);
-            }
-        }
-        await waitForScmUi(800);
-
-        debugLog("scm-state", `restored ${desiredExpanded.size} expanded nodes`);
-        return { restored: true };
-    } catch (error) {
-        debugLog("scm-state", `restore failed: ${String(error)}`);
-        if (mutatedTree) {
-            // Avoid leaving an all-collapsed panel if a host command changed unexpectedly mid-restore.
-            try {
-                await vscode.commands.executeCommand("workbench.scm.action.expandAllRepositories");
-            } catch {
-                // Best effort only.
-            }
-        }
-        return { restored: false, reason: String(error) };
-    } finally {
-        await restoreSidebarAfterScmState(snapshot);
-    }
-};
-
-const runRestoreScmTreeStateOnStartup = (
+// The only automatic behavior still available is a double opt-in, one-shot collapse-all. The master
+// experiment and the legacy startup-collapse setting must both be true. Discovery is observed read-only;
+// after the repository count is stable, Better Git reveals SCM and invokes the built-in collapse command
+// exactly once. There are no retry timers, repository-open listeners, row selection, or traversal commands.
+const runExperimentalScmStartup = (
     context: vscode.ExtensionContext
-): Promise<ScmTreeRestoreOutcome> => {
-    const forceCollapse = vscode.workspace
-        .getConfiguration("better-git-vscode")
-        .get<boolean>("collapseWorktreesOnStartup", false);
-    if (forceCollapse) {
-        // The explicit legacy override intentionally replaces, rather than restores, this state.
-        return Promise.resolve({ restored: false, reason: "legacy collapse enabled" });
+): Promise<ScmTreeStartupOutcome> => {
+    const autoCollapseEnabled = (): boolean => experimentalScmTreeStateManagementEnabled() &&
+        vscode.workspace
+            .getConfiguration("better-git-vscode")
+            .get<boolean>("collapseWorktreesOnStartup", false);
+
+    if (!experimentalScmTreeStateManagementEnabled()) {
+        return Promise.resolve({
+            changed: false,
+            reason: "experimental Source Control tree-state management disabled",
+        });
+    }
+    if (!autoCollapseEnabled()) {
+        return Promise.resolve({
+            changed: false,
+            reason: "automatic Source Control collapse disabled",
+        });
     }
 
-    // Capture synchronously during activation: VS Code still has the previous window's value in the DB.
-    const snapshot = readScmStartupSnapshot(context);
-    const previousProviderRoots = context.workspaceState.get<Record<string, string>>(
-        SCM_PROVIDER_ROOTS_WORKSPACE_STATE_KEY,
-        {}
-    );
+    let disposed = false;
+    context.subscriptions.push(new vscode.Disposable(() => {
+        disposed = true;
+    }));
 
-    const task = (async () => {
-        let repositories: InternalGitRepository[] = [];
-        for (let attempt = 0; attempt < 40; attempt++) {
-            repositories = await getInternalGitRepositories();
-            if (repositories.length >= 2 && repositories.every((repository) =>
-                Number.isInteger(repository.sourceControl?.handle)
-            )) {
+    return (async () => {
+        const deadline = Date.now() + 12000;
+        let lastRepositoryCount = -1;
+        let stableSince = 0;
+
+        while (!disposed && autoCollapseEnabled() && Date.now() < deadline) {
+            const repositoryCount = getOpenRepositoryCount();
+            if (repositoryCount !== lastRepositoryCount) {
+                lastRepositoryCount = repositoryCount;
+                stableSince = Date.now();
+            }
+            if (repositoryCount >= 2 && Date.now() - stableSince >= 1400) {
                 break;
             }
-            await waitForScmUi(250);
-        }
-        if (repositories.length < 2) {
-            return { restored: false, reason: "fewer than two Git repositories" };
+            await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
-        const providerRoots = Object.fromEntries(repositories.map((repository) => [
-            scmProviderId(repository),
-            (repository.sourceControl.rootUri ?? vscode.Uri.file(repository.root)).toString(),
-        ]));
-        await context.workspaceState.update(SCM_PROVIDER_ROOTS_WORKSPACE_STATE_KEY, providerRoots);
-
-        // The first time Better Git sees a workspace there may be no prior tree value to restore. Still save
-        // this launch's provider-root map above so the very next restart can remap handles even if discovery
-        // order changes between those first two launches.
-        if (!snapshot) {
-            return { restored: false, reason: "saved SCM state unavailable" };
+        if (disposed || !autoCollapseEnabled() || lastRepositoryCount < 2) {
+            return {
+                changed: false,
+                reason: "collapse cancelled or fewer than two repositories",
+            };
         }
 
-        // The saved repository service state is the exact visible tree order. A non-Git entry means
-        // list.collapseAll would also mutate a provider we cannot reconstruct, so leave native state alone.
-        if (snapshot.visibleRepositoryKeys?.some((key) => !key.startsWith("git:Git:"))) {
-            debugLog("scm-state", "skipped mixed-provider SCM tree");
-            return { restored: false, reason: "mixed-provider SCM tree" };
-        }
-        const visibleRepositories = orderVisibleGitRepositories(
-            repositories,
-            snapshot.visibleRepositoryKeys
-        );
-        if (visibleRepositories.length < 2) {
-            return { restored: false, reason: "fewer than two visible Git repositories" };
+        // Git discovery can settle before the SCM tree completes its queued render. Wait once, re-check
+        // both opt-ins, then issue the one supported mutation. Never retry: repeated foreground commands
+        // are the exact v1.2.30 loop this release contains.
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        if (disposed || !autoCollapseEnabled()) {
+            return { changed: false, reason: "collapse cancelled" };
         }
 
-        const currentProviderIds = new Set(repositories.map(scmProviderId));
-        if (snapshot.viewState.expanded.some((id) => {
-            const match = /^(?:repo:|resourceGroup:)(scm\d+)/.exec(id);
-            return match && !currentProviderIds.has(match[1]) && !previousProviderRoots[match[1]];
-        })) {
-            debugLog("scm-state", "skipped SCM tree containing an unmapped provider");
-            return { restored: false, reason: "SCM tree contains an unmapped provider" };
-        }
-
-        const desiredExpanded = remapExpandedScmIds(
-            snapshot.viewState.expanded,
-            visibleRepositories,
-            previousProviderRoots
-        );
-
-        // Current VS Code finishes its async repository/group reconstruction a few seconds after
-        // onStartupFinished. Restore once that default-expansion race has settled.
-        await waitForScmUi(3600);
-        return restoreScmTreeState(snapshot, visibleRepositories, desiredExpanded);
-    })();
-
-    // Activation stays non-blocking. The small returned API gives the isolated integration driver an exact
-    // completion signal instead of guessing how long cold repository discovery and queued tree commands take.
-    return task.catch((error) => {
-        debugLog("scm-state", `startup task failed: ${String(error)}`);
-        return { restored: false, reason: String(error) };
+        const collapsed = await collapseScmRepositories();
+        return collapsed
+            ? { changed: true, reason: "collapsed once after discovery settled" }
+            : { changed: false, reason: "collapse command unavailable or experiment disabled" };
+    })().catch((error): ScmTreeStartupOutcome => {
+        debugLog("scm-state", `startup collapse failed: ${String(error)}`);
+        return { changed: false, reason: String(error) };
     });
-};
-
-// The auto-on-startup routine. Gated by the `collapseWorktreesOnStartup` setting (default FALSE in v1.2.30
-// so VS Code's exact native per-workspace SCM tree state survives restarts)
-// and by there being ≥2 repositories (a single repo isn't the "lots of expanded
-// worktrees" annoyance, and we don't want to steal focus / hide the only repo's changes for it). Because repos
-// populate async, we POLL for them, then collapse. We ALSO briefly watch `onDidOpenRepository` so worktrees
-// that finish opening AFTER our first collapse still get folded — but only within a short startup window, so
-// opening a repo later in the session (deliberately) never yanks its section closed under the user.
-const runCollapseWorktreesOnStartup = (context: vscode.ExtensionContext): void => {
-    // Fallback matches the package.json default (false). The manual
-    // 'collapse-worktrees' command still works regardless of this setting.
-    const enabled = vscode.workspace
-        .getConfiguration("better-git-vscode")
-        .get<boolean>("collapseWorktreesOnStartup", false);
-    if (!enabled) {
-        return; // user opted out — never auto-collapse, but the manual command still works
-    }
-
-    let done = false; // guard so we collapse at most once from the poll loop
-    const MIN_REPOS_TO_COLLAPSE = 2; // only the multi-worktree case; leave single-repo windows alone
-    const POLL_INTERVAL_MS = 400; // how often to re-check for populated repos
-    const MAX_POLLS = 25; // ~10s ceiling — enough for git to discover worktrees on a cold reload
-
-    // Poll until repos have populated (≥2), then collapse once. If they never reach 2 within the window we
-    // simply give up (a 0/1-repo window has no worktree pile-up to tidy).
-    let polls = 0;
-    const timer = setInterval(async () => {
-        polls++;
-        if (done) {
-            clearInterval(timer);
-            return;
-        }
-        if (getOpenRepositoryCount() >= MIN_REPOS_TO_COLLAPSE) {
-            done = true;
-            clearInterval(timer);
-            // Plain collapse-all: no primary re-expand and no preview-tab side effect.
-            await collapseScmRepositories();
-            // v1.2.11 — RELIABLE COLLAPSE ON EXTENSION-HOST RESTART. activate() re-runs on "Developer: Restart
-            // Extension Host", so this routine already fires then — BUT on a restart the SCM view is
-            // simultaneously re-rendering from its persisted state and can RE-EXPAND the sections a beat after
-            // our single collapse lands, silently undoing it (Ethan: "on restart of extensions also make it run
-            // the collapse"). Fix: re-fire the collapse a few times over the first ~1.6s to win that race so the
-            // fold sticks. Re-collapsing already-collapsed sections is a harmless no-op; unlike the retired
-            // keep-primary-expanded hack, these repeats never open or replace an editor tab.
-            for (const delayMs of [300, 800, 1600]) {
-                const t = setTimeout(() => void collapseScmRepositories(), delayMs);
-                context.subscriptions.push(new vscode.Disposable(() => clearTimeout(t)));
-            }
-        } else if (polls >= MAX_POLLS) {
-            clearInterval(timer); // timed out — no multi-worktree situation, nothing to do
-        }
-    }, POLL_INTERVAL_MS);
-    // Make sure the poll timer is torn down if the extension deactivates mid-poll.
-    context.subscriptions.push(new vscode.Disposable(() => clearInterval(timer)));
-
-    // Startup window listener: worktrees that open shortly AFTER the first collapse (git discovers repos
-    // in waves) should also be folded. We only honour this for a short window after activation so that
-    // opening a repo deliberately later in the session isn't collapsed out from under the user.
-    const STARTUP_WINDOW_MS = 12000; // re-collapse late worktrees for ~12s after activation, then stop
-    const activatedAt = Date.now();
-    try {
-        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
-        if (git?.onDidOpenRepository) {
-            let reCollapseTimer: ReturnType<typeof setTimeout> | undefined;
-            const sub = git.onDidOpenRepository(() => {
-                if (Date.now() - activatedAt > STARTUP_WINDOW_MS) {
-                    return; // past the startup window — respect the user's manual repo opens
-                }
-                // Debounce: several worktrees can open in the same tick; collapse once after they settle.
-                if (reCollapseTimer) {
-                    clearTimeout(reCollapseTimer);
-                }
-                reCollapseTimer = setTimeout(() => {
-                    // Late worktree opened -> repeat the same plain collapse-all after discovery settles.
-                    void collapseScmRepositories();
-                }, 600);
-            });
-            context.subscriptions.push(sub);
-        }
-    } catch {
-        // git API not available / different shape — the poll loop above is the primary path anyway.
-    }
 };
 
 // Resolve the selected Source Control file from the argument shapes VS Code uses for resource context-menu
@@ -940,6 +496,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // plain collapse has none of that. v1.2.26 makes the startup path use this exact same clean behavior. No
     // ≥2-repo gate — if you ask for it explicitly, we act on whatever's there.
     let disposable14 = vscode.commands.registerCommand("better-git-vscode.collapse-worktrees", async () => {
+        if (!experimentalScmTreeStateManagementEnabled()) {
+            vscode.window.showInformationMessage(
+                "Better Git: Enable Experimental Source Control tree-state management before using this command."
+            );
+            return;
+        }
         await collapseScmRepositories();
     });
 
@@ -1303,13 +865,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
     });
 
-    // Restore the exact saved repository/group tree on current VS Code, whose native async SCM rebuild
-    // currently reopens collapsed nodes. An explicit legacy auto-collapse setting skips this restoration.
-    const whenScmTreeStateSettled = runRestoreScmTreeStateOnStartup(context);
-
-    // Kick off the opt-in legacy collapse-worktrees-on-startup routine (gated by setting + ≥2 repos).
-    // This is async and self-tearing-down; it does NOT block activation.
-    runCollapseWorktreesOnStartup(context);
+    // Default/off activation resolves synchronously without touching Source Control. The only enabled startup
+    // behavior is the double-opt-in, one-shot built-in collapse; there is no exact-state restoration path.
+    const whenScmTreeStateSettled = runExperimentalScmStartup(context);
 
     context.subscriptions.push(
         disposable, disposable2, disposable3, disposable4, disposable5, disposable6, disposable7, disposable8,
@@ -1326,7 +884,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         vscode.window.onDidChangeActiveTextEditor(() => refreshReviewDecoration())
     );
 
-    return { whenScmTreeStateSettled };
+    return {
+        whenScmTreeStateSettled,
+        getScmTreeCommandTrace: () => [...scmTreeCommandTrace],
+    };
 }
 
 // Returns the on-disk file: URI of the diff currently open in the active tab (resolving a staged diff's

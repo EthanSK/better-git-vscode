@@ -2,25 +2,44 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const extensionDevelopmentPath = path.resolve(scriptDirectory, '..');
 const driverSourcePath = path.join(scriptDirectory, 'scm-state-test-driver.cjs');
-const expectedOutcome = process.argv.includes('--expect-reset') ? 'reset' : 'preserved';
+const windowPlacementScriptPath = path.join(scriptDirectory, 'place-vscode-window-on-macbook.swift');
+const screenshotHelperPath = '/Users/ethansarif-kattan/.codex/skills/screenshot/scripts/take_screenshot.py';
+const expectedMode = process.argv.includes('--expect-disabled')
+  ? 'disabled'
+  : process.argv.includes('--expect-enabled-inert')
+    ? 'enabled-inert'
+    : process.argv.includes('--expect-collapse')
+      ? 'collapse'
+      : null;
+const repositoryCount = 8;
 const vscodeExecutablePath = process.env.BGV_VSCODE_EXECUTABLE_PATH
   ?? '/Applications/Visual Studio Code.app/Contents/MacOS/Code';
 
+if (!expectedMode) {
+  throw new Error(
+    'Choose exactly one mode: --expect-disabled, --expect-enabled-inert, or --expect-collapse'
+  );
+}
 if (!fs.existsSync(vscodeExecutablePath)) {
   throw new Error(`VS Code executable not found: ${vscodeExecutablePath}`);
 }
 
-// VS Code places its instance IPC socket under --user-data-dir. macOS caps Unix-domain socket
-// paths at 103 characters, while os.tmpdir() expands to a long /var/folders/... path, so keep this
-// deliberately short or the isolated host fails before the test runner can start.
+// VS Code places its IPC socket under --user-data-dir. macOS caps Unix-domain socket paths at 103
+// characters, so use a deliberately short fixture path instead of os.tmpdir()'s long /var/folders path.
 const testRoot = fs.mkdtempSync('/tmp/bgv-scm-');
+const evidenceDirectory = process.env.BGV_SCM_STATE_EVIDENCE_DIR ?? testRoot;
+fs.mkdirSync(evidenceDirectory, { recursive: true });
 const mainRepositoryPath = path.join(testRoot, 'main-repository');
-const linkedWorktreePath = path.join(testRoot, 'linked-worktree');
+const linkedWorktreePaths = Array.from(
+  { length: repositoryCount - 1 },
+  (_, index) => path.join(testRoot, `linked-worktree-${index + 1}`)
+);
+const repositoryPaths = [...linkedWorktreePaths, mainRepositoryPath];
 const userDataPath = path.join(testRoot, 'user-data');
 const extensionsPath = path.join(testRoot, 'extensions');
 const workspacePath = path.join(testRoot, 'scm-state.code-workspace');
@@ -33,16 +52,28 @@ function createFixture() {
   git(mainRepositoryPath, 'config', 'user.email', 'scm-state-test@local.invalid');
   git(mainRepositoryPath, 'config', 'user.name', 'Better Git SCM State Test');
   git(mainRepositoryPath, 'config', 'commit.gpgsign', 'false');
-  git(mainRepositoryPath, 'worktree', 'add', '--quiet', '-b', 'state-test-linked', linkedWorktreePath, 'HEAD');
 
-  // Give the main repository both Staged Changes and Changes, and the linked worktree a Changes
-  // group, without inventing fixture contents or depending on shell redirection.
-  git(mainRepositoryPath, 'rm', '--quiet', 'LICENSE');
-  git(mainRepositoryPath, 'mv', 'CONTRIBUTING.md', 'CONTRIBUTING-state-test.md');
-  git(mainRepositoryPath, 'restore', '--staged', 'CONTRIBUTING.md', 'CONTRIBUTING-state-test.md');
-  git(linkedWorktreePath, 'rm', '--quiet', 'LICENSE');
-  git(linkedWorktreePath, 'mv', 'README.md', 'README-state-test.md');
-  git(linkedWorktreePath, 'restore', '--staged', 'README.md', 'README-state-test.md');
+  for (const [index, worktreePath] of linkedWorktreePaths.entries()) {
+    git(
+      mainRepositoryPath,
+      'worktree',
+      'add',
+      '--quiet',
+      '-b',
+      `state-test-linked-${index + 1}`,
+      worktreePath,
+      'HEAD'
+    );
+  }
+
+  // The original two-repository fixture missed the production loop. Keep eight live repositories and give
+  // every repository both Staged Changes and Changes groups so the screenshots expose accidental row walking.
+  for (const [index, repositoryPath] of repositoryPaths.entries()) {
+    git(repositoryPath, 'rm', '--quiet', 'LICENSE');
+    const renamedReadme = `README-state-test-${index + 1}.md`;
+    git(repositoryPath, 'mv', 'README.md', renamedReadme);
+    git(repositoryPath, 'restore', '--staged', 'README.md', renamedReadme);
+  }
 
   fs.mkdirSync(userDataPath, { recursive: true });
   fs.mkdirSync(extensionsPath, { recursive: true });
@@ -58,22 +89,30 @@ function createFixture() {
     main: './extension.cjs',
   }, null, 2));
   fs.writeFileSync(workspacePath, JSON.stringify({
-    folders: [
-      { name: 'SCM state linked worktree', path: linkedWorktreePath },
-      { name: 'SCM state main', path: mainRepositoryPath },
-    ],
+    folders: repositoryPaths.map((repositoryPath, index) => ({
+      name: index === repositoryPaths.length - 1
+        ? 'SCM state main'
+        : `SCM state linked worktree ${index + 1}`,
+      path: repositoryPath,
+    })),
     settings: {
       'git.openRepositoryInParentFolders': 'never',
       'security.workspace.trust.enabled': false,
       'workbench.startupEditor': 'none',
-      'better-git-vscode.collapseWorktreesOnStartup': expectedOutcome === 'reset',
+      'better-git-vscode.experimentalScmTreeStateManagement': expectedMode !== 'disabled',
+      'better-git-vscode.collapseWorktreesOnStartup': expectedMode === 'collapse',
     },
   }, null, 2));
 }
 
 async function runPhase(phase) {
   const resultFile = path.join(testRoot, `${phase}-result.json`);
+  const placementFile = path.join(testRoot, `${phase}-window-placement.txt`);
+  const closeFile = path.join(testRoot, `${phase}-close-window`);
   fs.rmSync(resultFile, { force: true });
+  fs.rmSync(placementFile, { force: true });
+  fs.rmSync(closeFile, { force: true });
+
   const args = [
     workspacePath,
     `--user-data-dir=${userDataPath}`,
@@ -95,7 +134,11 @@ async function runPhase(phase) {
       env: {
         ...process.env,
         BGV_SCM_STATE_TEST_PHASE: phase,
+        BGV_SCM_STATE_TEST_MODE: expectedMode,
+        BGV_SCM_STATE_TEST_EXPECTED_REPOSITORIES: String(repositoryCount),
         BGV_SCM_STATE_TEST_RESULT_FILE: resultFile,
+        BGV_SCM_STATE_TEST_PLACEMENT_FILE: placementFile,
+        BGV_SCM_STATE_TEST_CLOSE_FILE: closeFile,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -110,16 +153,37 @@ async function runPhase(phase) {
       }
       phaseReported = true;
       clearInterval(resultPoll);
-      // The driver writes its result immediately before closing the isolated window. Give VS Code's
-      // onWillSaveState/storage flush time to finish, then stop the otherwise-headless main process
-      // that Electron can leave alive after its last window and extension host have exited.
+      try {
+        const placement = fs.readFileSync(placementFile, 'utf8');
+        const windowId = /^window=(\d+)$/m.exec(placement)?.[1];
+        assert.ok(windowId, `missing numeric window id in placement proof: ${placement}`);
+        const screenshotPath = path.join(
+          evidenceDirectory,
+          `scm-state-${expectedMode}-${phase}-w${windowId}.png`
+        );
+        const captureOutput = execFileSync(
+          'python3',
+          [screenshotHelperPath, '--window-id', windowId, '--path', screenshotPath],
+          { encoding: 'utf8', timeout: 15000 }
+        ).trim();
+        console.log(`[scm-state-test] ${phase} screenshot=${captureOutput}`);
+        fs.writeFileSync(closeFile, 'captured');
+      } catch (error) {
+        fs.writeFileSync(closeFile, 'capture-failed');
+        child.kill('SIGTERM');
+        reject(new Error(`Could not capture ${phase} VS Code window: ${String(error)}`));
+        return;
+      }
+      // The driver now owns only the isolated window. Give its close/storage handshake time to finish, then
+      // stop the otherwise-headless main process Electron can leave after the last isolated window exits.
       settleTimer = setTimeout(() => child.kill('SIGTERM'), 2000);
     }, 100);
+
     const timeout = setTimeout(() => {
       clearInterval(resultPoll);
       child.kill('SIGTERM');
-      reject(new Error(`VS Code ${phase} phase did not exit within 30 seconds`));
-    }, 30000);
+      reject(new Error(`VS Code ${phase} phase did not exit within 60 seconds`));
+    }, 60000);
     child.once('error', error => {
       clearTimeout(timeout);
       clearInterval(resultPoll);
@@ -140,142 +204,109 @@ async function runPhase(phase) {
         ));
       }
     });
+
+    try {
+      const placement = execFileSync(
+        'swift',
+        [windowPlacementScriptPath, String(child.pid)],
+        { encoding: 'utf8', timeout: 15000 }
+      ).trim();
+      console.log(`[scm-state-test] ${phase} MacBook placement\n${placement}`);
+      fs.writeFileSync(placementFile, placement);
+    } catch (error) {
+      child.kill('SIGTERM');
+      reject(new Error(`Could not place ${phase} VS Code window on the MacBook display: ${String(error)}`));
+    }
   });
 
   assert.ok(fs.existsSync(resultFile), `${phase} driver did not write a result file`);
   const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
   assert.equal(result.ok, true, `${phase} driver failed: ${result.error ?? 'unknown error'}`);
   console.log(`[scm-state-test] ${phase} repository order=${JSON.stringify(result.repositoryRoots)}`);
+  console.log(`[scm-state-test] ${phase} settled trace=${JSON.stringify(result.traceAtSettlement)}`);
+  console.log(`[scm-state-test] ${phase} watchdog trace=${JSON.stringify(result.traceAfterWatchdog)}`);
   return result;
 }
 
-function findWorkspaceDatabase() {
-  const workspaceStoragePath = path.join(userDataPath, 'User', 'workspaceStorage');
-  const workspaceUri = pathToFileURL(workspacePath).toString();
-  for (const entry of fs.readdirSync(workspaceStoragePath, { withFileTypes: true })) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    for (const metadataName of ['workspace.json', 'meta.json']) {
-      const metadataPath = path.join(workspaceStoragePath, entry.name, metadataName);
-      if (!fs.existsSync(metadataPath)) {
-        continue;
-      }
-      const metadata = fs.readFileSync(metadataPath, 'utf8');
-      const databasePath = path.join(workspaceStoragePath, entry.name, 'state.vscdb');
-      if ((metadata.includes(workspaceUri) || metadata.includes(workspacePath)) && fs.existsSync(databasePath)) {
-        return databasePath;
-      }
-    }
-  }
-  throw new Error(`Could not find workspace state database for ${workspacePath}`);
-}
-
-function readViewState(databasePath) {
-  const value = execFileSync(
-    'sqlite3',
-    ['-readonly', databasePath, "select value from ItemTable where key='scm.viewState2';"],
-    { encoding: 'utf8' }
-  ).trim();
-  assert.ok(value, 'VS Code did not persist scm.viewState2');
-  const viewState = JSON.parse(value);
-  assert.ok(Array.isArray(viewState.expanded), 'scm.viewState2.expanded must be an array');
-  assert.ok(Array.isArray(viewState.focus), 'scm.viewState2.focus must be an array');
-  assert.ok(Array.isArray(viewState.selection), 'scm.viewState2.selection must be an array');
-  return viewState;
-}
-
-function writeViewState(databasePath, viewState) {
-  const value = JSON.stringify(viewState).replaceAll("'", "''");
-  execFileSync(
-    'sqlite3',
-    [databasePath, `update ItemTable set value='${value}' where key='scm.viewState2';`],
-    { stdio: 'pipe' }
-  );
-}
-
-function seedMixedViewState(databasePath, seededPhase) {
-  const linkedProvider = seededPhase.repositoryProviders.find(
-    provider => provider.root === linkedWorktreePath
-  );
-  const mainProvider = seededPhase.repositoryProviders.find(
-    provider => provider.root === mainRepositoryPath
-  );
-  assert.ok(linkedProvider, `linked provider missing: ${JSON.stringify(seededPhase.repositoryProviders)}`);
-  assert.ok(mainProvider, `main provider missing: ${JSON.stringify(seededPhase.repositoryProviders)}`);
-
-  const seededViewState = {
-    ...readViewState(databasePath),
-    focus: [],
-    selection: [],
-    expanded: [
-      `repo:${linkedProvider.providerId}`,
-      `resourceGroup:${linkedProvider.providerId}/index`,
-      `resourceGroup:${mainProvider.providerId}/index`,
-      `resourceGroup:${mainProvider.providerId}/workingTree`,
-    ],
-  };
-  writeViewState(databasePath, seededViewState);
-  return readViewState(databasePath);
-}
-
-function assertSeededMixedState(viewState, seededPhase) {
-  const linkedProvider = seededPhase.repositoryProviders.find(
-    provider => provider.root === linkedWorktreePath
-  );
-  assert.ok(linkedProvider, `linked worktree missing from provider map: ${JSON.stringify(seededPhase.repositoryProviders)}`);
-  const linkedProviderId = linkedProvider.providerId;
-  const expanded = [...viewState.expanded].sort();
-  assert.ok(
-    expanded.includes(`repo:${linkedProviderId}`),
-    `seed did not expand the linked repository: ${JSON.stringify(expanded)}`
-  );
-  assert.ok(
-    expanded.includes(`resourceGroup:${linkedProviderId}/index`),
-    `seed did not leave the linked Staged Changes group expanded: ${JSON.stringify(expanded)}`
-  );
-  assert.ok(
-    !expanded.includes(`resourceGroup:${linkedProviderId}/workingTree`),
-    `seed did not leave the linked Changes group collapsed: ${JSON.stringify(expanded)}`
-  );
+function assertPhase(result, phase) {
+  assert.equal(result.repositoryRoots.length, repositoryCount, `${phase} did not discover all repositories`);
   assert.equal(
-    expanded.filter(id => id.startsWith('repo:')).length,
-    1,
-    `seed must leave exactly one of the two repositories expanded: ${JSON.stringify(expanded)}`
+    new Set(result.repositoryRoots).size,
+    repositoryCount,
+    `${phase} repository roots were not distinct`
   );
-  return linkedProviderId;
+  assert.deepEqual(
+    result.traceAfterWatchdog,
+    result.traceAtSettlement,
+    `${phase} restarted SCM behavior after its completion promise settled`
+  );
+
+  if (expectedMode === 'disabled') {
+    assert.deepEqual(result.traceAfterWatchdog, [], `${phase} disabled mode issued an SCM tree command`);
+    assert.equal(
+      result.outcome?.reason,
+      'experimental Source Control tree-state management disabled'
+    );
+  } else if (expectedMode === 'enabled-inert') {
+    assert.deepEqual(
+      result.traceAfterWatchdog,
+      [],
+      `${phase} enabled master switch mutated SCM with startup collapse still off`
+    );
+    assert.equal(result.outcome?.reason, 'automatic Source Control collapse disabled');
+  } else {
+    assert.deepEqual(
+      result.traceAfterWatchdog,
+      ['workbench.view.scm', 'workbench.scm.action.collapseAllRepositories'],
+      `${phase} collapse mode must reveal and collapse once with no retries or traversal`
+    );
+    assert.equal(result.outcome?.changed, true);
+    assert.ok(
+      result.startupElapsedMs < 20000,
+      `${phase} one-shot collapse took too long: ${result.startupElapsedMs}ms`
+    );
+  }
+
+  assert.ok(
+    result.traceAfterWatchdog.every(command => !command.startsWith('list.')),
+    `${phase} used a forbidden generic list command: ${JSON.stringify(result.traceAfterWatchdog)}`
+  );
 }
 
 let testFailed = false;
 try {
   createFixture();
   console.log(`[scm-state-test] fixture=${testRoot}`);
-  console.log(`[scm-state-test] expected=${expectedOutcome}`);
+  console.log(`[scm-state-test] expected=${expectedMode}`);
 
-  const seededPhase = await runPhase('seed');
-  const databasePath = findWorkspaceDatabase();
-  const seededViewState = seedMixedViewState(databasePath, seededPhase);
-  const linkedProviderId = assertSeededMixedState(seededViewState, seededPhase);
-  const seededExpanded = [...seededViewState.expanded].sort();
-  console.log(`[scm-state-test] seeded expanded=${JSON.stringify(seededExpanded)}`);
-
-  const restoredPhase = await runPhase('verify');
-  if (JSON.stringify(seededPhase.repositoryRoots) !== JSON.stringify(restoredPhase.repositoryRoots)) {
-    console.log('[scm-state-test] repository discovery order changed across launches');
-  }
-  const restoredExpanded = [...readViewState(databasePath).expanded].sort();
-  console.log(`[scm-state-test] restored expanded=${JSON.stringify(restoredExpanded)}`);
-
-  if (expectedOutcome === 'preserved') {
-    assert.deepEqual(restoredExpanded, seededExpanded, 'SCM expansion state changed across restart');
-    console.log('BETTER_GIT_SCM_STATE_PRESERVED');
-  } else {
-    assert.notDeepEqual(restoredExpanded, seededExpanded, 'expected the current startup collapse to reset SCM state');
+  const productionSource = fs.readFileSync(path.join(extensionDevelopmentPath, 'src', 'extension.ts'), 'utf8');
+  assert.ok(
+    !/executeScmTreeCommand\(["']list\./.test(productionSource),
+    'production code still dispatches a generic list command'
+  );
+  for (const removedRestorerSymbol of [
+    'runRestoreScmTreeStateOnStartup',
+    'startScmTreeStateCapture',
+    'SCM_VIEW_STATE_STORAGE_KEY',
+    'SCM_TREE_STATE_WORKSPACE_STATE_KEY',
+  ]) {
     assert.ok(
-      !restoredExpanded.includes(`repo:${linkedProviderId}`),
-      'linked repository unexpectedly remained expanded'
+      !productionSource.includes(removedRestorerSymbol),
+      `production exact-restoration code still contains ${removedRestorerSymbol}`
     );
-    console.log('BETTER_GIT_SCM_STATE_RESET_REPRODUCED');
+  }
+
+  const firstPhase = await runPhase('seed');
+  const restartedPhase = await runPhase('verify');
+  assertPhase(firstPhase, 'first launch');
+  assertPhase(restartedPhase, 'restart');
+
+  if (expectedMode === 'disabled') {
+    console.log('BETTER_GIT_SCM_STATE_DISABLED_INERT');
+  } else if (expectedMode === 'enabled-inert') {
+    console.log('BETTER_GIT_SCM_STATE_ENABLED_WITHOUT_COLLAPSE_INERT');
+  } else {
+    console.log('BETTER_GIT_SCM_COLLAPSE_ONCE_NO_ROW_WALK');
   }
 } catch (error) {
   testFailed = true;
@@ -286,10 +317,12 @@ try {
   if (keepFixture || testFailed) {
     console.log(`[scm-state-test] kept fixture for inspection: ${testRoot}`);
   } else {
-    try {
-      git(mainRepositoryPath, 'worktree', 'remove', '--force', linkedWorktreePath);
-    } catch {
-      // The test root is removed below; do not hide an otherwise successful persistence result.
+    for (const linkedWorktreePath of linkedWorktreePaths) {
+      try {
+        git(mainRepositoryPath, 'worktree', 'remove', '--force', linkedWorktreePath);
+      } catch {
+        // The explicit /tmp fixture is removed below; do not hide an otherwise successful test result.
+      }
     }
     fs.rmSync(testRoot, { recursive: true, force: true });
   }

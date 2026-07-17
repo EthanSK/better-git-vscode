@@ -54,15 +54,16 @@ Hunks that already fit on screen are untouched — one press still jumps straigh
 
 For the exact boundary rules and the engineering behind the navigation fix, see [How Better Git VS Code navigation works](docs/navigation-behavior.md).
 
-## Keep worktrees and change groups exactly as you left them
+## Source Control show/hide automation is experimental and off by default
 
-VS Code saves the Source Control tree per workspace, but current releases can rebuild every repository and change group expanded instead of applying that saved mixed state. Better Git VS Code now repairs that restart path, so each repository/worktree header and each **Changes**, **Staged Changes**, **Merge Changes**, or **Untracked Changes** group returns open or closed exactly as you left it.
+VS Code saves Source Control tree data per workspace, but current releases can still rebuild repository and change-group sections expanded after a restart. VS Code exposes no reliable extension API for reading or setting one particular repository or group node. Better Git's earlier attempt to reconstruct that mixed state by walking generic list rows became visibly repetitive with many worktrees, so v1.2.31 withdraws that implementation.
 
-- **Default:** restore the exact per-workspace expansion state. No Better Git setting is required.
-- **Command `Better Git: Collapse all worktree / repository sections in Source Control`** (`better-git-vscode.collapse-worktrees`) still gives you a one-shot clean slate whenever you want every repository folded.
-- **Optional setting `better-git-vscode.collapseWorktreesOnStartup`** (boolean, **off by default**) restores the old force-collapse behavior. When enabled, it intentionally overrides the saved state after a restart and only acts when there are 2+ repositories open.
+- **Default:** pure VS Code behavior. Better Git does not read Source Control tree storage, start a discovery timer, reveal or focus Source Control, select or walk rows, or expand/collapse anything during startup.
+- **Experimental master switch:** `better-git-vscode.experimentalScmTreeStateManagement` is off by default. Turning it on enables the one-shot manual command, but does not itself perform any startup action.
+- **Manual command:** with the experiment enabled, `Better Git: Collapse all worktree / repository sections in Source Control` (`better-git-vscode.collapse-worktrees`) invokes VS Code's built-in all-repositories collapse once.
+- **Optional startup collapse:** also turn on `better-git-vscode.collapseWorktreesOnStartup` to run that same built-in collapse once after 2+ repositories finish discovery. There are no retries and no row traversal.
 
-> **How it works.** VS Code persists the tree in its local workspace state but exposes no public per-row expansion API. On modern desktop hosts, Better Git reads that one saved value read-only, remaps VS Code's opaque provider IDs to the current Git roots, then uses VS Code's own SCM/list commands to reconstruct the tree after repository discovery settles. It briefly focuses Source Control and restores the previous sidebar/editor focus afterward; it never opens or replaces an editor tab. Mixed non-Git SCM-provider views are left to VS Code rather than risking another provider's state.
+Exact mixed-state restoration remains paused until VS Code provides a dependable per-node contract that can be tested without selecting rows or accidentally targeting another Source Control list such as Source Control Graph.
 
 ## Pull a worktree into your sidebar without leaving the editor
 
@@ -241,7 +242,7 @@ A few behaviours are configurable under **Settings → Better Git VS Code**:
 
 - **Dvorak mode** — swap the navigation keys to Dvorak-comfortable positions with one toggle (`better-git-vscode.dvorakMode`, see the *Dvorak mode* section above).
 - **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
-- **Preserve Source Control expansion state** — Better Git restores the exact per-workspace repository/worktree and change-group state by default. `better-git-vscode.collapseWorktreesOnStartup` is an opt-in legacy override, off by default; see *Keep worktrees and change groups exactly as you left them* above.
+- **Experimental Source Control show/hide** — all Better Git tree manipulation is off by default behind `better-git-vscode.experimentalScmTreeStateManagement`. The separate `collapseWorktreesOnStartup` double opt-in runs one built-in collapse with no retries; exact mixed-state restoration is paused. See *Source Control show/hide automation is experimental and off by default* above.
 - **Auto-add worktree on reveal** — when reveal targets a worktree outside Explorer, add that worktree root as a workspace folder and reveal the file (`better-git-vscode.autoAddWorktreeOnReveal`, on by default; see *Pull a worktree into your sidebar* above).
 - **New-file line step** — how many lines the change keys step through a brand-new file (`better-git-vscode.newFileNavLineJump`, default 5).
 - **Tall-hunk staging** — step through a hunk taller than your screen in stages with the same next/previous keys, instead of the rest running off the bottom (`better-git-vscode.hunkStagingEnabled`, default on — see *Step through tall hunks in stages* above). Tune the engage threshold (`hunkStagingThreshold`, 0 = auto/viewport), the per-step scroll (`hunkStagingLineStep`, 0 = auto), and the overlap kept between steps (`hunkStagingOverlap`, default 4).

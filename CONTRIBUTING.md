@@ -35,7 +35,7 @@ Changes that can affect Source Control repository/group expansion must also run 
 BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm run test:scm-state
 ```
 
-It uses one isolated profile across two Extension Development Host launches and proves that Better Git restores the same mixed repository/worktree and Changes-group expansion state. It never loads, reloads, installs, or updates the extension in the normal VS Code profile.
+It creates eight repositories/worktrees with both staged and working-tree groups, then runs the same isolated profile across two Extension Development Host launches in three modes: experiment disabled, experiment enabled with startup collapse disabled, and double-opt-in collapse. The first two must keep an empty Better Git command trace beyond the removed loop interval; collapse mode must emit only `workbench.view.scm` and `workbench.scm.action.collapseAllRepositories`, exactly once per launch. The harness identifies the spawned process and numeric window ID, verifies `Built-in Retina Display`, captures only that window, and closes only that isolated window. It never loads, reloads, installs, or updates the extension in the normal VS Code profile.
 
 Also validate the production package before release:
 

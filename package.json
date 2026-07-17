@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.30",
+  "version": "1.2.31",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -114,7 +114,8 @@
       {
         "command": "better-git-vscode.collapse-worktrees",
         "category": "Better Git",
-        "title": "Collapse all worktree / repository sections in Source Control"
+        "title": "Collapse all worktree / repository sections in Source Control",
+        "enablement": "config.better-git-vscode.experimentalScmTreeStateManagement"
       },
       {
         "command": "better-git-vscode.add-current-worktree-to-workspace",
@@ -213,10 +214,15 @@
           "default": true,
           "description": "Show a persistent '+ Stage & Next' button in the bottom-left status bar. Unlike editor-title actions, its position does not change when VS Code adds or removes file-type-specific diff buttons. Clicking it stages the current changed file and advances in the last navigation direction. Turn off to keep only the editor-title + button."
         },
+        "better-git-vscode.experimentalScmTreeStateManagement": {
+          "type": "boolean",
+          "default": false,
+          "description": "Experimental master switch for every Better Git Source Control show/hide action. OFF by default. When off, Better Git never reveals or focuses Source Control, selects or walks SCM rows, or expands/collapses SCM tree nodes during startup; vanilla VS Code controls the tree. Turning this on only enables the manual collapse command and the optional one-shot startup collapse below. Exact mixed-state restoration is paused because VS Code exposes no reliable per-node API."
+        },
         "better-git-vscode.collapseWorktreesOnStartup": {
           "type": "boolean",
           "default": false,
-          "description": "Opt in to collapsing every repository/worktree section shortly after window load or an extension-host restart when 2+ repositories are open. Disabled by default so Better Git restores the exact saved Source Control tree, including individual repositories/worktrees and their Changes or Staged Changes groups. Enabling this intentionally overrides that per-workspace state with collapse-all and briefly opens/focuses Source Control while it runs. The same plain collapse remains available on demand from the 'Collapse all worktree / repository sections in Source Control' command."
+          "description": "Experimental double opt-in: after repository discovery settles, reveal Source Control and run VS Code's built-in collapse-all-repositories command exactly once. No retries or row traversal. Has no effect unless better-git-vscode.experimentalScmTreeStateManagement is also enabled."
         },
         "better-git-vscode.newFileNavLineJump": {
           "type": "number",
@@ -418,7 +424,10 @@
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "test:scm-state": "node scripts/test-scm-state-persistence.mjs"
+    "test:scm-state": "npm run test:scm-state:disabled && npm run test:scm-state:enabled-inert && npm run test:scm-state:collapse",
+    "test:scm-state:disabled": "node scripts/test-scm-state-persistence.mjs --expect-disabled",
+    "test:scm-state:enabled-inert": "node scripts/test-scm-state-persistence.mjs --expect-enabled-inert",
+    "test:scm-state:collapse": "node scripts/test-scm-state-persistence.mjs --expect-collapse"
   },
   "devDependencies": {
     "@types/vscode": "^1.83.0",

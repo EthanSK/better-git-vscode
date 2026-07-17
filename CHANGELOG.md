@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.31] — Source Control tree automation off by default
+
+- **Turned every Better Git Source Control show/hide path off by default.** With `better-git-vscode.experimentalScmTreeStateManagement` left off, activation performs no SCM-state read, discovery timer, view reveal/focus, row selection/walk, or expand/collapse command. The rest of Better Git remains active.
+- **Withdrew v1.2.30's automatic exact-state restorer.** Its generic `list.*` traversal became quadratic with many worktrees and could visibly select or operate on Source Control Graph instead of the Changes tree. VS Code still exposes no reliable per-repository/group node API, so shipping that behavior as a broken experiment would not be safe.
+- **Kept only a narrow double-opt-in collapse experiment.** Enabling the master switch exposes the manual collapse command; also enabling `collapseWorktreesOnStartup` waits for 2+ repositories to settle, then dispatches `workbench.view.scm` and VS Code's built-in `workbench.scm.action.collapseAllRepositories` exactly once. There are no retries, repository-open listeners, or row-driving commands.
+- **Expanded the restart regression to eight repositories/worktrees and three modes.** Across two Extension Development Host launches it proves master-off and enabled-with-collapse-off traces remain empty beyond the old loop interval, while double-opt-in collapse emits exactly the two allowed commands once. Exact-window screenshots and placement checks keep every test window on the MacBook's `Built-in Retina Display` and close only that isolated window.
+
 ## [1.2.30] — preserve Source Control expansion state
 
 - **Worktrees, repositories, Changes groups, and Staged Changes groups now reopen exactly as you left them.** Better Git no longer overwrites VS Code's saved tree with its old default-on collapse, and it repairs the current VS Code restart regression that otherwise reopens saved-collapsed repositories and groups.

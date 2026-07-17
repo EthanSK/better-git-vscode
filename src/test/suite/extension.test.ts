@@ -71,13 +71,42 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(setting.default, true, 'autoAddWorktreeOnReveal must remain on by default');
 	});
 
-	test('Better Git restores per-workspace SCM expansion state by default', () => {
+	test('experimental SCM tree-state management is fully off by default', () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');
-		const setting = extension.packageJSON.contributes?.configuration?.properties?.[
+		const experimentalSetting = extension.packageJSON.contributes?.configuration?.properties?.[
+			'better-git-vscode.experimentalScmTreeStateManagement'
+		];
+		assert.ok(experimentalSetting, 'experimentalScmTreeStateManagement setting is missing from package.json');
+		assert.strictEqual(
+			experimentalSetting.default,
+			false,
+			'Better Git must leave the entire SCM tree-state subsystem off by default'
+		);
+		assert.ok(
+			String(experimentalSetting.description).includes('Exact mixed-state restoration is paused'),
+			'the experimental setting must not claim that broken exact restoration is available'
+		);
+
+		const collapseSetting = extension.packageJSON.contributes?.configuration?.properties?.[
 			'better-git-vscode.collapseWorktreesOnStartup'
 		];
-		assert.ok(setting, 'collapseWorktreesOnStartup setting is missing from package.json');
-		assert.strictEqual(setting.default, false, 'Better Git must not overwrite VS Code\'s restored SCM tree by default');
+		assert.ok(collapseSetting, 'collapseWorktreesOnStartup setting is missing from package.json');
+		assert.strictEqual(collapseSetting.default, false, 'force-collapse must remain off inside the experiment');
+		assert.ok(
+			String(collapseSetting.description).includes('exactly once'),
+			'startup collapse must be documented as a one-shot operation'
+		);
+
+		const collapseCommand = (extension.packageJSON.contributes?.commands as Array<{
+			command: string;
+			enablement?: string;
+		}>).find(command => command.command === 'better-git-vscode.collapse-worktrees');
+		assert.ok(collapseCommand, 'collapse-worktrees command contribution is missing');
+		assert.strictEqual(
+			collapseCommand.enablement,
+			'config.better-git-vscode.experimentalScmTreeStateManagement',
+			'manual SCM tree mutation must be disabled with the experiment'
+		);
 	});
 });
