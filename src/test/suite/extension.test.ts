@@ -71,7 +71,7 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(setting.default, true, 'autoAddWorktreeOnReveal must remain on by default');
 	});
 
-	test('experimental SCM tree-state management is fully off by default', () => {
+	test('automatic SCM tree-state management is off while manual collapse stays available', () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');
 		const experimentalSetting = extension.packageJSON.contributes?.configuration?.properties?.[
@@ -81,7 +81,7 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(
 			experimentalSetting.default,
 			false,
-			'Better Git must leave the entire SCM tree-state subsystem off by default'
+			'Better Git must leave automatic SCM tree-state management off by default'
 		);
 		assert.ok(
 			String(experimentalSetting.description).includes('Exact mixed-state restoration is paused'),
@@ -105,8 +105,18 @@ suite('Extension Test Suite', () => {
 		assert.ok(collapseCommand, 'collapse-worktrees command contribution is missing');
 		assert.strictEqual(
 			collapseCommand.enablement,
-			'config.better-git-vscode.experimentalScmTreeStateManagement',
-			'manual SCM tree mutation must be disabled with the experiment'
+			undefined,
+			'manual collapse must remain enabled independently of startup automation'
+		);
+
+		const paletteEntry = (extension.packageJSON.contributes?.menus?.commandPalette as Array<{
+			command: string;
+			when?: string;
+		}> | undefined)?.find(entry => entry.command === 'better-git-vscode.collapse-worktrees');
+		assert.notStrictEqual(
+			paletteEntry?.when,
+			'false',
+			'manual collapse must not be hidden from the Command Palette'
 		);
 	});
 });

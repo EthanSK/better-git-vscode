@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-17T11:54:23Z
+**Trigger:** Ethan after v1.2.32: “I still wanted the command palette thing to collapse all, just not automatic.”
+**Symptom:** Turning the experimental Source Control tree-state switch off correctly stopped startup automation, but it also disabled **Better Git: Collapse all worktree / repository sections in Source Control** in the Command Palette. Direct invocation hit a second runtime gate and only displayed an instruction to enable the experiment.
+**Root cause:** v1.2.31 conflated an explicit, user-requested one-shot command with automatic startup behavior. The manifest `enablement` clause and the handler both reused the automatic experiment gate even though the manual command is the narrow safe primitive the user still wanted.
+**Fix:** v1.2.33 removes the manual command's manifest and runtime gates. The shared dispatcher now records an explicit `manual` or `automatic` origin: automatic calls re-check the default-off experiment before each built-in command, while a manual invocation always dispatches exactly `workbench.view.scm` followed by `workbench.scm.action.collapseAllRepositories`. Startup discovery, timers, and mutations remain off by default.
+**Commit:** pending merge and Marketplace publication
+**Guard:** The manifest E2E requires no `enablement` or hidden Command Palette clause. In both disabled-mode launches, the eight-repository restart harness waits 4.5 seconds with an empty startup trace, invokes the manual command with both automatic settings off, requires a successful result and exactly one safe built-in command pair, rejects every `list.*` command, verifies the exact isolated window on `Built-in Retina Display`, and closes only that test window.
+---
+
+---
 **Date:** 2026-07-17T01:38:03Z
 **Trigger:** Ethan 2026-07-17 after v1.2.31: “I hope you haven't removed the right click on the index html regardless of the workspace ... it's currently not happening right now ... make sure that's still in order it's been done properly.”
 **Symptom:** Both the v1.2.29 and v1.2.31 VSIX manifests and bundles contained `better-git-vscode.open-index-in-system-browser`, and the Extension Development Host test asserted its exact manifest entry, yet the real right-click menu for a changed Source Control `index.html` did not contain **Open index.html in System Browser**. The old one-off helper had been uninstalled after v1.2.28, so no working fallback remained.

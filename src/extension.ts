@@ -142,6 +142,10 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
 // not read the SCM database, start discovery timers, reveal Source Control, focus/select a row, or execute
 // any expand/collapse command. The rest of Better Git remains fully active.
 //
+// v1.2.33 keeps the explicit Command Palette collapse separate from that automation switch. A user-requested
+// one-shot collapse is not startup automation: it remains available with the experiment off and dispatches only
+// the same two safe built-in commands. The automatic path still re-checks its opt-in before each dispatch.
+//
 // HOW the opt-in collapse works — the ONLY reliable command exposed to extensions (verified against,
 // src/vs/workbench/contrib/scm/):
 //   `workbench.scm.action.collapseAllRepositories`
@@ -154,10 +158,9 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
 // `getActiveViewWithId("workbench.scm")`, which only returns the view when the Source Control viewlet is
 // the ACTIVE (currently-open) sidebar container. If SCM isn't the active view, the command silently
 // no-ops. So we MUST reveal SCM first (`workbench.view.scm`) and only THEN collapse. This does bring the
-// Source Control panel to the foreground — acceptable here because this whole extension is a git-diff
-// review tool and Ethan is looking at worktree changes on reload anyway; and we only auto-run it when
-// there are actually ≥2 repositories (the multi-worktree annoyance), so a single-repo window is left
-// untouched and unfocused.
+// Source Control panel to the foreground. That is expected when the user explicitly invokes the manual
+// command. The automatic experiment only runs when there are actually ≥2 repositories (the multi-worktree
+// annoyance), so a single-repo window is left untouched and unfocused.
 //
 // CRITICAL CAVEAT #2 — TIMING / POPULATE: the git extension discovers repositories asynchronously after
 // window load, and the SCM tree must have the repo nodes present before there's anything to collapse.
@@ -184,9 +187,9 @@ class ScmTreeExperimentDisabledError extends Error {
     }
 }
 
-// Exposed read-only through the extension's tiny test API. This records only Better Git's experimental SCM
-// tree commands (never unrelated navigation commands), allowing the isolated-host regression to prove that
-// default/off activation is truly inert and that the double-opt-in collapse is dispatched exactly once.
+// Exposed read-only through the extension's tiny test API. This records only Better Git's SCM tree commands
+// (never unrelated navigation commands), allowing the isolated-host regression to prove that default/off
+// activation is inert, a manual collapse remains available, and double-opt-in automation dispatches once.
 const scmTreeCommandTrace: string[] = [];
 
 const ensureScmTreeExperimentEnabled = (): void => {
@@ -195,8 +198,16 @@ const ensureScmTreeExperimentEnabled = (): void => {
     }
 };
 
-const executeScmTreeCommand = async <T = unknown>(command: string, ...args: unknown[]): Promise<T> => {
-    ensureScmTreeExperimentEnabled();
+type ScmTreeCommandOrigin = "automatic" | "manual";
+
+const executeScmTreeCommand = async <T = unknown>(
+    origin: ScmTreeCommandOrigin,
+    command: string,
+    ...args: unknown[]
+): Promise<T> => {
+    if (origin === "automatic") {
+        ensureScmTreeExperimentEnabled();
+    }
     scmTreeCommandTrace.push(command);
     return vscode.commands.executeCommand<T>(command, ...args);
 };
@@ -209,17 +220,17 @@ const executeScmTreeCommand = async <T = unknown>(command: string, ...args: unkn
 // This intentionally collapses EVERY repository/worktree header, including the primary. v1.2.13 established
 // that as the side-effect-free manual UX; v1.2.26 uses the same primitive at startup instead of reopening a
 // primary-repo change in a preview tab merely to trigger SCM auto-reveal.
-const collapseScmRepositories = async (): Promise<boolean> => {
+const collapseScmRepositories = async (origin: ScmTreeCommandOrigin): Promise<boolean> => {
     try {
         // Must make SCM the active sidebar container first, otherwise the view action can't resolve its
         // target view and no-ops. This focuses the Source Control panel.
-        await executeScmTreeCommand("workbench.view.scm");
+        await executeScmTreeCommand(origin, "workbench.view.scm");
         // Now the collapse command has a live view to act on — collapses every repo/worktree header.
-        await executeScmTreeCommand(SCM_COLLAPSE_ALL_REPOS_COMMAND);
+        await executeScmTreeCommand(origin, SCM_COLLAPSE_ALL_REPOS_COMMAND);
         return true;
     } catch {
-        // Old VS Code without this command id, a view-resolution failure, or a setting toggled off between
-        // the reveal and collapse commands — do nothing, safely.
+        // Old VS Code without this command id, a view-resolution failure, or an automatic opt-in toggled off
+        // between the reveal and collapse commands — do nothing, safely.
         return false;
     }
 };
@@ -350,7 +361,7 @@ const runExperimentalScmStartup = (
             return { changed: false, reason: "collapse cancelled" };
         }
 
-        const collapsed = await collapseScmRepositories();
+        const collapsed = await collapseScmRepositories("automatic");
         return collapsed
             ? { changed: true, reason: "collapsed once after discovery settled" }
             : { changed: false, reason: "collapse command unavailable or experiment disabled" };
@@ -496,15 +507,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // primary's first change in a PREVIEW TAB to re-reveal it, and that tab popping open was annoying. A
     // plain collapse has none of that. v1.2.26 makes the startup path use this exact same clean behavior. No
     // ≥2-repo gate — if you ask for it explicitly, we act on whatever's there.
-    let disposable14 = vscode.commands.registerCommand("better-git-vscode.collapse-worktrees", async () => {
-        if (!experimentalScmTreeStateManagementEnabled()) {
-            vscode.window.showInformationMessage(
-                "Better Git: Enable Experimental Source Control tree-state management before using this command."
-            );
-            return;
-        }
-        await collapseScmRepositories();
-    });
+    let disposable14 = vscode.commands.registerCommand(
+        "better-git-vscode.collapse-worktrees",
+        async () => collapseScmRepositories("manual")
+    );
 
     // ADD-CURRENT-WORKTREE-TO-WORKSPACE (v1.2.14). Pull the git worktree that the currently-open/under-review
     // file lives in into the VS Code workspace as a workspace folder, so Ethan can bring a worktree into his

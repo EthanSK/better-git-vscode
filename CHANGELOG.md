@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.33] — keep manual collapse available
+
+- **Restored the Command Palette collapse independently of automation.** **Better Git: Collapse all worktree / repository sections in Source Control** is always visible and enabled again, even while experimental Source Control startup behavior is off.
+- **Kept startup behavior inert by default.** With `experimentalScmTreeStateManagement` off, activation still performs no Source Control reveal, focus, selection, traversal, or collapse. Only an explicit manual invocation dispatches the safe one-shot `workbench.view.scm` plus `workbench.scm.action.collapseAllRepositories` pair.
+- **Added a manual-versus-automatic regression.** The eight-repository, two-launch MacBook-display test now waits beyond the old loop interval with an empty startup trace, invokes the manual command while both automatic settings are off, and requires exactly one built-in collapse pair with no `list.*` commands.
+
 ## [1.2.32] — restore the index.html browser action
 
 - **Fixed the missing Source Control action.** VS Code does not provide `resourceFilename` or `resourceScheme` in an SCM resource menu's context-key overlay, so v1.2.28-v1.2.31's precise-looking `when` clause evaluated false for every changed file. The SCM contribution now uses the provider key VS Code actually exposes, while the existing command handler still refuses every non-local/non-`index.html` URI.

@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.32",
+  "version": "1.2.33",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -114,8 +114,7 @@
       {
         "command": "better-git-vscode.collapse-worktrees",
         "category": "Better Git",
-        "title": "Collapse all worktree / repository sections in Source Control",
-        "enablement": "config.better-git-vscode.experimentalScmTreeStateManagement"
+        "title": "Collapse all worktree / repository sections in Source Control"
       },
       {
         "command": "better-git-vscode.add-current-worktree-to-workspace",
@@ -224,7 +223,7 @@
         "better-git-vscode.experimentalScmTreeStateManagement": {
           "type": "boolean",
           "default": false,
-          "description": "Experimental master switch for every Better Git Source Control show/hide action. OFF by default. When off, Better Git never reveals or focuses Source Control, selects or walks SCM rows, or expands/collapses SCM tree nodes during startup; vanilla VS Code controls the tree. Turning this on only enables the manual collapse command and the optional one-shot startup collapse below. Exact mixed-state restoration is paused because VS Code exposes no reliable per-node API."
+          "description": "Experimental master switch for automatic Better Git Source Control tree-state management. OFF by default. When off, Better Git never reveals or focuses Source Control, selects or walks SCM rows, or expands/collapses SCM tree nodes during startup; vanilla VS Code controls the tree. The manual Collapse all worktree / repository sections command remains available and runs only when explicitly invoked. Exact mixed-state restoration is paused because VS Code exposes no reliable per-node API."
         },
         "better-git-vscode.collapseWorktreesOnStartup": {
           "type": "boolean",

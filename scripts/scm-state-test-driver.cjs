@@ -105,12 +105,28 @@ async function runPhase() {
   await delay(4500);
   const traceAfterWatchdog = betterGitApi?.getScmTreeCommandTrace?.() ?? [];
 
+  let manualCollapseResult = null;
+  let traceAfterManual = traceAfterWatchdog;
+  if (mode === 'disabled') {
+    const registeredCommands = await vscode.commands.getCommands(true);
+    if (!registeredCommands.includes('better-git-vscode.collapse-worktrees')) {
+      throw new Error('Manual collapse command is not registered with automatic behavior disabled');
+    }
+    manualCollapseResult = await vscode.commands.executeCommand(
+      'better-git-vscode.collapse-worktrees'
+    );
+    await delay(500);
+    traceAfterManual = betterGitApi?.getScmTreeCommandTrace?.() ?? [];
+  }
+
   return {
     repositoryRoots: repositories.map(repository => repository.rootUri?.fsPath ?? null),
     outcome,
     startupElapsedMs: Date.now() - startupStartedAt,
     traceAtSettlement,
     traceAfterWatchdog,
+    manualCollapseResult,
+    traceAfterManual,
   };
 }
 

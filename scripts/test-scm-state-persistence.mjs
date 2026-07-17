@@ -225,6 +225,7 @@ async function runPhase(phase) {
   console.log(`[scm-state-test] ${phase} repository order=${JSON.stringify(result.repositoryRoots)}`);
   console.log(`[scm-state-test] ${phase} settled trace=${JSON.stringify(result.traceAtSettlement)}`);
   console.log(`[scm-state-test] ${phase} watchdog trace=${JSON.stringify(result.traceAfterWatchdog)}`);
+  console.log(`[scm-state-test] ${phase} manual trace=${JSON.stringify(result.traceAfterManual)}`);
   return result;
 }
 
@@ -247,6 +248,12 @@ function assertPhase(result, phase) {
       result.outcome?.reason,
       'experimental Source Control tree-state management disabled'
     );
+    assert.equal(result.manualCollapseResult, true, `${phase} manual collapse did not complete`);
+    assert.deepEqual(
+      result.traceAfterManual,
+      ['workbench.view.scm', 'workbench.scm.action.collapseAllRepositories'],
+      `${phase} manual collapse must remain available and issue one safe command pair`
+    );
   } else if (expectedMode === 'enabled-inert') {
     assert.deepEqual(
       result.traceAfterWatchdog,
@@ -268,8 +275,8 @@ function assertPhase(result, phase) {
   }
 
   assert.ok(
-    result.traceAfterWatchdog.every(command => !command.startsWith('list.')),
-    `${phase} used a forbidden generic list command: ${JSON.stringify(result.traceAfterWatchdog)}`
+    result.traceAfterManual.every(command => !command.startsWith('list.')),
+    `${phase} used a forbidden generic list command: ${JSON.stringify(result.traceAfterManual)}`
   );
 }
 
@@ -302,7 +309,7 @@ try {
   assertPhase(restartedPhase, 'restart');
 
   if (expectedMode === 'disabled') {
-    console.log('BETTER_GIT_SCM_STATE_DISABLED_INERT');
+    console.log('BETTER_GIT_SCM_AUTO_DISABLED_MANUAL_COLLAPSE_AVAILABLE');
   } else if (expectedMode === 'enabled-inert') {
     console.log('BETTER_GIT_SCM_STATE_ENABLED_WITHOUT_COLLAPSE_INERT');
   } else {
