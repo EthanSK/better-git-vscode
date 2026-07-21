@@ -71,6 +71,18 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(setting.default, true, 'autoAddWorktreeOnReveal must remain on by default');
 	});
 
+	test('tall-hunk line stepping defaults to five while zero remains the auto-mode option', () => {
+		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
+		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');
+		const setting = extension.packageJSON.contributes?.configuration?.properties?.[
+			'better-git-vscode.hunkStagingLineStep'
+		];
+		assert.ok(setting, 'hunkStagingLineStep setting is missing from package.json');
+		assert.strictEqual(setting.default, 5, 'within-hunk navigation must move five logical lines by default');
+		assert.strictEqual(setting.minimum, 0, 'explicit zero must remain valid for viewport-derived auto mode');
+		assert.ok(String(setting.description).includes('0 for AUTO'));
+	});
+
 	test('automatic SCM tree-state management is off while manual collapse stays available', () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');

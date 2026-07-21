@@ -2080,10 +2080,13 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
 // a hunk's END — and there's no stable public API on a diff editor to read its change regions on engine
 // ^1.83 (TextEditor.diffInformation is proposed API). So we compute the modified-side hunk ranges ourselves
 // by asking the git extension for the file's unified diff and parsing the `@@ ... +newStart,newCount @@`
-// headers (see getModifiedSideHunks). A "hunk" here = a maximal run of ADDED ('+') lines on the modified
-// side, which is exactly what the built-in navigation treats as one change stop — so our geometry lines up
-// with where next/previous-change actually land. Deleted-only regions produce no modified-side lines, are
-// never tall, and simply aren't in the list (the caret won't be "inside" one -> we defer to the built-in).
+// headers (see getModifiedSideHunkGeometry). An INNER hunk = a maximal run of ADDED ('+') lines on the
+// modified side; those preserve the ordinary change stops VS Code normally exposes. We also retain one OUTER
+// range per `@@` header, spanning its first through last '+' line. Git and VS Code do not always group a large
+// replacement identically: VS Code can render/navigate it as one change while Git's unified body contains several
+// short '+' runs. The outer range therefore guards against an oversized built-in jump as well as a no-movement
+// cross-file rollover, while nearby inner stops remain native. Deleted-only regions produce no modified-side lines
+// and remain ordinary built-in navigation.
 //
 // ── COMPOSITION (must not break anything) ──
 // This layer is an INTERPOSER: it runs only for side-by-side text diffs (TabInputTextDiff) and only when it
@@ -2095,7 +2098,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
 // can never turn a keypress into a dead no-op — worst case it degrades to today's plain hunk navigation.
 
 // One contiguous changed region on the modified (new/right) side of a diff, as 0-based inclusive line
-// numbers matching the editor's modified-side document. Produced by getModifiedSideHunks.
+// numbers matching the editor's modified-side document. Produced by getModifiedSideHunkGeometry.
 interface ModifiedHunk {
     start: number; // first changed line (0-based)
     end: number; // last changed line (0-based, inclusive)
@@ -2121,9 +2124,9 @@ const hunkStagingConfig = (visLines: number) => {
             ? Math.floor(rawThreshold as number)
             : undefined;
     const threshold = thresholdOverride ?? visLines;
-    // Step: lines to scroll per press. 0 (default) = "auto" = one viewport MINUS the overlap (so you advance
-    // ~a screenful but keep a few lines of context). A positive value overrides with a fixed line count.
-    const rawStep = cfg.get<number>("hunkStagingLineStep", 0);
+    // Step: lines to scroll per press. The user-facing default is an exact five logical lines. Explicit 0 keeps
+    // the viewport-minus-overlap AUTO mode available; any positive custom value remains an exact fixed step.
+    const rawStep = cfg.get<number>("hunkStagingLineStep", 5);
     const step =
         Number.isFinite(rawStep) && (rawStep as number) > 0
             ? Math.max(1, Math.floor(rawStep as number))
@@ -2131,13 +2134,15 @@ const hunkStagingConfig = (visLines: number) => {
     return { enabled, overlap, threshold, thresholdOverride, step };
 };
 
-// Parse the modified-side (new/right) contiguous changed regions of the file currently being reviewed, so
-// we know each hunk's full vertical extent (start..end). We get the unified diff straight from the git
+// Parse the modified-side (new/right) changed geometry of the file currently being reviewed. We get the unified
+// diff straight from the git
 // extension and read the `@@ -old +newStart,newCount @@` headers, then within each header's body count the
 // modified-side line number as we walk it: ' ' context and '+' added lines each occupy a modified line
 // (advance the counter); '-' removed lines exist only on the OLD side (don't advance, don't break a run —
 // in a replacement all '-' come before the '+' block, so the '+' lines stay contiguous). Each maximal run
-// of '+' lines becomes one ModifiedHunk. Line numbers therefore match the editor's modified document:
+// of '+' lines becomes one inner ModifiedHunk. Each `@@` body also contributes one outer ModifiedHunk from its
+// first through last '+' line, even when context divides those additions into several inner runs. Line numbers
+// therefore match the editor's modified document:
 //   • unstaged side  -> modified doc is the on-disk working file; the working-vs-INDEX diff's +lines are
 //                       working lines. This is the SAME diff git.openChange DISPLAYS for the unstaged side.
 //   • staged  side   -> modified doc is the git: index blob; diffIndexWithHEAD's +lines are index lines.
@@ -2161,7 +2166,7 @@ const hunkStagingConfig = (visLines: number) => {
 // `diff --git a/<rel> b/<rel>` header. We locate the section whose modified-side header line (`+++ b/<rel>`)
 // matches this file's repo-relative path and return just that section's text; the existing @@-parser then
 // sees exactly one file's hunks. Returns "" when the file isn't present (e.g. it's fully staged so it has no
-// working-vs-index changes), which makes getModifiedSideHunks return [] and defer to plain navigation.
+// working-vs-index changes), which makes getModifiedSideHunkGeometry return empty geometry and defer to plain navigation.
 const extractFileDiffSection = (fullDiff: string, fileUri: vscode.Uri, repo: any): string => {
     if (!fullDiff) {
         return "";
@@ -2207,12 +2212,22 @@ const extractFileDiffSection = (fullDiff: string, fileUri: vscode.Uri, repo: any
     return matched ? matched.join("\n") : "";
 };
 
-const getModifiedSideHunks = async (fileUri: vscode.Uri, staged: boolean): Promise<ModifiedHunk[]> => {
+interface ModifiedHunkGeometry {
+    hunks: ModifiedHunk[]; // maximal '+' runs: preserve VS Code's ordinary inner navigation stops
+    outerHunks: ModifiedHunk[]; // first..last '+' line per @@ header: guard oversized jumps/rollover
+}
+
+const emptyModifiedHunkGeometry = (): ModifiedHunkGeometry => ({ hunks: [], outerHunks: [] });
+
+const getModifiedSideHunkGeometry = async (
+    fileUri: vscode.Uri,
+    staged: boolean,
+): Promise<ModifiedHunkGeometry> => {
     try {
         const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
         const repo = git?.getRepository(fileUri);
         if (!repo) {
-            return []; // no owning repo (or git not ready) -> defer to built-in navigation
+            return emptyModifiedHunkGeometry(); // no owning repo (or git not ready) -> defer to built-in navigation
         }
         // Ask git for THIS file's unified diff on the correct side (BUG 6 FIX — see the big comment above):
         //   • staged   -> diffIndexWithHEAD(path): index-vs-HEAD, matching the shown staged diff. Per-path.
@@ -2227,9 +2242,10 @@ const getModifiedSideHunks = async (fileUri: vscode.Uri, staged: boolean): Promi
             diffText = extractFileDiffSection(fullWorkingVsIndex, fileUri, repo); // just this file's section
         }
         if (!diffText) {
-            return [];
+            return emptyModifiedHunkGeometry();
         }
         const hunks: ModifiedHunk[] = [];
+        const outerHunks: ModifiedHunk[] = [];
         const lines = diffText.split("\n");
         // Matches a unified-diff hunk header and captures the modified-side (+) start line and count.
         const headerRe = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
@@ -2237,6 +2253,8 @@ const getModifiedSideHunks = async (fileUri: vscode.Uri, staged: boolean): Promi
         let inHunk = false;
         let runStart = -1; // start of the current '+' run (1-based), or -1 when not in a run
         let runEnd = -1; // last line of the current '+' run (1-based)
+        let outerStart = -1; // first '+' line in the current @@ body (1-based)
+        let outerEnd = -1; // last '+' line in the current @@ body (1-based)
         const closeRun = () => {
             if (runStart !== -1) {
                 hunks.push({ start: runStart - 1, end: runEnd - 1 }); // convert to 0-based inclusive
@@ -2244,10 +2262,18 @@ const getModifiedSideHunks = async (fileUri: vscode.Uri, staged: boolean): Promi
                 runEnd = -1;
             }
         };
+        const closeOuterHunk = () => {
+            if (outerStart !== -1) {
+                outerHunks.push({ start: outerStart - 1, end: outerEnd - 1 });
+                outerStart = -1;
+                outerEnd = -1;
+            }
+        };
         for (const line of lines) {
             const header = headerRe.exec(line);
             if (header) {
                 closeRun(); // a new header ends any run from the previous hunk
+                closeOuterHunk(); // and closes the broader replacement group from that @@ body
                 modLine = parseInt(header[1], 10); // +newStart
                 inHunk = true;
                 continue;
@@ -2261,6 +2287,10 @@ const getModifiedSideHunks = async (fileUri: vscode.Uri, staged: boolean): Promi
                     runStart = modLine; // begin a new run of added lines
                 }
                 runEnd = modLine;
+                if (outerStart === -1) {
+                    outerStart = modLine;
+                }
+                outerEnd = modLine;
                 modLine++;
             } else if (c === " ") {
                 closeRun(); // context line ends a run and occupies a modified-side line
@@ -2274,9 +2304,10 @@ const getModifiedSideHunks = async (fileUri: vscode.Uri, staged: boolean): Promi
             }
         }
         closeRun(); // flush the last run at end of diff
-        return hunks;
+        closeOuterHunk(); // flush the broader range from the final @@ body
+        return { hunks, outerHunks };
     } catch {
-        return []; // git API shape changed / diff failed -> defer to plain navigation
+        return emptyModifiedHunkGeometry(); // git API shape changed / diff failed -> defer to plain navigation
     }
 };
 
@@ -2294,7 +2325,8 @@ const hunkContainingLine = (hunks: ModifiedHunk[], line: number, tol = 1): Modif
 // both the step decision and the on-landing reveal.
 interface HunkStageContext {
     editor: vscode.TextEditor; // the visible editor rendering the modified side (the thing we scroll)
-    hunks: ModifiedHunk[]; // modified-side change regions for this file
+    hunks: ModifiedHunk[]; // inner '+' runs used before built-in navigation
+    outerHunks: ModifiedHunk[]; // broader @@ groups guarding oversized built-in jumps and rollover
 }
 
 const getHunkStageContext = async (): Promise<HunkStageContext | undefined> => {
@@ -2320,11 +2352,11 @@ const getHunkStageContext = async (): Promise<HunkStageContext | undefined> => {
     // blob. That selects diffIndexWithHEAD vs diffWithHEAD so the parsed line numbers match the shown doc.
     const active = await getActiveChange();
     const staged = active?.staged === true;
-    const hunks = await getModifiedSideHunks(fileUri, staged);
+    const { hunks, outerHunks } = await getModifiedSideHunkGeometry(fileUri, staged);
     if (hunks.length === 0) {
         return undefined; // nothing parseable -> defer to plain navigation
     }
-    return { editor, hunks };
+    return { editor, hunks, outerHunks };
 };
 
 // Reads the current viewport of an editor as {top, bottom, visLines}. Uses the FIRST visible range's start
@@ -2640,6 +2672,67 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
     return true;
 };
 
+// Git's unified diff and VS Code's editor diff do not always expose the same inner stops for a large replacement.
+// The broad first..last-added-line range from the surrounding `@@` body prevents either an enormous built-in jump
+// (the copied profile-pic fixture moves L53->L149) or a premature cross-file rollover from skipping unread content.
+// A very nearby next/previous inner '+' run still belongs to VS Code: if the caret is exactly at an inner-run start
+// and the next run begins no more than five lines away (and within this press's configured step), defer once and let
+// the built-in land there. Otherwise the
+// outer group owns the press and uses the same exact caret-owned step contract. After a built-in no-op we disable the
+// nearby-stop deferral because VS Code has proved that predicted Git run is not a real editor navigation stop.
+const stepOuterHunk = async (
+    ctx: HunkStageContext,
+    direction: "down" | "up",
+    preserveNearbyInnerStop: boolean,
+): Promise<boolean> => {
+    const caret = ctx.editor.selection.active.line;
+    const outerHunk = hunkContainingLine(ctx.outerHunks, caret);
+    if (!outerHunk) {
+        return false;
+    }
+    const innerHunks = ctx.hunks.filter(
+        (hunk) => hunk.start >= outerHunk.start && hunk.end <= outerHunk.end,
+    );
+    const isBroaderThanInnerGeometry =
+        innerHunks.length > 1 ||
+        (innerHunks.length === 1 &&
+            (innerHunks[0].start !== outerHunk.start || innerHunks[0].end !== outerHunk.end));
+    if (!isBroaderThanInnerGeometry) {
+        return false;
+    }
+    const farEdgePosition = direction === "down"
+        ? bottomPresentationPosition(ctx.editor, outerHunk.end)
+        : new vscode.Position(outerHunk.start, 0);
+    if (positionIsVisible(ctx.editor, farEdgePosition)) {
+        return false;
+    }
+    if (preserveNearbyInnerStop) {
+        const vp = readViewport(ctx.editor);
+        const currentInnerHunk = ctx.hunks.find(
+            (hunk) => caret >= hunk.start && caret <= hunk.end,
+        );
+        if (vp && currentInnerHunk && caret === currentInnerHunk.start) {
+            const { step } = hunkStagingConfig(vp.visLines);
+            const nearbyLimit = Math.min(step, 5);
+            const nearbyInnerHunk = direction === "down"
+                ? innerHunks.find((hunk) => hunk.start > caret && hunk.start - caret <= nearbyLimit)
+                : [...innerHunks].reverse().find((hunk) => hunk.start < caret && caret - hunk.start <= nearbyLimit);
+            if (nearbyInnerHunk) {
+                debugLog(
+                    "tall-hunk",
+                    `${direction}: outer @@ group has a nearby inner stop at L${nearbyInnerHunk.start + 1} within nearbyLimit=${nearbyLimit} step=${step} -> preserve built-in navigation`,
+                );
+                return false;
+            }
+        }
+    }
+    debugLog(
+        "tall-hunk",
+        `${direction}: outer @@ group L${outerHunk.start + 1}-L${outerHunk.end + 1} has unread content beyond the next configured step -> step before built-in jump/file rollover`,
+    );
+    return stepTallHunk({ ...ctx, hunks: [outerHunk] }, direction);
+};
+
 // After the built-in navigation ADVANCES to a new hunk within the same file, reposition the viewport so a
 // tall hunk is presented for stage-stepping: going DOWN we land/pin at its TOP; going UP we land/pin at its
 // BOTTOM. The subsequent press then advances from that exact caret edge by one configured page step. Short hunks
@@ -2758,10 +2851,13 @@ const goToNextDiffOnce = async () => {
     // its exact BOTTOM edge yet, use this press as a downward step (read the next screenful of the same hunk)
     // instead of jumping to the next hunk. When it returns false (short hunk, caret already at the presented
     // bottom, caret not in a hunk, or feature off) we fall through to the unchanged navigation below, so
-    // nothing else is disturbed. See the big design note above getModifiedSideHunks.
+    // nothing else is disturbed. See the big design note above getModifiedSideHunkGeometry.
     const stageCtx = await getHunkStageContext();
     if (stageCtx && (await stepTallHunk(stageCtx, "down"))) {
         return; // press was a within-hunk scroll step
+    }
+    if (stageCtx && (await stepOuterHunk(stageCtx, "down", true))) {
+        return; // press was a broader within-@@ step; avoid an oversized built-in jump
     }
 
     // Hunk navigation. Read the cursor from the TAB's own editor (falling back to the focused editor) so
@@ -2778,6 +2874,11 @@ const goToNextDiffOnce = async () => {
     const lineAfter = navEditor?.selection.active.line; // TextEditor.selection is live — same object, post-command state
 
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter > lineBefore)) {
+        if (stageCtx && lineBefore !== undefined && lineAfter !== undefined) {
+            if (await stepOuterHunk(stageCtx, "down", false)) {
+                return;
+            }
+        }
         // We've run out of changes in the current file. Jump straight to the next changed file —
         // NO confirmation prompt, ever. The whole point of this tool is keyboard-fast review; a
         // "Jump to next file: ...?" modal would defeat that. (The old promptBeforeNextFile setting +
@@ -2823,6 +2924,9 @@ const goToPreviousDiffOnce = async () => {
     if (stageCtx && (await stepTallHunk(stageCtx, "up"))) {
         return; // press was a within-hunk upward scroll step
     }
+    if (stageCtx && (await stepOuterHunk(stageCtx, "up", true))) {
+        return; // press was a broader within-@@ upward step
+    }
 
     // Hunk navigation — tab-derived editor for the before/after compare, same rationale as goToNextDiff.
     const navEditor = visibleEditorForActiveTab() ?? activeEditor;
@@ -2835,6 +2939,11 @@ const goToPreviousDiffOnce = async () => {
     const lineAfter = navEditor?.selection.active.line; // live selection — post-command state
 
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter < lineBefore)) {
+        if (stageCtx && lineBefore !== undefined && lineAfter !== undefined) {
+            if (await stepOuterHunk(stageCtx, "up", false)) {
+                return;
+            }
+        }
         // Out of changes in the current file -> jump straight to the previous changed file, NO prompt.
         // Same rationale as goToNextDiff: the confirmation modal was removed entirely (see CHANGELOG v1.0.2).
         await openPreviousFile();

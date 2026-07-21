@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.34",
+  "version": "1.2.35",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -249,9 +249,9 @@
         },
         "better-git-vscode.hunkStagingLineStep": {
           "type": "number",
-          "default": 0,
+          "default": 5,
           "minimum": 0,
-          "description": "How many lines each within-hunk step scrolls while stepping through a tall hunk. 0 (default) = AUTO: one viewport height minus the overlap, so each press advances roughly a screenful while keeping a few lines of context. Set a positive number to override with a fixed step (e.g. 30). Only applies when Tall-hunk staging is enabled."
+          "description": "How many logical lines each within-hunk step moves while stepping through a tall hunk. Defaults to 5. Set any positive number for an exact custom step, or 0 for AUTO: one viewport height minus the overlap. Only applies when Tall-hunk staging is enabled."
         },
         "better-git-vscode.hunkStagingOverlap": {
           "type": "number",

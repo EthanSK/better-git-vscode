@@ -845,9 +845,9 @@ suite('SCM change navigation E2E', () => {
 		// so the scroll command must still target the active diff editor while focus lives in the sidebar.
 		await vscode.commands.executeCommand('workbench.view.scm');
 		const rapidDownTops = await viewportTopsDuring(modifiedSide, () => Promise.all([nextChange(), nextChange()]));
-		const down = await expectViewportTop('committed/tall_e.txt', top => top > startTop + 20, 'to advance through the tall hunk');
+		const down = await expectViewportTop('committed/tall_e.txt', top => top > startTop, 'to advance through the tall hunk');
 		const downCaret = down.selection.active.line;
-		assert.ok(downCaret > 10, `rapid tall-hunk next did not advance the caret (at ${downCaret})`);
+		assert.strictEqual(downCaret, 20, `two default five-line tall-hunk steps must land at L21 (at L${downCaret + 1})`);
 		assert.ok(lineIsVisible(down, downCaret), 'rapid tall-hunk next left its logical caret off-screen');
 		assertViewportMonotonic(rapidDownTops, 'down', 'rapid tall-hunk next');
 
@@ -936,6 +936,80 @@ suite('SCM change navigation E2E', () => {
 			await navConfig.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global);
 			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
 			await navConfig.update('hunkStagingOverlap', previousOverlap, vscode.ConfigurationTarget.Global);
+			await diffConfig.update('hideUnchangedRegions.enabled', previousHideUnchanged, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('copied profile-pic replacement: oversized built-in navigation steps the outer hunk by default 5 and custom 7', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const diffConfig = vscode.workspace.getConfiguration('diffEditor');
+		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		const previousHideUnchanged = diffConfig.inspect<boolean>('hideUnchangedRegions.enabled')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingLineStep', undefined, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', 0, vscode.ConfigurationTarget.Global);
+			await diffConfig.update('hideUnchangedRegions.enabled', false, vscode.ConfigurationTarget.Global);
+			assert.strictEqual(
+				navConfig.get<number>('hunkStagingLineStep'),
+				5,
+				'the real host must resolve the unset hunk step to the manifest default of five'
+			);
+
+			const afterFixture = process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH;
+			assert.ok(afterFixture, 'profile-pic after fixture path was not supplied by the test runner');
+			const rel = 'committed/profile-pic.service.ts';
+			write(rel, fs.readFileSync(afterFixture, 'utf8'));
+			await refreshUntil(() => inWorkingTree(rel, 5 /* MODIFIED */), 'copied profile-pic service to appear as modified');
+
+			// This is the exact live large replacement from the reported AIMVS worktree. Git's unified body contains
+			// many short '+' runs, but VS Code groups the method body into one large visual change and jumps from its
+			// first line to a much later stop. Better Git must page through that unread replacement instead.
+			const methodSignatureStart = 48; // current-file L49: `async setProfilePicture(`
+			const start = 52; // current-file L53: first line of the large replacement body shown in the report
+			const editor = await openWorkingDiffAt(rel, methodSignatureStart);
+			assert.ok(!positionIsVisible(editor, editor.document.lineAt(252).range.end), 'outer replacement tail must start off-screen');
+			await vscode.commands.executeCommand('workbench.view.scm');
+			await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
+			await sleep(100);
+			assert.strictEqual(
+				editor.selection.active.line,
+				start,
+				'copied fixture must reproduce VS Code moving from the method signature to the large replacement body'
+			);
+			await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
+			await sleep(100);
+			assert.strictEqual(
+				editor.selection.active.line,
+				148,
+				'test precondition failed: copied fixture must reproduce VS Code skipping from L53 to L149'
+			);
+
+			// Return to the exact reported stop after proving the built-in skip. Better Git should replace that L53->L149
+			// jump with one configured step and must do so without first overshooting and visibly returning.
+			const resetPosition = new vscode.Position(start, 0);
+			editor.selection = new vscode.Selection(resetPosition, resetPosition);
+			editor.revealRange(new vscode.Range(resetPosition, resetPosition), vscode.TextEditorRevealType.AtTop);
+			await poll(() => lineIsVisible(editor, start), 'copied profile-pic replacement start to be visible again');
+			assert.ok(!positionIsVisible(editor, editor.document.lineAt(252).range.end), 'outer replacement tail must be hidden again');
+			await vscode.commands.executeCommand('workbench.view.scm');
+
+			const defaultStepTops = await viewportTopsDuring(editor, nextChange);
+			await expectCursorVisibleAt(rel, start + 5);
+			assertViewportMonotonic(defaultStepTops, 'down', 'copied profile-pic default outer-hunk step');
+			assert.strictEqual(activeTabPath(), wsUri(rel).path, 'default step prematurely changed files');
+
+			await navConfig.update('hunkStagingLineStep', 7, vscode.ConfigurationTarget.Global);
+			await nextChange();
+			await expectCursorVisibleAt(rel, start + 12);
+			assert.strictEqual(activeTabPath(), wsUri(rel).path, 'custom forward step prematurely changed files');
+
+			await previousChange();
+			await expectCursorVisibleAt(rel, start + 5);
+			assert.strictEqual(activeTabPath(), wsUri(rel).path, 'custom previous step must mirror the exact seven-line move');
+		} finally {
+			await navConfig.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
 			await diffConfig.update('hideUnchangedRegions.enabled', previousHideUnchanged, vscode.ConfigurationTarget.Global);
 		}
 	});

@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-21T21:52:00Z
+**Trigger:** Ethan 2026-07-21: “the actual hunk is small ... go to next change ... jumps to the next file instead of doing the step jump”; then on the live profile-pic service: “the main hunk at the top is quite long ... it just jumps to the end ... make a copy of it and test it on that copy”
+**Symptom:** v1.2.34 could still skip unread content in a large visual replacement. In the exact `profile-pic.service.ts` change, VS Code's native Next moved from L53 to L149 while the replacement continued off-screen; in the earlier HTML replacement, native navigation could report no later stop and Better Git rolled into the next file. The requested within-hunk movement was five logical lines and needed a configurable override.
+**Root cause:** Better Git parsed only maximal contiguous `+` runs from Git's unified body. Git and VS Code can partition one visual replacement differently: a broad `@@` header may contain many short added runs, while VS Code coalesces or skips those runs in its editor navigation. v1.2.34's rendered-endpoint check was correct for the small parsed run but had no geometry for the broader replacement, so the extension could accept a native oversized jump or mistake a native no-op for end-of-file.
+**Fix:** v1.2.35 retains both geometries in one parse: inner `+` runs preserve very nearby native stops, and one outer range per `@@` body spans its first through last added line. If an inner stop is no more than five lines away and within the configured step, native navigation remains authoritative; otherwise an outer group with an unread far edge consumes the press before an oversized native jump. A native no-op gets the same outer fallback before file rollover. Both paths reuse the symmetric caret-owned exact-step/partial-edge contract. `hunkStagingLineStep` now defaults to `5`, accepts any positive exact custom value, and retains explicit `0` as viewport-minus-overlap auto mode.
+**Commit:** pending (release v1.2.35).
+**Guard:** The frozen regression fixtures are byte-for-byte copies of the reported AIMVS worktree's HEAD and working `profile-pic.service.ts`. A real VS Code 1.129 Extension Development Host first proves native L49→L53→L149 behavior, resets to L53, then requires Better Git to stay in that file and move L53→L58 at the unset/default setting, L58→L65 with custom `7`, and L65→L58 with Previous, with monotonic renderer events. Manifest coverage pins default `5`, minimum `0`, and the documented auto option. Full real-host coverage passed 39/39; normal VS Code remained installed at Marketplace v1.2.34 and was not updated, reloaded, or restarted.
+---
+
+---
 **Date:** 2026-07-21T21:49:00Z
 **Trigger:** Ethan 2026-07-21: “I have a hunk ... it’s not doing the thing ... because I couldn’t see all the code in the viewport, I’m one level zoomed in”
 **Symptom:** In the live `profile-pic.service.ts` working-tree diff, the active `+77,31` hunk had only lines 77-83 on-screen, but Next skipped staged review. Better Git compared its 31-line span with the roughly 33 logical lines represented by the entire viewport and declared it a fit even though the preceding hunk occupied nearly all usable space.

@@ -1,0 +1,255 @@
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  CompressImageService,
+  CloudflareR2Service,
+  DbService,
+  FirebaseStorageService,
+  RequestContextService,
+  ServerTimeService,
+} from '@ai-music-video-studio/api-shared';
+import { AssetService } from '@ai-music-video-studio/api-assets';
+import { isChannelProfilePictureForChannel } from '@ai-music-video-studio/common';
+import { config } from '@ai-music-video-studio/config';
+import {
+  CLOUD_STORAGE_FOLDERS,
+  FIRESTORE_COLLECTIONS,
+  PROFILE_PIC_FILE_NAME,
+} from '@ai-music-video-studio/constants';
+import {
+  Channel,
+  SetProfilePictureRes,
+  UpdateFirestoreDocData,
+} from '@ai-music-video-studio/models';
+import { DocumentReference } from 'firebase-admin/firestore';
+import { ChannelsService } from '../channels/channels.service';
+
+/** Publishes asset-backed or generated-default profile pictures. */
+@Injectable()
+export class ProfilePicService {
+  private readonly logger = new Logger(ProfilePicService.name);
+
+  constructor(
+    private readonly firebaseStorageService: FirebaseStorageService,
+    private readonly cloudflareR2Service: CloudflareR2Service,
+    private readonly compressImageService: CompressImageService,
+    private readonly requestContextService: RequestContextService,
+    private readonly assetService: AssetService,
+    private readonly dbService: DbService,
+    private readonly channelsService: ChannelsService,
+    private readonly serverTimeService: ServerTimeService,
+  ) {}
+
+  async setProfilePicture(
+    assetId: string | null,
+  ): Promise<SetProfilePictureRes> {
+    const channelId = this.requestContextService.channelId();
+    if (assetId === null) {
+      return this.resetProfilePicture(channelId);
+    }
+
+    const asset = await this.assetService.getAsset(assetId);
+    if (asset?.assetType !== 'image' || !asset.assetFileStoragePath) {
+      throw new BadRequestException('A completed image asset is required');
+    }
+
+    const sourceMetadata =
+      await this.firebaseStorageService.getFileObjectMetadata(
+        asset.assetFileStoragePath,
+      );
+    if (
+      sourceMetadata.fileSizeBytes > config.project.maxUploadImageAssetFileSize
+    ) {
+      throw new BadRequestException(
+        'Profile picture source exceeds the size limit',
+      );
+    }
+    if (sourceMetadata.objectGeneration === undefined) {
+      throw new BadRequestException('Profile picture generation is missing');
+    }
+
+    const requestId = this.requestContextService.requestId();
+    let profilePicturePath: string | undefined;
+    try {
+      await this.claimProfilePictureUpdateAttempt(channelId);
+      const { buffer } = await this.firebaseStorageService.downloadFile(
+        asset.assetFileStoragePath,
+        { objectGeneration: sourceMetadata.objectGeneration },
+      );
+      profilePicturePath = this.getVersionedProfilePicturePath(
+        channelId,
+        requestId,
+      );
+      await this.uploadProfilePicture(buffer, profilePicturePath, {
+        assetId,
+        isCompressed: 'yes',
+      }); // Generic asset thumbnails can be only 180px wide; regenerate the channel-owned 512px WebP from the immutable Firebase original when the asset is selected.
+      const previousPath = await this.completeProfilePictureUpdate(
+        channelId,
+        profilePicturePath,
+      );
+      await this.deletePreviousProfilePicture(
+        previousPath,
+        profilePicturePath,
+        channelId,
+      );
+      return { result: 'success' };
+    } catch (error) {
+      await this.deleteFailedProfilePicture(profilePicturePath, channelId);
+      throw error;
+    }
+  }
+
+  private async resetProfilePicture(
+    channelId: string,
+  ): Promise<SetProfilePictureRes> {
+    const requestId = this.requestContextService.requestId();
+    let profilePictureFileStoragePath: string | undefined;
+    try {
+      const channel = await this.claimProfilePictureUpdateAttempt(channelId);
+      profilePictureFileStoragePath =
+        await this.channelsService.generateDefaultProfilePicture(
+          channel.name,
+          channelId,
+          requestId,
+        );
+      const previousPath = await this.completeProfilePictureUpdate(
+        channelId,
+        profilePictureFileStoragePath,
+      );
+      await this.deletePreviousProfilePicture(
+        previousPath,
+        profilePictureFileStoragePath,
+        channelId,
+      );
+      return { result: 'success' };
+    } catch (error) {
+      await this.deleteFailedProfilePicture(
+        profilePictureFileStoragePath,
+        channelId,
+      );
+      throw error;
+    }
+  }
+
+  private async uploadProfilePicture(
+    inputBuffer: Buffer,
+    profilePicturePath: string,
+    metadata: Record<string, string>,
+  ): Promise<void> {
+    const compressed = await this.compressImageService.compress(inputBuffer, {
+      maxWidth: 512,
+      maxHeight: 512,
+      quality: 80,
+      format: 'webp',
+    });
+    await this.cloudflareR2Service.uploadFromBuffer(
+      compressed.buffer,
+      profilePicturePath,
+      {
+        contentType: 'image/webp',
+        cacheControl: config.files.cacheControl.profilePic,
+        metadata,
+      },
+    );
+  }
+
+  private async claimProfilePictureUpdateAttempt(
+    channelId: string,
+  ): Promise<Channel> {
+    const attemptedAt = await this.serverTimeService.getServerTimestamp();
+    const now = attemptedAt.toMillis();
+    const cooldown = config.channel.timeBeforeCanUpdateProfilePictureAgain;
+    const channelRef = this.dbService.db
+      .collection(FIRESTORE_COLLECTIONS.channels)
+      .doc(channelId) as DocumentReference<Channel>;
+
+    return channelRef.firestore.runTransaction(async (transaction) => {
+      const channel = (await transaction.get(channelRef)).data();
+      if (!channel) throw new NotFoundException('Channel not found');
+      const lastAttempt = channel.dateLastUpdatedProfilePicture;
+      if (lastAttempt) {
+        const retryAfter = cooldown - (now - lastAttempt.toMillis());
+        if (retryAfter > 0) {
+          throw new HttpException(
+            {
+              statusCode: HttpStatus.TOO_MANY_REQUESTS,
+              message: `You can change your profile picture again in ${Math.ceil(retryAfter / (60 * 1000))} minutes`,
+              retryAfterMs: retryAfter,
+            },
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }
+      }
+      transaction.update(channelRef, {
+        dateLastUpdatedProfilePicture: attemptedAt,
+      } satisfies UpdateFirestoreDocData<Channel>); // Bug: the old cooldown was recorded after image processing, so rejected requests could still consume worker time; transactionally claim the attempt before downloading or decoding it.
+      return channel;
+    });
+  }
+
+  private async completeProfilePictureUpdate(
+    channelId: string,
+    profilePictureFileStoragePath: string,
+  ): Promise<string | undefined> {
+    const channelRef = this.dbService.db
+      .collection(FIRESTORE_COLLECTIONS.channels)
+      .doc(channelId) as DocumentReference<Channel>;
+    return channelRef.firestore.runTransaction(async (transaction) => {
+      const channel = (await transaction.get(channelRef)).data();
+      if (!channel) throw new NotFoundException('Channel not found');
+      transaction.update(channelRef, {
+        profilePictureFileStoragePath,
+      } satisfies UpdateFirestoreDocData<Channel>); // Versioned R2 objects keep the current picture unchanged until the new bytes exist; publish only the completed object's pointer.
+      return channel.profilePictureFileStoragePath;
+    });
+  }
+
+  private async deletePreviousProfilePicture(
+    previousPath: string | undefined,
+    currentPath: string,
+    channelId: string,
+  ): Promise<void> {
+    if (
+      !previousPath ||
+      previousPath === currentPath ||
+      !isChannelProfilePictureForChannel(previousPath, channelId)
+    ) {
+      return;
+    }
+    await this.cloudflareR2Service.deleteFile(previousPath).catch((error) => {
+      this.logger.warn(
+        { channelId, previousPath, error },
+        'Failed to delete replaced profile picture',
+      );
+    });
+  }
+
+  private async deleteFailedProfilePicture(
+    fileStoragePath: string | undefined,
+    channelId: string,
+  ): Promise<void> {
+    if (!fileStoragePath) return;
+    await this.cloudflareR2Service
+      .deleteFile(fileStoragePath)
+      .catch((error) => {
+        this.logger.warn(
+          { channelId, fileStoragePath, error },
+          'Failed to delete unpublished profile picture',
+        );
+      }); // Bug: R2 can commit before its response or the Firestore publish fails, leaving an orphaned version; assign the path first and remove that unpublished object on every failed request.
+  }
+
+  private getVersionedProfilePicturePath(
+    channelId: string,
+    requestId: string,
+  ): string {
+    return `${CLOUD_STORAGE_FOLDERS.channels}/${channelId}/${PROFILE_PIC_FILE_NAME}-${requestId}.webp`; // A unique R2 key avoids exposing or overwriting the current picture before Firestore publishes the completed replacement, and its new URL also avoids stale image caches.
+  }
+}

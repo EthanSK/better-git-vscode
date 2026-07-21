@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.35] — step through the whole replacement
+
+- **Fixed large replacements skipping unread code even after the rendered-endpoint fix.** Git's unified diff could contain several short added-line runs inside one broad `@@` group, while VS Code treated the same visual replacement differently. Better Git measured only the small current run, then accepted an enormous native jump or cross-file rollover while the broader replacement still continued off-screen.
+- **Navigation now retains both geometries.** Nearby native change stops remain native, but a broader group with an unread far edge owns the press before an oversized jump and after a native no-op. It reuses the exact caret-owned edge contract in both directions, so there is no overshoot-and-return flicker and no premature file change.
+- **Tall-hunk steps now default to exactly five logical lines and remain fully configurable.** Any positive `hunkStagingLineStep` is an exact custom step; explicit `0` preserves viewport-minus-overlap auto mode.
+- **The regression uses a byte-for-byte copy of the reported AIMVS `profile-pic.service.ts` before/after change.** In the real VS Code host, native navigation reproduces L53→L149; Better Git instead moves +5 by default, then +7 and -7 under a custom setting while staying in the same file. Full real-host coverage is now 39/39.
+
 ## [1.2.34] — detect what the hunk actually shows
 
 - **Fixed a hunk near the bottom of the editor skipping ahead while unread lines were still off-screen.** Auto tall-hunk detection no longer compares the hunk's line count with the whole viewport's logical line span; that could call a 31-line hunk a fit in a 33-line viewport even when the previous hunk left only seven of those lines visible.

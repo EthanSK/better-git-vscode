@@ -25,6 +25,14 @@ async function main() {
 		// The folder containing the Extension Manifest package.json
 		// Passed to `--extensionDevelopmentPath`
 		const extensionDevelopmentPath = path.resolve(__dirname, '../../');
+		const profilePicFixtureBeforePath = path.join(
+			extensionDevelopmentPath,
+			'src/test/fixtures/profile-pic.service.before.txt'
+		);
+		const profilePicFixtureAfterPath = path.join(
+			extensionDevelopmentPath,
+			'src/test/fixtures/profile-pic.service.after.txt'
+		);
 
 		// The path to test runner
 		// Passed to --extensionTestsPath
@@ -57,6 +65,7 @@ async function main() {
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'mod_a.txt'), lines(40, 'mod_a')); // 2-hunk modified-file test
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'mod_d.txt'), lines(10, 'mod_d')); // second modified file (fall-through target)
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'tall_e.txt'), lines(260, 'tall_e')); // tall contiguous-hunk viewport stepping
+		fs.copyFileSync(profilePicFixtureBeforePath, path.join(fixturePath, 'committed', 'profile-pic.service.ts')); // exact live large-replacement regression
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'del_b.txt'), lines(20, 'del_b')); // deleted-file tests
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'ren_c.txt'), lines(20, 'ren_c')); // rename test
 		run('git add -A');
@@ -75,6 +84,7 @@ async function main() {
 		});
 		process.env.BGV_REVEAL_WORKTREE_PATH = revealWorktreePath;
 		process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH = disabledRevealWorktreePath;
+		process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH = profilePicFixtureAfterPath;
 
 		// Download VS Code, unzip it and run the integration tests against the fixture workspace.
 		// CI normally downloads the requested stable build. Local diagnosis can set BGV_VSCODE_EXECUTABLE_PATH
@@ -99,6 +109,7 @@ async function main() {
 	} finally {
 		delete process.env.BGV_REVEAL_WORKTREE_PATH;
 		delete process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH;
+		delete process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH;
 		if (fixturePath) {
 			for (const worktreePath of [revealWorktreePath, disabledRevealWorktreePath]) {
 				if (!worktreePath) {

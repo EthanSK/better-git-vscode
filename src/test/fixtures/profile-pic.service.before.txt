@@ -1,0 +1,96 @@
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import {
+  CompressImageService,
+  CloudflareR2Service,
+  FirebaseStorageService,
+  RequestContextService,
+} from '@ai-music-video-studio/api-shared';
+import { isChannelProfilePictureForChannel } from '@ai-music-video-studio/common';
+import { config } from '@ai-music-video-studio/config';
+
+/**
+ * Service for processing profile pictures.
+ * Downloads from Firebase Storage, compresses, uploads to R2, deletes original.
+ */
+@Injectable()
+export class ProfilePicService {
+  private readonly logger = new Logger(ProfilePicService.name);
+
+  constructor(
+    private readonly firebaseStorageService: FirebaseStorageService,
+    private readonly cloudflareR2Service: CloudflareR2Service,
+    private readonly compressImageService: CompressImageService,
+    private readonly requestContextService: RequestContextService,
+  ) {}
+
+  /**
+   * Process a profile picture that was uploaded to Firebase Storage.
+   * Downloads the original, compresses it, uploads compressed version to R2,
+   * and deletes the original from Firebase.
+   *
+   * @param firebaseStoragePath The path to the uploaded image in Firebase Storage
+   * @returns The path to the compressed image in R2
+   */
+  async processProfilePic(
+    firebaseStoragePath: string,
+  ): Promise<{ compressedFileStoragePath: string }> {
+    const channelId = this.requestContextService.channelId();
+    if (!isChannelProfilePictureForChannel(firebaseStoragePath, channelId)) {
+      throw new ForbiddenException(
+        'Profile picture path does not match the authorized channel',
+      ); // Bug: Admin Storage processing accepted another channel's path; bind it to the channel authorized by the request before downloading anything.
+    }
+    this.logger.log({ firebaseStoragePath }, 'Processing profile picture');
+
+    // 1. Download from Firebase Storage
+    const { buffer } =
+      await this.firebaseStorageService.downloadFile(firebaseStoragePath);
+
+    // 2. Compress the image
+    const compressed = await this.compressImageService.compress(buffer, {
+      maxWidth: 512,
+      maxHeight: 512,
+      quality: 70,
+    });
+
+    this.logger.log(
+      {
+        originalSize: compressed.originalSize,
+        compressedSize: compressed.compressedSize,
+        contentType: compressed.contentType,
+      },
+      'Profile picture compressed',
+    );
+
+    // 3. Upload compressed image to R2 (same path as original)
+    await this.cloudflareR2Service.uploadFromBuffer(
+      compressed.buffer,
+      firebaseStoragePath,
+      {
+        contentType: compressed.contentType,
+        cacheControl: config.files.cacheControl.profilePic,
+        metadata: {
+          isCompressed: 'yes',
+        },
+      },
+    );
+
+    // 4. Delete original from Firebase Storage
+    try {
+      await this.firebaseStorageService.deleteFile(firebaseStoragePath);
+    } catch (error) {
+      // Log but don't fail - the important part (R2 upload) succeeded
+      this.logger.error(
+        { firebaseStoragePath, error },
+        'Failed to delete original from Firebase Storage',
+      );
+    }
+
+    this.logger.log(
+      { firebaseStoragePath },
+      'Profile picture processing complete',
+    );
+
+    return { compressedFileStoragePath: firebaseStoragePath };
+  }
+}
