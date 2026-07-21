@@ -270,15 +270,18 @@ suite('SCM change navigation E2E', () => {
 		await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 	});
 
-	test('contributes the index browser and worktree-name context actions', async () => {
+	test('contributes the Source Control file and worktree context actions', async () => {
 		const extension = vscode.extensions.getExtension<any>('EthanSK.better-git-vscode')!;
 		const contributedCommands = extension.packageJSON.contributes.commands as Array<{ command: string }>;
 		const menus = extension.packageJSON.contributes.menus as Record<string, Array<Record<string, string>>>;
 
 		const openIndexCommand = 'better-git-vscode.open-index-in-system-browser';
 		const copyWorktreeNameCommand = 'better-git-vscode.copy-worktree-name';
+		const revealFileCommand = 'better-git-vscode.reveal-current-file-in-explorer';
+		const addWorktreeCommand = 'better-git-vscode.add-worktree-to-workspace';
 		assert.ok(contributedCommands.some(({ command }) => command === openIndexCommand));
 		assert.ok(contributedCommands.some(({ command }) => command === copyWorktreeNameCommand));
+		assert.ok(contributedCommands.some(({ command }) => command === addWorktreeCommand));
 
 		assert.deepStrictEqual(
 			menus['scm/resourceState/context'].find(({ command }) => command === openIndexCommand),
@@ -291,11 +294,27 @@ suite('SCM change navigation E2E', () => {
 			}
 		);
 		assert.deepStrictEqual(
+			menus['scm/resourceState/context'].find(({ command }) => command === revealFileCommand),
+			{
+				command: revealFileCommand,
+				group: 'navigation@-999',
+				when: 'scmProvider == git'
+			}
+		);
+		assert.deepStrictEqual(
 			menus['explorer/context'].find(({ command }) => command === openIndexCommand),
 			{
 				command: openIndexCommand,
 				group: 'navigation@-1000',
 				when: "resourceScheme == file && resourceFilename == 'index.html'"
+			}
+		);
+		assert.deepStrictEqual(
+			menus['scm/sourceControl'].find(({ command }) => command === addWorktreeCommand),
+			{
+				command: addWorktreeCommand,
+				group: 'navigation@-999',
+				when: 'scmProvider == git && scmProviderContext == worktree'
 			}
 		);
 		assert.deepStrictEqual(
@@ -312,6 +331,7 @@ suite('SCM change navigation E2E', () => {
 		const registeredCommands = await vscode.commands.getCommands(true);
 		assert.ok(registeredCommands.includes(openIndexCommand), 'browser command must be registered at runtime');
 		assert.ok(registeredCommands.includes(copyWorktreeNameCommand), 'copy command must be registered at runtime');
+		assert.ok(registeredCommands.includes(addWorktreeCommand), 'add-worktree command must be registered at runtime');
 
 		const originalClipboard = await vscode.env.clipboard.readText();
 		try {
@@ -450,6 +470,64 @@ suite('SCM change navigation E2E', () => {
 			execFileSync('git', ['reset', '--hard', baseSha], { cwd: worktreePath, stdio: 'pipe' });
 			fs.rmSync(originalPath, { force: true });
 			await config.update('autoAddWorktreeOnReveal', previousSetting, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('SCM row reveal targets the clicked worktree file and adds its root', async () => {
+		const worktreePath = process.env.BGV_SCM_REVEAL_WORKTREE_PATH;
+		assert.ok(worktreePath, 'runTest.ts must provide the SCM reveal worktree fixture path');
+		const changedPath = path.join(worktreePath, 'committed', 'mod_a.txt');
+		const changedUri = vscode.Uri.file(changedPath);
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousSetting = config.inspect<boolean>('autoAddWorktreeOnReveal')?.globalValue;
+
+		try {
+			await config.update('autoAddWorktreeOnReveal', true, vscode.ConfigurationTarget.Global);
+			fs.appendFileSync(changedPath, 'revealed from the selected SCM row\n');
+			const unrelatedEditor = await vscode.window.showTextDocument(wsUri('committed/tall_e.txt'), { preview: false });
+			const unrelatedPosition = new vscode.Position(50, 0);
+			unrelatedEditor.selection = new vscode.Selection(unrelatedPosition, unrelatedPosition);
+			assert.strictEqual(unrelatedEditor.selection.active.line, 50);
+			assert.strictEqual(vscode.workspace.getWorkspaceFolder(changedUri), undefined);
+
+			await vscode.commands.executeCommand(
+				'better-git-vscode.reveal-current-file-in-explorer',
+				{ resourceUri: changedUri }
+			);
+
+			await poll(() => vscode.workspace.getWorkspaceFolder(changedUri), 'selected SCM worktree root to be added');
+			await poll(() => {
+				const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+				return input instanceof vscode.TabInputText && input.uri.path === changedUri.path;
+			}, 'selected SCM file to become the active editable file');
+			assert.strictEqual(
+				vscode.window.activeTextEditor?.selection.active.line,
+				0,
+				'unrelated active-editor cursor position must not be copied onto the clicked SCM file'
+			);
+		} finally {
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			execFileSync('git', ['reset', '--hard', baseSha], { cwd: worktreePath, stdio: 'pipe' });
+			await config.update('autoAddWorktreeOnReveal', previousSetting, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('worktree header add keeps every existing workspace folder', async () => {
+		const worktreePath = process.env.BGV_HEADER_WORKTREE_PATH;
+		assert.ok(worktreePath, 'runTest.ts must provide the header worktree fixture path');
+		const worktreeRoot = vscode.Uri.file(worktreePath);
+		const foldersBefore = (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath);
+		assert.strictEqual(vscode.workspace.getWorkspaceFolder(worktreeRoot), undefined);
+
+		await vscode.commands.executeCommand(
+			'better-git-vscode.add-worktree-to-workspace',
+			{ rootUri: worktreeRoot }
+		);
+
+		await poll(() => vscode.workspace.getWorkspaceFolder(worktreeRoot), 'clicked worktree root to be added');
+		const foldersAfter = (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath);
+		for (const existingFolder of foldersBefore) {
+			assert.ok(foldersAfter.includes(existingFolder), `existing workspace folder was replaced: ${existingFolder}`);
 		}
 	});
 

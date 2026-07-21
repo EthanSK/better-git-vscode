@@ -69,7 +69,7 @@ Exact mixed-state restoration remains paused until VS Code provides a dependable
 
 Reviewing a file that lives in another git **worktree** and want it in your workspace? Run **`Better Git: Add current file's git worktree to workspace`** (`better-git-vscode.add-current-worktree-to-workspace`) from the Command Palette. It finds the worktree the current (or under-review) file belongs to and adds that worktree's root as a workspace folder, so it shows up in your Explorer / Source Control sidebar.
 
-The **`Open & reveal current file in Explorer`** command (`better-git-vscode.reveal-current-file-in-explorer`, `Option+R` by default) now does this automatically when needed. If the current diff/file belongs to a worktree that Source Control knows about but Explorer does not contain, one press opens the real editable file, adds that worktree root, waits for Explorer to register it, and reveals the file there. The explicit add-worktree command remains useful when you want to add the root without switching away from the diff. Turn off **Auto-add worktree on reveal** (`better-git-vscode.autoAddWorktreeOnReveal`) if you prefer reveal to open the file without changing workspace folders; it is on by default.
+The **`Open & Reveal File in Explorer`** command (`better-git-vscode.reveal-current-file-in-explorer`, `Option+R` by default) now does this automatically when needed. If the current diff/file belongs to a worktree that Source Control knows about but Explorer does not contain, one press opens the real editable file, adds that worktree root, waits for Explorer to register it, and reveals the file there. The explicit add-worktree command remains useful when you want to add the root without switching away from the diff. Turn off **Auto-add worktree on reveal** (`better-git-vscode.autoAddWorktreeOnReveal`) if you prefer reveal to open the file without changing workspace folders; it is on by default.
 
 - Works from a diff, a plain editor, or while focus is in the Source Control panel — it uses the same "file under review" detection as the navigation commands.
 - If the file isn't inside any git repository, it just tells you so (no error). If the worktree is already a workspace folder, it says so and does nothing.
@@ -78,7 +78,8 @@ The **`Open & reveal current file in Explorer`** command (`better-git-vscode.rev
 ## Useful right-click actions
 
 - Right-click a local **`index.html`** in Explorer and choose **Open index.html in System Browser**, or use the same action on a changed `index.html` row in Source Control, to open that exact report/page in your default browser. VS Code does not expose filenames to SCM menu `when` clauses, so the Source Control action is visible on other Git rows too; its runtime guard refuses anything except a local `index.html`.
-- Right-click a linked **worktree header** and choose **Copy Worktree Name** to copy the worktree root folder name without a notification getting in the way.
+- Right-click any changed Source Control file and choose **Open & Reveal File in Explorer** to add its worktree when needed and reveal that exact row, even when another editor was active.
+- Right-click a linked **worktree header** and choose **Add Worktree to Workspace** to append it to the current Explorer without replacing your existing workspace folders. **Copy Worktree Name** remains immediately above it.
 
 ## Keybindings
 
@@ -230,11 +231,13 @@ own key. To disable a default instead, add a rule prefixed with `-` in `keybindi
 { "key": "alt+.", "command": "-better-git-vscode.next-scm-change" }
 ```
 
-> Tip: many people prefer to map **Open & reveal current file in Explorer**
+> Tip: many people prefer to map **Open & Reveal File in Explorer**
 > (`better-git-vscode.reveal-current-file-in-explorer`) to something like `Shift+Cmd+E`.
 > We ship the default as `Option+R` rather than `Shift+Cmd+E` because the latter is already
 > a built-in VS Code shortcut — but you're free to override it to `Shift+Cmd+E` (or anything
-> else) in your own `keybindings.json` if you don't mind reclaiming that combo.
+> else) in your own `keybindings.json` if you don't mind reclaiming that combo. Bind the Better Git
+> command unconditionally; `isInDiffEditor` becomes false while Source Control owns keyboard focus even if a
+> diff remains visibly active, which would otherwise send the key to VS Code's built-in non-worktree-aware reveal.
 
 ## Settings
 

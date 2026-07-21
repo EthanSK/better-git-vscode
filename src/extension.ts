@@ -593,6 +593,22 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
     );
 
+    // VS Code's built-in "Open Worktree in Current Window" replaces the window's current folder/workspace.
+    // This header action deliberately does the additive operation instead: keep every existing workspace folder
+    // and append the clicked worktree root, using the same single-folder -> multi-root safety helper as reveal.
+    const addWorktreeToWorkspaceCommand = vscode.commands.registerCommand(
+        "better-git-vscode.add-worktree-to-workspace",
+        async (...targets: unknown[]) => {
+            const rootUri = findWorktreeRootUri(targets);
+            if (rootUri?.scheme !== "file" || !fs.existsSync(path.join(rootUri.fsPath, ".git"))) {
+                await vscode.window.showErrorMessage("Better Git: VS Code did not provide a local git worktree.");
+                return;
+            }
+            addWorktreeRootToWorkspace(rootUri, true);
+            // NOTHING AFTER THIS POINT — adding the first extra folder can restart this extension host.
+        }
+    );
+
     // ──────────────────────────────────────────────────────────────────────────────────────────
     // SMART MOUSE-BUTTON COMMANDS (smart-forward / smart-back)
     //
@@ -643,18 +659,28 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // resolves that git: uri back to the on-disk file: uri (via the git: query's {path}), and revealInExplorer
     // is a supported command that reveals any file: uri (microsoft/vscode#94720). So we resolve, then reveal
     // THAT. If its git worktree is not already an Explorer workspace folder, add that root first — Explorer
-    // cannot reveal out-of-workspace files. Bind to cmd+shift+e (when: isInDiffEditor) to make reveal work from
-    // staged diffs. Works from unstaged diffs and plain editors too (getActiveFileUri handles all three).
-    let disposable11 = vscode.commands.registerCommand("better-git-vscode.reveal-current-file-in-explorer", async () => {
+    // cannot reveal out-of-workspace files. A custom shortcut must invoke this command UNCONDITIONALLY: the
+    // `isInDiffEditor` context key becomes false when Source Control owns keyboard focus even while the diff is
+    // still the active visible tab. Works from SCM row menus, staged/unstaged diffs, and plain editors.
+    let disposable11 = vscode.commands.registerCommand("better-git-vscode.reveal-current-file-in-explorer", async (...targets: unknown[]) => {
+        // A Source Control resource-menu invocation must act on the clicked row, not whichever editor/tab was
+        // previously active. Keyboard and Command Palette invocations have no target and retain the tab-aware
+        // active-file resolver that works while Source Control owns focus.
+        const contextUri = toFilePathUri(findContextResourceUri(targets));
+
         // Capture the cursor + scroll position of the diff you're viewing FIRST (synchronously, before any
         // await), so the working file can open at the SAME spot instead of jumping to the top.
         // vscode.window.activeTextEditor is the diff's focused side: selection.active is the cursor,
         // visibleRanges[0].start is the top visible line.
         const src = vscode.window.activeTextEditor;
-        const cursor = src?.selection.active;
-        const topLine = src?.visibleRanges && src.visibleRanges.length > 0 ? src.visibleRanges[0].start.line : undefined;
+        const activeUri = currentReviewFileUri() ?? toFilePathUri(src?.document.uri);
+        const preserveActivePosition = !contextUri || (!!activeUri && sameRootPath(activeUri, contextUri));
+        const cursor = preserveActivePosition ? src?.selection.active : undefined;
+        const topLine = preserveActivePosition && src?.visibleRanges && src.visibleRanges.length > 0
+            ? src.visibleRanges[0].start.line
+            : undefined;
 
-        const uri = await getActiveFileUri();
+        const uri = contextUri ?? await getActiveFileUri();
         if (!uri) {
             return;
         }
@@ -884,6 +910,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         disposable16, // add-current-worktree-to-workspace (v1.2.14)
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,
+        addWorktreeToWorkspaceCommand,
         stageAndAdvanceStatusBarItem, // fixed-location Stage & Next mouse target (v1.2.20)
         lastStagedStatusBarItem, // disposed cleanly on deactivate
         configListener,

@@ -18,9 +18,13 @@ async function main() {
 	let fixturePath: string | undefined;
 	let auxiliaryPath: string | undefined;
 	let workspaceFilePath: string | undefined;
+	let testUserDataPath: string | undefined;
+	let testExtensionsPath: string | undefined;
 	let revealWorktreeParent: string | undefined;
 	let revealWorktreePath: string | undefined;
 	let disabledRevealWorktreePath: string | undefined;
+	let scmRevealWorktreePath: string | undefined;
+	let headerWorktreePath: string | undefined;
 	try {
 		// The folder containing the Extension Manifest package.json
 		// Passed to `--extensionDevelopmentPath`
@@ -45,6 +49,12 @@ async function main() {
 		// The first folder remains the git fixture, preserving every existing test's workspaceFolders[0] contract.
 		auxiliaryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'better-git-vscode-e2e-aux-'));
 		workspaceFilePath = path.join(os.tmpdir(), `better-git-vscode-e2e-${process.pid}-${Date.now()}.code-workspace`);
+		// @vscode/test-electron otherwise places the profile under <repo>/.vscode-test. A descriptive task
+		// worktree path can push Code's main-process IPC socket beyond macOS's 103-character Unix-socket limit
+		// before any extension test starts. Keep only the isolated profile/socket roots short; the actual extension
+		// development path remains this checkout, so the production code under test is unchanged.
+		testUserDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bgv-user-'));
+		testExtensionsPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bgv-ext-'));
 		fs.writeFileSync(
 			workspaceFilePath,
 			JSON.stringify({ folders: [{ path: fixturePath }, { path: auxiliaryPath }] })
@@ -77,13 +87,25 @@ async function main() {
 		revealWorktreeParent = fs.mkdtempSync(path.join(os.tmpdir(), 'better-git-vscode-reveal-worktree-'));
 		revealWorktreePath = path.join(revealWorktreeParent, 'linked-worktree');
 		disabledRevealWorktreePath = path.join(revealWorktreeParent, 'disabled-linked-worktree');
+		scmRevealWorktreePath = path.join(revealWorktreeParent, 'scm-linked-worktree');
+		headerWorktreePath = path.join(revealWorktreeParent, 'header-linked-worktree');
 		execFileSync('git', ['worktree', 'add', '--detach', revealWorktreePath], { cwd: fixturePath, stdio: 'pipe' });
 		execFileSync('git', ['worktree', 'add', '--detach', disabledRevealWorktreePath], {
 			cwd: fixturePath,
 			stdio: 'pipe',
 		});
+		execFileSync('git', ['worktree', 'add', '--detach', scmRevealWorktreePath], {
+			cwd: fixturePath,
+			stdio: 'pipe',
+		});
+		execFileSync('git', ['worktree', 'add', '--detach', headerWorktreePath], {
+			cwd: fixturePath,
+			stdio: 'pipe',
+		});
 		process.env.BGV_REVEAL_WORKTREE_PATH = revealWorktreePath;
 		process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH = disabledRevealWorktreePath;
+		process.env.BGV_SCM_REVEAL_WORKTREE_PATH = scmRevealWorktreePath;
+		process.env.BGV_HEADER_WORKTREE_PATH = headerWorktreePath;
 		process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH = profilePicFixtureAfterPath;
 
 		// Download VS Code, unzip it and run the integration tests against the fixture workspace.
@@ -97,6 +119,8 @@ async function main() {
 			extensionTestsPath,
 			launchArgs: [
 				workspaceFilePath,
+				`--user-data-dir=${testUserDataPath}`,
+				`--extensions-dir=${testExtensionsPath}`,
 				'--disable-workspace-trust', // tmp-dir fixture would otherwise trigger the trust prompt and block the git extension
 				'--skip-welcome',
 				'--skip-release-notes',
@@ -109,9 +133,16 @@ async function main() {
 	} finally {
 		delete process.env.BGV_REVEAL_WORKTREE_PATH;
 		delete process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH;
+		delete process.env.BGV_SCM_REVEAL_WORKTREE_PATH;
+		delete process.env.BGV_HEADER_WORKTREE_PATH;
 		delete process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH;
 		if (fixturePath) {
-			for (const worktreePath of [revealWorktreePath, disabledRevealWorktreePath]) {
+			for (const worktreePath of [
+				revealWorktreePath,
+				disabledRevealWorktreePath,
+				scmRevealWorktreePath,
+				headerWorktreePath,
+			]) {
 				if (!worktreePath) {
 					continue;
 				}
@@ -141,6 +172,12 @@ async function main() {
 		}
 		if (workspaceFilePath) {
 			fs.rmSync(workspaceFilePath, { force: true });
+		}
+		if (testUserDataPath) {
+			fs.rmSync(testUserDataPath, { recursive: true, force: true });
+		}
+		if (testExtensionsPath) {
+			fs.rmSync(testExtensionsPath, { recursive: true, force: true });
 		}
 	}
 }

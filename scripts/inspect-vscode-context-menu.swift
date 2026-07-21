@@ -21,6 +21,12 @@ struct MenuProbe: Codable {
   let items: [String]
 }
 
+struct RowProbe: Codable {
+  let title: String
+  let description: String
+  let value: String
+}
+
 func fail(_ message: String, code: Int32) -> Never {
   fputs("\(message)\n", stderr)
   exit(code)
@@ -111,7 +117,7 @@ guard AXIsProcessTrusted() else {
 guard CommandLine.arguments.count >= 3,
       let pid = pid_t(CommandLine.arguments[2]) else {
   fail(
-    "usage: swift inspect-vscode-context-menu.swift cancel <pid> | show <pid> <source-control|explorer> <row-description>",
+    "usage: swift inspect-vscode-context-menu.swift cancel <pid> | list-rows <pid> <source-control|explorer> | show <pid> <source-control|explorer> <row-description>",
     code: 2
   )
 }
@@ -123,12 +129,13 @@ if operation == "cancel" {
   exit(0)
 }
 
-guard operation == "show", CommandLine.arguments.count == 5 else {
-  fail("show requires: <pid> <source-control|explorer> <row-description>", code: 2)
+guard (operation == "show" && CommandLine.arguments.count == 5)
+        || (operation == "list-rows" && CommandLine.arguments.count == 4) else {
+  fail("expected show <pid> <view> <row-description> or list-rows <pid> <view>", code: 2)
 }
 
 let view = CommandLine.arguments[3]
-let rowDescription = CommandLine.arguments[4]
+let rowDescription = operation == "show" ? CommandLine.arguments[4] : ""
 let viewTitle: String
 switch view {
 case "source-control": viewTitle = "Source Control"
@@ -165,6 +172,23 @@ guard let viewMenuItem = findElement(
 }
 guard AXUIElementPerformAction(viewMenuItem, kAXPressAction as CFString) == .success else {
   fail("Could not reveal VS Code's \(viewTitle) view", code: 9)
+}
+
+if operation == "list-rows" {
+  Thread.sleep(forTimeInterval: 0.2)
+  let rows = descendants(application).compactMap { element -> RowProbe? in
+    guard stringAttribute(element, kAXRoleAttribute as CFString) == (kAXRowRole as String) else {
+      return nil
+    }
+    return RowProbe(
+      title: stringAttribute(element, kAXTitleAttribute as CFString),
+      description: stringAttribute(element, kAXDescriptionAttribute as CFString),
+      value: stringAttribute(element, kAXValueAttribute as CFString)
+    )
+  }
+  let encoded = try JSONEncoder().encode(rows)
+  print(String(decoding: encoded, as: UTF8.self))
+  exit(0)
 }
 
 guard let row = findElement(

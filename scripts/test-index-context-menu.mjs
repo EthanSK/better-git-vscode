@@ -11,6 +11,9 @@ const menuInspectorPath = path.join(scriptDirectory, 'inspect-vscode-context-men
 const vscodeExecutablePath = process.env.BGV_VSCODE_EXECUTABLE_PATH
   ?? '/Applications/Visual Studio Code.app/Contents/MacOS/Code';
 const commandTitle = 'Open index.html in System Browser';
+const revealCommandTitle = 'Open & Reveal File in Explorer';
+const copyWorktreeTitle = 'Copy Worktree Name';
+const addWorktreeTitle = 'Add Worktree to Workspace';
 
 if (process.platform !== 'darwin') {
   throw new Error('The native VS Code context-menu regression requires macOS');
@@ -23,6 +26,7 @@ const testRoot = fs.mkdtempSync('/tmp/bgv-index-menu-');
 const repositoryPath = path.join(testRoot, 'independent-workspace');
 const userDataPath = path.join(testRoot, 'user-data');
 const extensionsPath = path.join(testRoot, 'extensions');
+const linkedWorktreePath = path.join(testRoot, 'menu-linked-worktree');
 const evidenceDirectory = process.env.BGV_INDEX_MENU_EVIDENCE_DIR ?? path.join(testRoot, 'evidence');
 let testProcess;
 let testFailed = false;
@@ -45,6 +49,12 @@ function createFixture() {
   git('config', 'commit.gpgsign', 'false');
   git('add', '-A');
   git('commit', '-m', 'base');
+  execFileSync('git', ['-C', repositoryPath, 'worktree', 'add', '--detach', linkedWorktreePath], { stdio: 'pipe' });
+  fs.mkdirSync(path.join(userDataPath, 'User'), { recursive: true });
+  fs.writeFileSync(
+    path.join(userDataPath, 'User', 'settings.json'),
+    JSON.stringify({ 'git.detectWorktrees': true })
+  );
 }
 
 function cancelMenu(pid) {
@@ -89,6 +99,33 @@ function inspectMenu(pid, windowID, view, row, evidenceStem) {
       cancelMenu(pid);
     }
   }
+}
+
+function sourceControlRows(pid) {
+  const output = execFileSync(
+    'swift',
+    [menuInspectorPath, 'list-rows', String(pid), 'source-control'],
+    { encoding: 'utf8', timeout: 25_000 }
+  ).trim();
+  return JSON.parse(output.split('\n').at(-1));
+}
+
+async function waitForWorktreeRow(pid, timeoutMs = 20_000) {
+  const worktreeName = path.basename(linkedWorktreePath);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = sourceControlRows(pid);
+    for (const row of rows) {
+      for (const text of [row.title, row.description, row.value]) {
+        if (text === worktreeName || text?.includes(worktreeName)) {
+          console.log(`[index-menu-test] worktree row=${JSON.stringify(row)}`);
+          return text;
+        }
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  throw new Error(`Timed out waiting for Source Control worktree row: ${worktreeName}`);
 }
 
 async function stopTestProcess() {
@@ -175,8 +212,27 @@ try {
     'index-context-source-control'
   );
   assert.equal(scmProbe.items[0], commandTitle, 'Source Control action must be first and visible');
+  assert.ok(
+    scmProbe.items.includes(revealCommandTitle),
+    'Better Git reveal must be visible in the native Source Control file menu'
+  );
+
+  const worktreeRow = await waitForWorktreeRow(testProcess.pid);
+  const worktreeProbe = inspectMenu(
+    testProcess.pid,
+    windowID,
+    'source-control',
+    worktreeRow,
+    'worktree-context-source-control'
+  );
+  assert.deepEqual(
+    worktreeProbe.items.slice(0, 2),
+    [copyWorktreeTitle, addWorktreeTitle],
+    'Copy and additive workspace actions must lead the native worktree-header menu'
+  );
 
   console.log('BETTER_GIT_INDEX_CONTEXT_MENUS_VISIBLE');
+  console.log('BETTER_GIT_WORKTREE_CONTEXT_MENUS_VISIBLE');
 } catch (error) {
   testFailed = true;
   console.error(error);

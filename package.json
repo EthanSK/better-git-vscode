@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.35",
+  "version": "1.2.36",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -99,7 +99,7 @@
       {
         "command": "better-git-vscode.reveal-current-file-in-explorer",
         "category": "Better Git",
-        "title": "Open & reveal current file in Explorer (works from staged diffs)"
+        "title": "Open & Reveal File in Explorer"
       },
       {
         "command": "better-git-vscode.open-change-at-position",
@@ -130,6 +130,11 @@
         "command": "better-git-vscode.copy-worktree-name",
         "category": "Better Git",
         "title": "Copy Worktree Name"
+      },
+      {
+        "command": "better-git-vscode.add-worktree-to-workspace",
+        "category": "Better Git",
+        "title": "Add Worktree to Workspace"
       }
     ],
     "menus": {
@@ -153,12 +158,21 @@
         {
           "command": "better-git-vscode.copy-worktree-name",
           "when": "false"
+        },
+        {
+          "command": "better-git-vscode.add-worktree-to-workspace",
+          "when": "false"
         }
       ],
       "scm/resourceState/context": [
         {
           "command": "better-git-vscode.open-index-in-system-browser",
           "group": "navigation@-1000",
+          "when": "scmProvider == git"
+        },
+        {
+          "command": "better-git-vscode.reveal-current-file-in-explorer",
+          "group": "navigation@-999",
           "when": "scmProvider == git"
         }
       ],
@@ -173,6 +187,11 @@
         {
           "command": "better-git-vscode.copy-worktree-name",
           "group": "navigation@-1000",
+          "when": "scmProvider == git && scmProviderContext == worktree"
+        },
+        {
+          "command": "better-git-vscode.add-worktree-to-workspace",
+          "group": "navigation@-999",
           "when": "scmProvider == git && scmProviderContext == worktree"
         }
       ]

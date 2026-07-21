@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.36] — add worktrees without replacing the workspace
+
+- **Added `Add Worktree to Workspace` to linked-worktree header menus.** Unlike VS Code's built-in `Open Worktree in Current Window`, it appends the clicked worktree to Explorer and preserves every folder already in the current workspace.
+- **Added `Open & Reveal File in Explorer` to changed-file Source Control menus.** It targets the clicked row, opens the editable file, and automatically adds that worktree when Explorer does not contain it.
+- **Corrected the Shift+Cmd+E Source Control-focus contract.** `isInDiffEditor` becomes false while Source Control owns keyboard focus, so a split custom binding can fall through to VS Code's non-worktree-aware reveal command even with a diff visibly active. Worktree-aware reveal bindings must invoke Better Git unconditionally; Ethan's live binding now does.
+- **Expanded real-host coverage.** The regressions require selected-row reveal to prefer its menu argument over a stale editor and require header-add to preserve all existing multi-root workspace folders.
+
 ## [1.2.35] — step through the whole replacement
 
 - **Fixed large replacements skipping unread code even after the rendered-endpoint fix.** Git's unified diff could contain several short added-line runs inside one broad `@@` group, while VS Code treated the same visual replacement differently. Better Git measured only the small current run, then accepted an enormous native jump or cross-file rollover while the broader replacement still continued off-screen.
