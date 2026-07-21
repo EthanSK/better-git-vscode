@@ -2111,11 +2111,16 @@ const hunkStagingConfig = (visLines: number) => {
     // Overlap: lines kept on screen between consecutive steps so reading context carries across (default 4).
     const rawOverlap = cfg.get<number>("hunkStagingOverlap", 4);
     const overlap = Number.isFinite(rawOverlap) && (rawOverlap as number) >= 0 ? Math.floor(rawOverlap as number) : 4;
-    // Threshold: minimum hunk height (lines) to ENGAGE staging. 0 (default) = "auto" = the visible viewport
-    // height, so staging kicks in exactly when the hunk can't fit on one screen. A positive value overrides.
+    // Threshold: minimum hunk height (lines) to ENGAGE staging. 0 (default) = presentation-aware AUTO:
+    // callers inspect the hunk's actual first/last rendered positions instead of treating the viewport's logical
+    // line span as usable space. That distinction matters when a newly reached hunk starts near the bottom, when
+    // lines wrap, or when diff alignment consumes vertical space. A positive value retains the fixed override.
     const rawThreshold = cfg.get<number>("hunkStagingThreshold", 0);
-    const threshold =
-        Number.isFinite(rawThreshold) && (rawThreshold as number) > 0 ? Math.floor(rawThreshold as number) : visLines;
+    const thresholdOverride =
+        Number.isFinite(rawThreshold) && (rawThreshold as number) > 0
+            ? Math.floor(rawThreshold as number)
+            : undefined;
+    const threshold = thresholdOverride ?? visLines;
     // Step: lines to scroll per press. 0 (default) = "auto" = one viewport MINUS the overlap (so you advance
     // ~a screenful but keep a few lines of context). A positive value overrides with a fixed line count.
     const rawStep = cfg.get<number>("hunkStagingLineStep", 0);
@@ -2123,7 +2128,7 @@ const hunkStagingConfig = (visLines: number) => {
         Number.isFinite(rawStep) && (rawStep as number) > 0
             ? Math.max(1, Math.floor(rawStep as number))
             : Math.max(1, visLines - overlap);
-    return { enabled, overlap, threshold, step };
+    return { enabled, overlap, threshold, thresholdOverride, step };
 };
 
 // Parse the modified-side (new/right) contiguous changed regions of the file currently being reviewed, so
@@ -2366,6 +2371,15 @@ const bottomPresentationPosition = (editor: vscode.TextEditor, line: number): vs
         : new vscode.Position(clamped, 0);
 };
 
+// AUTO tall-hunk detection must answer the user-visible question: "is every changed line presented right now?"
+// Comparing hunk span with `visibleRanges` height is only an approximation. A 31-line hunk can numerically fit a
+// 33-line viewport while only its first seven lines are visible because the previous hunk occupies the rest of the
+// screen. Wrapped rows and diff alignment create the same mismatch. Checking the exact start plus the final visual
+// segment makes zoom, wrapping, sticky context, and the hunk's current landing position part of the real decision.
+const hunkIsFullyPresented = (editor: vscode.TextEditor, hunk: ModifiedHunk): boolean =>
+    positionIsVisible(editor, new vscode.Position(hunk.start, 0)) &&
+    positionIsVisible(editor, bottomPresentationPosition(editor, hunk.end));
+
 // TextEditor.revealRange is editor-scoped (so it works while Source Control owns focus) but applies a SMOOTH
 // renderer scroll asynchronously. Resolve only after the exact editor's visible range has stopped changing for a
 // short quiet period. Resolving on the FIRST range event is too early: a rapid queued keypress can then plan from a
@@ -2563,15 +2577,21 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
         );
         return false; // caret isn't inside a hunk (between changes / moved away) -> plain navigation
     }
-    const { threshold, step } = hunkStagingConfig(visLines); // overlap only feeds `step` now (BUG 8 removed TINY_TAIL)
+    const { threshold, thresholdOverride, step } = hunkStagingConfig(visLines); // overlap only feeds `step` now (BUG 8 removed TINY_TAIL)
     const span = hunk.end - hunk.start + 1;
+    const fullyPresented = hunkIsFullyPresented(ctx.editor, hunk);
     // Shared context line for EVERY decision below — 1-based line numbers so it matches the editor's gutter,
     // which is what Ethan reads off the screenshots. hunk shown as its 1-based start..end.
     const base =
         `${direction}: hunk L${hunk.start + 1}-L${hunk.end + 1} (span=${span}) | ` +
-        `viewport top=L${top + 1} bottom=L${bottom + 1} vis=${visLines} | caret=L${caret + 1} | step=${step} threshold=${threshold}`;
-    if (span <= threshold) {
-        debugLog("tall-hunk", `${base} | DECISION: hunk fits on screen (span<=threshold) -> defer to plain nav`);
+        `viewport top=L${top + 1} bottom=L${bottom + 1} vis=${visLines} | caret=L${caret + 1} | ` +
+        `step=${step} threshold=${thresholdOverride ?? "auto-rendered"} fullyPresented=${fullyPresented}`;
+    const shouldStage = thresholdOverride === undefined ? !fullyPresented : span > threshold;
+    if (!shouldStage) {
+        debugLog(
+            "tall-hunk",
+            `${base} | DECISION: ${thresholdOverride === undefined ? "whole hunk is rendered" : "span<=fixed threshold"} -> defer to plain nav`,
+        );
         return false; // hunk fits on one screen (or under the override threshold) -> behave EXACTLY as today
     }
 
@@ -2652,8 +2672,11 @@ const revealHunkOnLanding = async (
         );
         return;
     }
-    const { threshold } = hunkStagingConfig(visLines);
-    if (hunk.end - hunk.start + 1 <= threshold) {
+    const { threshold, thresholdOverride } = hunkStagingConfig(visLines);
+    const span = hunk.end - hunk.start + 1;
+    const fullyPresented = hunkIsFullyPresented(ctx.editor, hunk);
+    const shouldStage = thresholdOverride === undefined ? !fullyPresented : span > threshold;
+    if (!shouldStage) {
         return; // short hunk -> the built-in's reveal is fine, don't reposition
     }
     if (direction === "down") {

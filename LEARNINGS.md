@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-21T21:49:00Z
+**Trigger:** Ethan 2026-07-21: “I have a hunk ... it’s not doing the thing ... because I couldn’t see all the code in the viewport, I’m one level zoomed in”
+**Symptom:** In the live `profile-pic.service.ts` working-tree diff, the active `+77,31` hunk had only lines 77-83 on-screen, but Next skipped staged review. Better Git compared its 31-line span with the roughly 33 logical lines represented by the entire viewport and declared it a fit even though the preceding hunk occupied nearly all usable space.
+**Root cause:** Auto `hunkStagingThreshold` used `span <= visibleRanges bottom-top+1` as a proxy for whether the current hunk fit. That ignored the hunk's landing position, visual wrapping, sticky/cursor context, and diff alignment. A hunk can be shorter than the viewport in isolation while its final rendered position is still hidden in the current presentation.
+**Fix:** v1.2.34 makes auto mode presentation-aware: both the hunk start and the final visual segment of its end must be visible before ordinary hunk-to-hunk navigation may proceed. A bottom-stranded landing is lifted immediately; if its tail remains hidden, caret-owned Next/Previous stepping continues until the exact edge is presented. A positive fixed `hunkStagingThreshold` keeps its explicit line-count semantics.
+**Commit:** pending (v1.2.34).
+**Guard:** A real Extension Development Host regression measures its current viewport, creates a hunk shorter than that raw line count but with its start visible and tail hidden below a prior hunk, then requires Better Git to present it or remain inside it on the following press rather than open the next file. The focused regression passed against VS Code 1.129; the full release gate includes all navigation E2Es, TypeScript, webpack, ESLint, production VSIX inspection, and exact Marketplace validation.
+---
+
+---
 **Date:** 2026-07-17T11:54:23Z
 **Trigger:** Ethan after v1.2.32: “I still wanted the command palette thing to collapse all, just not automatic.”
 **Symptom:** Turning the experimental Source Control tree-state switch off correctly stopped startup automation, but it also disabled **Better Git: Collapse all worktree / repository sections in Source Control** in the Command Palette. Direct invocation hit a second runtime gate and only displayed an instruction to enable the experiment.

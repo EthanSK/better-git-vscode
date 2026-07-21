@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.33",
+  "version": "1.2.34",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -239,13 +239,13 @@
         "better-git-vscode.hunkStagingEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Step through a TALL hunk (one taller than the visible editor) in stages using the same next/previous-change keys, instead of the rest running off the bottom of the screen. next-change lands at the top of a tall hunk; pressing next again scrolls DOWN by ~a screenful within that same hunk; repeat until the bottom is on screen, then the next press advances to the next hunk. previous-change mirrors it (step UP in stages, then advance to the previous hunk). Hunks that already fit on screen are unaffected — one press goes straight to the next/previous hunk exactly as before. Turn this off to always jump hunk-to-hunk."
+          "description": "Present and step through any hunk whose complete rendered range is not visible, using the same next/previous-change keys instead of letting unread lines run off-screen. A newly reached hidden tail is lifted into view; genuinely larger hunks then scroll by ~a screenful until the exact edge is presented, and only the following press advances. Auto detection follows actual rendered positions, so it adapts to zoom, wrapping, sticky context, diff alignment, and where the hunk landed. Hunks already shown in full are unaffected. Turn this off to always jump hunk-to-hunk."
         },
         "better-git-vscode.hunkStagingThreshold": {
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Minimum hunk height, in lines, before tall-hunk staging engages. 0 (default) = AUTO: use the real height of your visible editor (from the viewport), so staging kicks in exactly when a hunk can't fit on one screen — and adapts automatically to your window size. Set a positive number to override with a fixed line count (e.g. 40 = only stage hunks taller than 40 lines). Only applies when Tall-hunk staging is enabled."
+          "description": "Minimum hunk height, in lines, before tall-hunk staging engages. 0 (default) = AUTO: inspect the hunk's actual first and final rendered positions, so staging follows zoom, wrapping, sticky context, diff alignment, and the current landing position. Set a positive number to override with a fixed line count (e.g. 40 = only stage hunks taller than 40 lines). Only applies when Tall-hunk staging is enabled."
         },
         "better-git-vscode.hunkStagingLineStep": {
           "type": "number",
