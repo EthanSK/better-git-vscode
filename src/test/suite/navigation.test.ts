@@ -861,6 +861,85 @@ suite('SCM change navigation E2E', () => {
 		assertViewportMonotonic(reverseTops, 'up', 'tall-hunk direction reversal');
 	});
 
+	test('MODIFIED viewport-fit hunk: a bottom-stranded landing is presented before advance', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const diffConfig = vscode.workspace.getConfiguration('diffEditor');
+		const previousStep = navConfig.inspect<number>('hunkStagingLineStep')?.globalValue;
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		const previousOverlap = navConfig.inspect<number>('hunkStagingOverlap')?.globalValue;
+		const previousHideUnchanged = diffConfig.inspect<boolean>('hideUnchangedRegions.enabled')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingLineStep', 0, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', 0, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingOverlap', 4, vscode.ConfigurationTarget.Global);
+			await diffConfig.update('hideUnchangedRegions.enabled', false, vscode.ConfigurationTarget.Global);
+
+			// Seed any tall diff first so we can measure this host's real viewport, then size the regression hunk
+			// just below that logical line count. This recreates the live failure at every test-window size/zoom:
+			// the hunk numerically "fits" the whole viewport but starts halfway down it, so its tail is off-screen.
+			const seed = lines(260, 'tall_e').split('\n');
+			seed[10] = 'tall_e first EDITED line 11';
+			write('committed/tall_e.txt', seed.join('\n'));
+			await refreshUntil(() => inWorkingTree('committed/tall_e.txt', 5), 'viewport seed change to appear');
+			const seedEditor = await openWorkingDiffAt('committed/tall_e.txt', 10);
+			const seedRanges = seedEditor.visibleRanges;
+			const viewportLines = seedRanges.reduce((total, range) => total + range.end.line - range.start.line + 1, 0);
+			assert.ok(viewportLines >= 12, `test viewport unexpectedly short (${viewportLines} logical lines)`);
+			await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+			const firstStart = 10;
+			const secondStart = firstStart + Math.floor(viewportLines / 4);
+			const secondSpan = Math.floor(viewportLines / 2);
+			const secondEnd = secondStart + secondSpan - 1;
+			const content = lines(260, 'tall_e').split('\n');
+			content[firstStart] = 'tall_e first EDITED line 11';
+			for (let i = secondStart; i <= secondEnd; i++) {
+				content[i] = `tall_e viewport-fit EDITED line ${i + 1}`;
+			}
+			write('committed/tall_e.txt', content.join('\n'));
+			const nextFile = lines(10, 'mod_d').split('\n');
+			nextFile[2] = 'mod_d next-file EDITED line 3';
+			write('committed/mod_d.txt', nextFile.join('\n'));
+			await refreshUntil(
+				() => inWorkingTree('committed/tall_e.txt', 5) && inWorkingTree('committed/mod_d.txt', 5),
+				'viewport-fit regression files to appear'
+			);
+
+			const editor = await openWorkingDiffAt('committed/tall_e.txt', firstStart);
+			await poll(
+				() => positionIsVisible(editor, new vscode.Position(secondStart, 0)),
+				'viewport-fit hunk start to be visible before navigation'
+			);
+			assert.ok(
+				!positionIsVisible(editor, new vscode.Position(secondEnd, 0)),
+				'fixture must strand the viewport-fit hunk tail below the screen'
+			);
+			assert.ok(secondSpan < viewportLines, 'regression hunk must be shorter than the raw viewport line count');
+
+			await nextChange();
+			await expectCursorVisibleAt('committed/tall_e.txt', secondStart);
+			assert.strictEqual(activeTabPath(), wsUri('committed/tall_e.txt').path);
+
+			// If lifting the hunk start presents its tail too, the next press may advance normally. If renderer
+			// padding/wrapping still leaves the tail off-screen, the next press must remain in this hunk and step.
+			// The old span<=viewport shortcut did neither: it left the tail hidden and immediately changed files.
+			if (!positionIsVisible(editor, new vscode.Position(secondEnd, 0))) {
+				await nextChange();
+				const stepped = await poll(() => {
+					const current = visibleEditorFor(wsUri('committed/tall_e.txt'));
+					return current && current.selection.active.line > secondStart ? current : undefined;
+				}, 'viewport-fit hunk to step before changing files');
+				assert.ok(stepped.selection.active.line <= secondEnd);
+				assert.strictEqual(activeTabPath(), wsUri('committed/tall_e.txt').path);
+			}
+		} finally {
+			await navConfig.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
+			await navConfig.update('hunkStagingOverlap', previousOverlap, vscode.ConfigurationTarget.Global);
+			await diffConfig.update('hideUnchangedRegions.enabled', previousHideUnchanged, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('MODIFIED tall hunk: sticky-context rapid one-line steps are caret-owned and reversible', async () => {
 		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
 		const editorConfig = vscode.workspace.getConfiguration('editor');

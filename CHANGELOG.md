@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.34] — detect what the hunk actually shows
+
+- **Fixed a hunk near the bottom of the editor skipping ahead while unread lines were still off-screen.** Auto tall-hunk detection no longer compares the hunk's line count with the whole viewport's logical line span; that could call a 31-line hunk a fit in a 33-line viewport even when the previous hunk left only seven of those lines visible.
+- **Auto mode now checks the rendered hunk endpoints.** A newly reached hunk whose final visual position is hidden is lifted into view on that same navigation press. If zoom, wrapping, sticky context, or diff alignment still leaves a tail off-screen, later Next/Previous presses stay inside the hunk until its exact edge has been presented.
+- **Added a real viewport-boundary regression.** The isolated Extension Development Host sizes a hunk below the raw viewport line count, strands it at the bottom, and proves Better Git presents or steps through its hidden tail before changing files.
+
 ## [1.2.33] — keep manual collapse available
 
 - **Restored the Command Palette collapse independently of automation.** **Better Git: Collapse all worktree / repository sections in Source Control** is always visible and enabled again, even while experimental Source Control startup behavior is off.

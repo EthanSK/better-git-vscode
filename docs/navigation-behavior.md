@@ -14,7 +14,7 @@ For a brand-new file, Next and Previous move by the configured logical-line step
 4. If the remaining distance is smaller than a full step, consume that partial step and visibly present the edge.
 5. Only a later press, made while the caret is already at the presented edge, may move to another file.
 
-Tall diff hunks follow the same rule at hunk boundaries. A hunk that fits in the viewport remains normal hunk-to-hunk navigation. A hunk that does not fit is reviewed in overlapping screen-sized stages; its exact first or last line is presented before the following press can leave it.
+Tall diff hunks follow the same rule at hunk boundaries. Auto mode tests the exact first and final rendered positions rather than comparing logical line counts: a hunk stranded near the bottom is lifted into view even when its total line count is smaller than the viewport's, while a hunk whose complete rendered range is already visible remains normal hunk-to-hunk navigation. Anything that still does not fit is reviewed in overlapping screen-sized stages; its exact first or last line is presented before the following press can leave it.
 
 Reversing direction always continues from the current caret. Previous does not reset to the bottom of the file, and Next does not restart from the top. When Previous enters a different file, Better Git VS Code deliberately lands at that file's last reviewable position so upward review begins in the right place.
 
@@ -26,12 +26,13 @@ The stable implementation uses editor-scoped `TextEditor.revealRange` calls, kee
 
 ## Regression coverage
 
-The isolated real VS Code Extension Development Host suite covers 35 scenarios, including:
+The isolated real VS Code Extension Development Host suite covers 37 scenarios, including:
 
 - repeated Next and Previous in wrapped untracked and staged-new files;
 - partial final steps at the top and bottom before cross-file rollover;
 - direction reversal from the current caret;
 - rapid queued input while Source Control retains focus;
+- a viewport-fit hunk stranded below a preceding hunk;
 - tall-hunk top, middle, and final-edge presentation in both directions;
 - wrapped final-line visual segments;
 - backward and stage-and-Previous cross-file landing;
