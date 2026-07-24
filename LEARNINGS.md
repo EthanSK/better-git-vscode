@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-24T14:19:18Z
+**Trigger:** Ethan 2026-07-24 after v1.2.39: “is there a way to configure which chat it uses, maybe the first time u click it some setup happens that scans ur system for codex or claude and uses that? also what reasoning effort does it use”
+**Symptom:** Commit-message generation was safely independent of Copilot, but it was hardwired to Codex. There was no explicit first-use choice for Ethan's signed-in Codex versus Claude Code accounts, no command to switch later, and Codex reasoning effort depended on the CLI default.
+**Root cause:** v1.2.39 implemented one provider directly. Automatically preferring whichever CLI appeared first would have hidden which account and billing source was used, while a broad filesystem scan would have made a small Source Control action slow and unpredictable.
+**Fix:** v1.2.40 adds the application-scoped `commitMessageProvider` setting (`ask | codex | claude`) and **Better Git: Change Commit Message AI Provider**. First use checks configured paths, the extension-host PATH, and a narrow standard macOS path list, then asks among detected providers and saves the explicit choice globally. A custom executable path never silently falls back if it is wrong. The shared staged-first, bounded-context, cancellation, no-symlink-following, no-auto-commit, and edited-input guards now wrap both providers. Codex explicitly uses `model_reasoning_effort="none"`; Claude uses `--effort low` from an empty temporary workspace with tools, setting sources, and session persistence disabled.
+**Commit:** c565cd7c239ca220ca7ba07e2c20ba7a9364d732 (PR #68, squash-merged; published as v1.2.40).
+**Guard:** The real VS Code 1.130 Extension Development Host suite passes 45/45, including both subprocess argument contracts, staged-only exclusion, working-tree plus untracked input, symbolic-link non-following, selected-repository input filling, generic menu contributions, provider setting default/scope, both executable settings, and absence of `scm/inputBox`. Authenticated Codex 0.142.4 and Claude Code 2.1.218 smokes returned the required structured JSON with the exact production effort and isolation flags. TypeScript, production webpack, ESLint, `git diff --check`, and the nine-file VSIX inspection passed. The exact v1.2.40 VSIX at SHA-256 `a127f34d3811a077fcb798c7223bfaba0416ad5f3c933801c287d9c7b8c414f7` passed authenticated publisher validation, the public validated-only Gallery query used by VS Code, exact download, and byte comparison when the verifier printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED`. Normal VS Code was not installed, updated, reloaded, or restarted.
+---
+
+---
 **Date:** 2026-07-24T13:39:52Z
 **Trigger:** Ethan 2026-07-24: “can u hook up the ai button on the right of the commit message to go through a different source coz i dont pay for copilot but i still wanna ai generate the commit messages”
 **Symptom:** VS Code's sparkle inside the commit-message input was tied to GitHub Copilot, so Ethan could not use it without Copilot even though his local Codex CLI was already signed in.
