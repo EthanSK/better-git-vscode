@@ -195,6 +195,27 @@ suite('SCM change navigation E2E', () => {
 
 	const nextChange = () => vscode.commands.executeCommand('better-git-vscode.next-scm-change');
 	const previousChange = () => vscode.commands.executeCommand('better-git-vscode.previous-scm-change');
+	const chooseCommitMessageProvider = async (provider: 'codex' | 'claude') => {
+		let settled = false;
+		const providerCommand = Promise
+			.resolve(vscode.commands.executeCommand('better-git-vscode.change-commit-message-ai-provider'))
+			.finally(() => {
+				settled = true;
+			});
+		const deadline = Date.now() + 15_000;
+		while (!settled && Date.now() < deadline) {
+			await sleep(100);
+			if (provider === 'claude') {
+				await vscode.commands.executeCommand('workbench.action.quickOpenSelectNext');
+			}
+			await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+		}
+		if (!settled) {
+			await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
+			throw new Error(`Timed out choosing the ${provider} commit-message provider`);
+		}
+		await providerCommand;
+	};
 
 	// Wait until the active tab shows `rel` — the standard "navigation advanced to file X" assertion.
 	const expectActiveTab = (rel: string) =>
@@ -376,12 +397,9 @@ suite('SCM change navigation E2E', () => {
 			"Marketplace extensions cannot use VS Code's proposed scm/inputBox contribution"
 		);
 		assert.strictEqual(
-			extension.packageJSON.contributes.configuration.properties['better-git-vscode.commitMessageProvider'].default,
-			'ask'
-		);
-		assert.strictEqual(
-			extension.packageJSON.contributes.configuration.properties['better-git-vscode.commitMessageProvider'].scope,
-			'application'
+			extension.packageJSON.contributes.configuration.properties['better-git-vscode.commitMessageProvider'],
+			undefined,
+			'provider selection must use extension global state so a hot update cannot leave its setting unregistered'
 		);
 		assert.strictEqual(
 			extension.packageJSON.contributes.configuration.properties['better-git-vscode.codexExecutablePath'].default,
@@ -414,12 +432,15 @@ suite('SCM change navigation E2E', () => {
 		const capturePath = process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
 		assert.ok(fakeCodexPath, 'runTest.ts must provide the fake Codex executable');
 		assert.ok(capturePath, 'runTest.ts must provide the fake Codex capture path');
+		const fakeClaudePath = process.env.BGV_FAKE_CLAUDE_PATH;
+		assert.ok(fakeClaudePath, 'runTest.ts must provide the fake Claude executable');
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
-		const previousExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
-		const previousProvider = config.inspect<string>('commitMessageProvider')?.globalValue;
+		const previousCodexExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
+		const previousClaudeExecutable = config.inspect<string>('claudeExecutablePath')?.globalValue;
 		try {
 			await config.update('codexExecutablePath', fakeCodexPath, vscode.ConfigurationTarget.Global);
-			await config.update('commitMessageProvider', 'codex', vscode.ConfigurationTarget.Global);
+			await config.update('claudeExecutablePath', fakeClaudePath, vscode.ConfigurationTarget.Global);
+			await chooseCommitMessageProvider('codex');
 			const staged = lines(40, 'mod_a').split('\n');
 			staged[4] = 'STAGED_CODEX_MARKER';
 			write('committed/mod_a.txt', staged.join('\n'));
@@ -462,8 +483,8 @@ suite('SCM change navigation E2E', () => {
 			assert.ok(!capture.prompt.includes('UNSTAGED_CODEX_MARKER'));
 		} finally {
 			repo.inputBox.value = '';
-			await config.update('codexExecutablePath', previousExecutable, vscode.ConfigurationTarget.Global);
-			await config.update('commitMessageProvider', previousProvider, vscode.ConfigurationTarget.Global);
+			await config.update('codexExecutablePath', previousCodexExecutable, vscode.ConfigurationTarget.Global);
+			await config.update('claudeExecutablePath', previousClaudeExecutable, vscode.ConfigurationTarget.Global);
 		}
 	});
 
@@ -472,12 +493,15 @@ suite('SCM change navigation E2E', () => {
 		const capturePath = process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
 		assert.ok(fakeCodexPath, 'runTest.ts must provide the fake Codex executable');
 		assert.ok(capturePath, 'runTest.ts must provide the fake Codex capture path');
+		const fakeClaudePath = process.env.BGV_FAKE_CLAUDE_PATH;
+		assert.ok(fakeClaudePath, 'runTest.ts must provide the fake Claude executable');
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
-		const previousExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
-		const previousProvider = config.inspect<string>('commitMessageProvider')?.globalValue;
+		const previousCodexExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
+		const previousClaudeExecutable = config.inspect<string>('claudeExecutablePath')?.globalValue;
 		try {
 			await config.update('codexExecutablePath', fakeCodexPath, vscode.ConfigurationTarget.Global);
-			await config.update('commitMessageProvider', 'codex', vscode.ConfigurationTarget.Global);
+			await config.update('claudeExecutablePath', fakeClaudePath, vscode.ConfigurationTarget.Global);
+			await chooseCommitMessageProvider('codex');
 			const working = lines(40, 'mod_a').split('\n');
 			working[4] = 'WORKING_CODEX_MARKER';
 			write('committed/mod_a.txt', working.join('\n'));
@@ -514,8 +538,8 @@ suite('SCM change navigation E2E', () => {
 			}
 		} finally {
 			repo.inputBox.value = '';
-			await config.update('codexExecutablePath', previousExecutable, vscode.ConfigurationTarget.Global);
-			await config.update('commitMessageProvider', previousProvider, vscode.ConfigurationTarget.Global);
+			await config.update('codexExecutablePath', previousCodexExecutable, vscode.ConfigurationTarget.Global);
+			await config.update('claudeExecutablePath', previousClaudeExecutable, vscode.ConfigurationTarget.Global);
 		}
 	});
 
@@ -524,12 +548,15 @@ suite('SCM change navigation E2E', () => {
 		const capturePath = process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH;
 		assert.ok(fakeClaudePath, 'runTest.ts must provide the fake Claude executable');
 		assert.ok(capturePath, 'runTest.ts must provide the fake Claude capture path');
+		const fakeCodexPath = process.env.BGV_FAKE_CODEX_PATH;
+		assert.ok(fakeCodexPath, 'runTest.ts must provide the fake Codex executable');
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
-		const previousExecutable = config.inspect<string>('claudeExecutablePath')?.globalValue;
-		const previousProvider = config.inspect<string>('commitMessageProvider')?.globalValue;
+		const previousCodexExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
+		const previousClaudeExecutable = config.inspect<string>('claudeExecutablePath')?.globalValue;
 		try {
+			await config.update('codexExecutablePath', fakeCodexPath, vscode.ConfigurationTarget.Global);
 			await config.update('claudeExecutablePath', fakeClaudePath, vscode.ConfigurationTarget.Global);
-			await config.update('commitMessageProvider', 'claude', vscode.ConfigurationTarget.Global);
+			await chooseCommitMessageProvider('claude');
 			const working = lines(40, 'mod_a').split('\n');
 			working[4] = 'CLAUDE_REPOSITORY_INPUT_MARKER';
 			write('committed/mod_a.txt', working.join('\n'));
@@ -562,8 +589,8 @@ suite('SCM change navigation E2E', () => {
 			assert.ok(capture.prompt.includes('CLAUDE_REPOSITORY_INPUT_MARKER'));
 		} finally {
 			repo.inputBox.value = '';
-			await config.update('claudeExecutablePath', previousExecutable, vscode.ConfigurationTarget.Global);
-			await config.update('commitMessageProvider', previousProvider, vscode.ConfigurationTarget.Global);
+			await config.update('codexExecutablePath', previousCodexExecutable, vscode.ConfigurationTarget.Global);
+			await config.update('claudeExecutablePath', previousClaudeExecutable, vscode.ConfigurationTarget.Global);
 		}
 	});
 

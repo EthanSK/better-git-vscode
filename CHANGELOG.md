@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.41] — provider selection survives hot updates
+
+- **Fixed provider setup failing immediately after an automatic extension update.** VS Code can restart the extension host for newly installed code while its existing window still has the old configuration registry, so v1.2.40's new provider setting could be rejected as unregistered until a full window reload.
+- **The selected Codex or Claude Code provider now belongs to Better Git's extension state.** First-use setup and **Better Git: Change Commit Message AI Provider** read and write the same global state directly, so they do not depend on VS Code re-registering a new setting in an already-running window.
+- **Executable paths remain ordinary settings.** Only the setup-flow choice moved; the existing Codex and Claude executable overrides are unchanged.
+
 ## [1.2.40] — choose Codex or Claude for commit messages
 
 - **Commit-message generation now supports Codex and Claude Code.** The first click detects the locally installed CLIs, asks which signed-in account to use instead of silently choosing one, and saves that provider globally. **Better Git: Change Commit Message AI Provider** switches it later.
