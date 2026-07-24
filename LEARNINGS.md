@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-24T13:39:52Z
+**Trigger:** Ethan 2026-07-24: “can u hook up the ai button on the right of the commit message to go through a different source coz i dont pay for copilot but i still wanna ai generate the commit messages”
+**Symptom:** VS Code's sparkle inside the commit-message input was tied to GitHub Copilot, so Ethan could not use it without Copilot even though his local Codex CLI was already signed in.
+**Root cause:** The literal right-of-input slot is the proposed `scm/inputBox` contribution, which VS Code permits only for allow-listed bundled extensions; a normal Marketplace extension cannot safely add or replace that control. The built-in Git API also reports untracked files in `workingTreeChanges`, `untrackedChanges`, or both depending on `git.untrackedChanges`, so reading only the dedicated array silently omitted their contents in the default mixed mode.
+**Fix:** Better Git v1.2.39 adds **Generate Commit Message with Codex** to supported per-repository surfaces: a sparkle in `scm/title`, the Commit dropdown, and the Command Palette. It resolves the selected repository explicitly, uses only the staged diff whenever the index is nonempty, otherwise includes tracked working-tree changes plus bounded regular untracked files, and never follows untracked symbolic links. The signed-in Codex CLI runs ephemerally with schema-validated output in its own empty read-only temporary workspace; generation is cancellable, never commits, and will not overwrite a message edited while it was running without confirmation. `better-git-vscode.codexExecutablePath` handles VS Code environments where `codex` is not on PATH.
+**Commit:** 9af106e92ebbd5e1793903ac5c3c7b27a204f752 (PR #66, squash-merged; published as v1.2.39).
+**Guard:** The real Extension Development Host suite passes 44/44, including staged-only exclusion, mixed-mode tracked plus untracked inclusion, symbolic-link non-following, exact repository input filling, required Codex safety/structured-output flags, supported menu contributions, and absence of `scm/inputBox`. A live authenticated Codex v0.142.4 smoke test returned the required JSON from an empty temporary workspace. The production VSIX contains only nine expected files; its manifest and bundle were inspected, and the required Marketplace verifier printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` after authenticated validation, public VS Code visibility, exact download, and byte comparison at SHA-256 `cd6b48dd2d908ed1315c9c20775845f7d35c8ce87dc493eca71616caaf66005e`. Normal VS Code was not installed, updated, reloaded, or restarted.
+---
+
+---
 **Date:** 2026-07-24T13:22:18Z
 **Trigger:** Ethan 2026-07-24: “once it goes to the top it loops back to the bottom of the same file again after another go to prev”; “but not always, look for the edge case”
 **Symptom:** Previous Change behaved normally in most diffs, but at the first change of certain broad replacements another Previous returned to the bottom of that same file instead of opening the preceding changed file.
