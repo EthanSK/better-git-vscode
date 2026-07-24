@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 // host — safe to import at top level.
 import * as fs from "fs";
 import * as path from "path";
-import { CodexCommitMessageGenerator } from "./codexCommitMessage";
+import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
@@ -423,7 +423,7 @@ const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefine
 };
 
 export function activate(context: vscode.ExtensionContext): BetterGitExtensionApi {
-    const codexCommitMessageGenerator = new CodexCommitMessageGenerator();
+    const commitMessageGenerator = new CommitMessageGenerator();
 
     // Persistent fixed-location mouse target for stage-and-advance (v1.2.20). Priority 101 places it directly
     // beside, and just before, the existing last-staged indicator at priority 100. Unlike editor/title, this
@@ -915,7 +915,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,
         addWorktreeToWorkspaceCommand,
-        codexCommitMessageGenerator,
+        commitMessageGenerator,
         stageAndAdvanceStatusBarItem, // fixed-location Stage & Next mouse target (v1.2.20)
         lastStagedStatusBarItem, // disposed cleanly on deactivate
         configListener,
