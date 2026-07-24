@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-24T15:08:25Z
+**Trigger:** Ethan 2026-07-24 after v1.2.40 auto-updated in an already-running VS Code window: “Unable to write to User Settings because better-git-vscode.commitMessageProvider is not a registered configuration.”
+**Symptom:** The new provider command was available after VS Code restarted only the extension host, but choosing Codex failed because the long-running renderer still had v1.2.37's configuration registry and rejected v1.2.40's newly contributed provider setting. The installed v1.2.40 manifest contained the setting and the same write passed in an isolated fresh host, so the Marketplace package itself was complete.
+**Root cause:** VS Code can hot-update an extension by loading its new runtime in a restarted extension host without rebuilding the existing renderer's configuration registry. v1.2.40 incorrectly stored setup-flow state through `WorkspaceConfiguration.update`, making a renderer-registered setting a hidden prerequisite for a command whose runtime had already activated.
+**Fix:** v1.2.41 removes `better-git-vscode.commitMessageProvider` from the manifest and stores the explicit `codex | claude` choice only in `ExtensionContext.globalState`. First-use generation and **Better Git: Change Commit Message AI Provider** read and write that one extension-owned key; there is no configuration fallback or legacy compatibility path. Codex and Claude executable paths remain normal settings.
+**Commit:** 56b7c180e5634efc0818a17808015fba3abb3afb (PR #70, squash-merged; published as v1.2.41).
+**Guard:** The real VS Code 1.130 Extension Development Host suite passes 45/45. Manifest coverage requires the provider setting to be absent, and all three generation regressions drive the actual QuickPick before exercising staged Codex, working-tree Codex, and Claude, so restoring the old configuration write reproduces the reported failure. TypeScript, development and production webpack, ESLint, `git diff --check`, and the exact nine-file VSIX inspection passed. The v1.2.41 VSIX at SHA-256 `dca84679901c04ed0e58e57a1c29f0a3b713759c5e237c7a186d914387bf6636` passed authenticated publisher validation, the public validated-only Gallery query used by VS Code, exact download, and byte comparison when the verifier printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED`. The first publish request timed out before the publisher API exposed v1.2.41; the exact-version authenticated query stayed missing for 30 seconds, so retrying the same tested VSIX was safe and succeeded. After a publish timeout, always check the exact authenticated publisher version before retrying. Normal VS Code was not installed, updated, reloaded, or restarted.
+---
+
+---
 **Date:** 2026-07-24T14:19:18Z
 **Trigger:** Ethan 2026-07-24 after v1.2.39: “is there a way to configure which chat it uses, maybe the first time u click it some setup happens that scans ur system for codex or claude and uses that? also what reasoning effort does it use”
 **Symptom:** Commit-message generation was safely independent of Copilot, but it was hardwired to Codex. There was no explicit first-use choice for Ethan's signed-in Codex versus Claude Code accounts, no command to switch later, and Codex reasoning effort depended on the CLI default.
