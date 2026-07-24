@@ -1,6 +1,7 @@
 .github/**
 .vscode/**
 .agents/**
+.git
 AGENTS.md
 scripts/**
 .gitignore

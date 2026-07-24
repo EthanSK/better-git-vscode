@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.42] — one-click Source Control collapse
+
+- **Added a Collapse All button beside Better Git's AI sparkle in Git Source Control headers.** It invokes the existing manual collapse command, folding every worktree / repository section without opening the Command Palette.
+- **The safe behavior is unchanged.** The button dispatches the same one-shot VS Code collapse used by the Command Palette action; it does not restore row-walking, retries, or automatic tree manipulation.
+
 ## [1.2.41] — provider selection survives hot updates
 
 - **Fixed provider setup failing immediately after an automatic extension update.** VS Code can restart the extension host for newly installed code while its existing window still has the old configuration registry, so v1.2.40's new provider setting could be rejected as unregistered until a full window reload.
