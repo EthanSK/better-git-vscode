@@ -40,7 +40,6 @@ interface CommitChangeContext {
 }
 
 type CommitMessageProvider = "codex" | "claude";
-type ConfiguredCommitMessageProvider = "ask" | CommitMessageProvider;
 
 interface ProviderExecution {
     readonly provider: CommitMessageProvider;
@@ -62,12 +61,13 @@ export class CommitMessageGenerator implements vscode.Disposable {
     private static readonly maxCommitMessageCharacters = 5_000;
     private static readonly maxProcessOutputBytes = 1_000_000;
     private static readonly timeout = 180_000;
+    private static readonly providerStateKey = "commitMessageProvider";
 
     private readonly commandDisposables: readonly vscode.Disposable[];
     private readonly runningRepositoryPaths = new Set<string>();
     private readonly runningProcesses = new Set<ChildProcessWithoutNullStreams>();
 
-    constructor() {
+    constructor(private readonly globalState: vscode.Memento) {
         this.commandDisposables = [
             vscode.commands.registerCommand(
                 CommitMessageGenerator.generateCommand,
@@ -316,14 +316,8 @@ export class CommitMessageGenerator implements vscode.Disposable {
     }
 
     private async resolveProviderExecution(): Promise<ProviderExecution | undefined> {
-        const configuration = vscode.workspace.getConfiguration("better-git-vscode");
-        const configuredProvider = configuration.get<ConfiguredCommitMessageProvider>(
-            "commitMessageProvider",
-            "ask"
-        );
-        const provider = configuredProvider === "ask"
-            ? await this.chooseProvider()
-            : configuredProvider;
+        const provider = this.globalState.get<CommitMessageProvider>(CommitMessageGenerator.providerStateKey)
+            ?? await this.chooseProvider();
         if (!provider) {
             return undefined;
         }
@@ -367,9 +361,9 @@ export class CommitMessageGenerator implements vscode.Disposable {
             return undefined;
         }
 
-        const currentProvider = vscode.workspace
-            .getConfiguration("better-git-vscode")
-            .get<ConfiguredCommitMessageProvider>("commitMessageProvider", "ask");
+        const currentProvider = this.globalState.get<CommitMessageProvider>(
+            CommitMessageGenerator.providerStateKey
+        );
         const selected = await vscode.window.showQuickPick(
             detected.map(({ provider, executable }) => ({
                 label: this.providerName(provider),
@@ -384,9 +378,7 @@ export class CommitMessageGenerator implements vscode.Disposable {
         if (!selected) {
             return undefined;
         }
-        await vscode.workspace
-            .getConfiguration("better-git-vscode")
-            .update("commitMessageProvider", selected.provider, vscode.ConfigurationTarget.Global);
+        await this.globalState.update(CommitMessageGenerator.providerStateKey, selected.provider);
         return selected.provider;
     }
 

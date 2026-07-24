@@ -423,7 +423,7 @@ const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefine
 };
 
 export function activate(context: vscode.ExtensionContext): BetterGitExtensionApi {
-    const commitMessageGenerator = new CommitMessageGenerator();
+    const commitMessageGenerator = new CommitMessageGenerator(context.globalState);
 
     // Persistent fixed-location mouse target for stage-and-advance (v1.2.20). Priority 101 places it directly
     // beside, and just before, the existing last-staged indicator at priority 100. Unlike editor/title, this
