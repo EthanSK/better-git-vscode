@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-24T18:37:00Z
+**Trigger:** Ethan 2026-07-24: “in where we have the generate commit message with AI sparkle in the top of the source control Changes section”; “add a button to the top right to collapse all”
+**Symptom:** The safe manual **Collapse all worktree / repository sections in Source Control** action existed only in the Command Palette, so collapsing the Source Control repository headers required taking a hand off the mouse. Better Git's AI sparkle already occupied the supported per-repository `scm/title` toolbar.
+**Root cause:** `better-git-vscode.collapse-worktrees` had no icon or `scm/title` menu contribution. Separately, the VSIX ignore list excluded Git directories transitively but not a linked worktree's file-form `.git` pointer, so packaging from a worktree initially included that local pointer as a tenth archive file.
+**Fix:** v1.2.42 gives the existing manual command the `$(collapse-all)` codicon and contributes it at `scm/title` `navigation@-3`, beside the AI sparkle, under the same Git-provider condition. The handler is unchanged and still dispatches exactly `workbench.view.scm` followed by `workbench.scm.action.collapseAllRepositories`. `.vscodeignore` now excludes the exact `.git` path so primary checkouts and linked worktrees package identically.
+**Commit:** 73fddb5637624f86b8ea5376ca4ab922e3d9cc6e (PR #72; published as v1.2.42).
+**Guard:** The real VS Code 1.130 Extension Development Host suite passed 45/45 and pins the exact command icon, `scm/title` group, Git-only condition, ungated manual availability, and unchanged registered handler. TypeScript, development and production webpack, ESLint, JSON parsing, and `git diff --check` passed. The production archive contains exactly nine expected files, excludes `.git`, has the tested manifest and a byte-identical production bundle, and has SHA-256 `c7d2bddd84eb9347b56b305a84d0550556c0f9c38eb7b651f194ab6da5e21228`. The required verifier printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` after authenticated publisher validation, public VS Code visibility, exact download, and byte comparison. Normal VS Code was not installed, updated, reloaded, or restarted.
+---
+
+---
 **Date:** 2026-07-24T15:08:25Z
 **Trigger:** Ethan 2026-07-24 after v1.2.40 auto-updated in an already-running VS Code window: “Unable to write to User Settings because better-git-vscode.commitMessageProvider is not a registered configuration.”
 **Symptom:** The new provider command was available after VS Code restarted only the extension host, but choosing Codex failed because the long-running renderer still had v1.2.37's configuration registry and rejected v1.2.40's newly contributed provider setting. The installed v1.2.40 manifest contained the setting and the same write passed in an isolated fresh host, so the Marketplace package itself was complete.
