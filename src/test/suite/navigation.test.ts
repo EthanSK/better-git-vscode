@@ -85,6 +85,30 @@ const activeTabPath = (): string | undefined => {
 const visibleEditorFor = (fileUri: vscode.Uri): vscode.TextEditor | undefined =>
 	vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === fileUri.toString());
 
+const readFakeCodexCapture = (capturePath: string): { args: string[]; cwd: string; prompt: string } => {
+	const parsed: unknown = JSON.parse(fs.readFileSync(capturePath, 'utf8'));
+	if (
+		typeof parsed !== 'object' ||
+		parsed === null ||
+		!('args' in parsed) ||
+		!('cwd' in parsed) ||
+		!('prompt' in parsed) ||
+		!Array.isArray(parsed.args) ||
+		typeof parsed.cwd !== 'string' ||
+		typeof parsed.prompt !== 'string'
+	) {
+		throw new Error('Fake Codex capture has an invalid shape');
+	}
+	const args: string[] = [];
+	for (const arg of parsed.args) {
+		if (typeof arg !== 'string') {
+			throw new Error('Fake Codex capture contains a non-string argument');
+		}
+		args.push(arg);
+	}
+	return { args, cwd: parsed.cwd, prompt: parsed.prompt };
+};
+
 suite('SCM change navigation E2E', () => {
 	let ws: string; // fixture workspace root (a real git repo, see runTest.ts)
 	let repo: any; // vscode.git API Repository for the fixture
@@ -279,9 +303,11 @@ suite('SCM change navigation E2E', () => {
 		const copyWorktreeNameCommand = 'better-git-vscode.copy-worktree-name';
 		const revealFileCommand = 'better-git-vscode.reveal-current-file-in-explorer';
 		const addWorktreeCommand = 'better-git-vscode.add-worktree-to-workspace';
+		const codexCommitMessageCommand = 'better-git-vscode.generate-commit-message-with-codex';
 		assert.ok(contributedCommands.some(({ command }) => command === openIndexCommand));
 		assert.ok(contributedCommands.some(({ command }) => command === copyWorktreeNameCommand));
 		assert.ok(contributedCommands.some(({ command }) => command === addWorktreeCommand));
+		assert.ok(contributedCommands.some(({ command }) => command === codexCommitMessageCommand));
 
 		assert.deepStrictEqual(
 			menus['scm/resourceState/context'].find(({ command }) => command === openIndexCommand),
@@ -327,11 +353,36 @@ suite('SCM change navigation E2E', () => {
 				when: 'scmProvider == git && scmProviderContext == worktree'
 			}
 		);
+		assert.deepStrictEqual(
+			menus['scm/title'].find(({ command }) => command === codexCommitMessageCommand),
+			{
+				command: codexCommitMessageCommand,
+				group: 'navigation@-4',
+				when: 'scmProvider == git'
+			}
+		);
+		assert.deepStrictEqual(
+			menus['git.commit'].find(({ command }) => command === codexCommitMessageCommand),
+			{
+				command: codexCommitMessageCommand,
+				group: '4_better_git@1'
+			}
+		);
+		assert.strictEqual(
+			menus['scm/inputBox'],
+			undefined,
+			"Marketplace extensions cannot use VS Code's proposed scm/inputBox contribution"
+		);
+		assert.strictEqual(
+			extension.packageJSON.contributes.configuration.properties['better-git-vscode.codexExecutablePath'].default,
+			'codex'
+		);
 
 		const registeredCommands = await vscode.commands.getCommands(true);
 		assert.ok(registeredCommands.includes(openIndexCommand), 'browser command must be registered at runtime');
 		assert.ok(registeredCommands.includes(copyWorktreeNameCommand), 'copy command must be registered at runtime');
 		assert.ok(registeredCommands.includes(addWorktreeCommand), 'add-worktree command must be registered at runtime');
+		assert.ok(registeredCommands.includes(codexCommitMessageCommand), 'Codex commit-message command must be registered');
 
 		const originalClipboard = await vscode.env.clipboard.readText();
 		try {
@@ -340,6 +391,106 @@ suite('SCM change navigation E2E', () => {
 			assert.strictEqual(await vscode.env.clipboard.readText(), 'feature-copy-name');
 		} finally {
 			await vscode.env.clipboard.writeText(originalClipboard);
+		}
+	});
+
+	test('Codex commit message uses only staged changes when the repository has a staged diff', async () => {
+		const fakeCodexPath = process.env.BGV_FAKE_CODEX_PATH;
+		const capturePath = process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
+		assert.ok(fakeCodexPath, 'runTest.ts must provide the fake Codex executable');
+		assert.ok(capturePath, 'runTest.ts must provide the fake Codex capture path');
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
+		try {
+			await config.update('codexExecutablePath', fakeCodexPath, vscode.ConfigurationTarget.Global);
+			const staged = lines(40, 'mod_a').split('\n');
+			staged[4] = 'STAGED_CODEX_MARKER';
+			write('committed/mod_a.txt', staged.join('\n'));
+			git('add committed/mod_a.txt');
+			const unstaged = lines(10, 'mod_d').split('\n');
+			unstaged[2] = 'UNSTAGED_CODEX_MARKER';
+			write('committed/mod_d.txt', unstaged.join('\n'));
+			await refreshUntil(
+				() => inIndex('committed/mod_a.txt', 0) && inWorkingTree('committed/mod_d.txt', 5),
+				'staged and unstaged Codex fixtures to appear'
+			);
+			repo.inputBox.value = '';
+			fs.rmSync(capturePath, { force: true });
+
+			await vscode.commands.executeCommand(
+				'better-git-vscode.generate-commit-message-with-codex',
+				vscode.Uri.file(ws)
+			);
+
+			assert.strictEqual(repo.inputBox.value, 'test: generated staged message');
+			const capture = readFakeCodexCapture(capturePath);
+			assert.ok(path.basename(capture.cwd).startsWith('better-git-codex-'));
+			assert.notStrictEqual(capture.cwd, ws);
+			assert.ok(capture.args.includes('--ephemeral'));
+			assert.ok(capture.args.includes('--ignore-user-config'));
+			assert.ok(capture.args.includes('--ignore-rules'));
+			assert.ok(capture.args.includes('--skip-git-repo-check'));
+			assert.ok(capture.args.includes('--output-schema'));
+			assert.ok(capture.args.includes('--output-last-message'));
+			assert.strictEqual(
+				path.basename(capture.args[capture.args.indexOf('-C') + 1]),
+				path.basename(capture.cwd)
+			);
+			assert.ok(capture.prompt.includes('The scope is staged.'));
+			assert.ok(capture.prompt.includes('STAGED_CODEX_MARKER'));
+			assert.ok(!capture.prompt.includes('UNSTAGED_CODEX_MARKER'));
+		} finally {
+			repo.inputBox.value = '';
+			await config.update('codexExecutablePath', previousExecutable, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('Codex commit message includes tracked and untracked working-tree changes when nothing is staged', async () => {
+		const fakeCodexPath = process.env.BGV_FAKE_CODEX_PATH;
+		const capturePath = process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
+		assert.ok(fakeCodexPath, 'runTest.ts must provide the fake Codex executable');
+		assert.ok(capturePath, 'runTest.ts must provide the fake Codex capture path');
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
+		try {
+			await config.update('codexExecutablePath', fakeCodexPath, vscode.ConfigurationTarget.Global);
+			const working = lines(40, 'mod_a').split('\n');
+			working[4] = 'WORKING_CODEX_MARKER';
+			write('committed/mod_a.txt', working.join('\n'));
+			write('codex-untracked.txt', 'UNTRACKED_CODEX_MARKER\n');
+			const symlinkPath = path.join(ws, 'codex-untracked-link.txt');
+			if (process.platform !== 'win32') {
+				const symlinkTarget = path.join(vscode.workspace.workspaceFolders![1].uri.fsPath, 'codex-symlink-target.txt');
+				fs.writeFileSync(symlinkTarget, 'UNTRACKED_SYMLINK_TARGET_MARKER\n');
+				fs.symlinkSync(symlinkTarget, symlinkPath);
+			}
+			await refreshUntil(
+				() =>
+					inWorkingTree('committed/mod_a.txt', 5) &&
+					isUntracked('codex-untracked.txt') &&
+					(process.platform === 'win32' || isUntracked('codex-untracked-link.txt')),
+				'working and untracked Codex fixtures to appear'
+			);
+			repo.inputBox.value = '';
+			fs.rmSync(capturePath, { force: true });
+
+			await vscode.commands.executeCommand(
+				'better-git-vscode.generate-commit-message-with-codex',
+				{ rootUri: vscode.Uri.file(ws) }
+			);
+
+			assert.strictEqual(repo.inputBox.value, 'test: generated working message');
+			const capture = readFakeCodexCapture(capturePath);
+			assert.ok(capture.prompt.includes('The scope is working tree.'));
+			assert.ok(capture.prompt.includes('WORKING_CODEX_MARKER'));
+			assert.ok(capture.prompt.includes('UNTRACKED_CODEX_MARKER'));
+			if (process.platform !== 'win32') {
+				assert.ok(capture.prompt.includes('Untracked symbolic link: codex-untracked-link.txt'));
+				assert.ok(!capture.prompt.includes('UNTRACKED_SYMLINK_TARGET_MARKER'));
+			}
+		} finally {
+			repo.inputBox.value = '';
+			await config.update('codexExecutablePath', previousExecutable, vscode.ConfigurationTarget.Global);
 		}
 	});
 

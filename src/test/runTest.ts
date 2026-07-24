@@ -25,6 +25,9 @@ async function main() {
 	let disabledRevealWorktreePath: string | undefined;
 	let scmRevealWorktreePath: string | undefined;
 	let headerWorktreePath: string | undefined;
+	let fakeCodexDirectory: string | undefined;
+	let fakeCodexPath: string | undefined;
+	let fakeCodexCapturePath: string | undefined;
 	try {
 		// The folder containing the Extension Manifest package.json
 		// Passed to `--extensionDevelopmentPath`
@@ -108,6 +111,31 @@ async function main() {
 		process.env.BGV_HEADER_WORKTREE_PATH = headerWorktreePath;
 		process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH = profilePicFixtureAfterPath;
 
+		fakeCodexDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'better-git-vscode-fake-codex-'));
+		fakeCodexPath = path.join(fakeCodexDirectory, 'codex');
+		fakeCodexCapturePath = path.join(fakeCodexDirectory, 'capture.json');
+		fs.writeFileSync(
+			fakeCodexPath,
+			`#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const outputIndex = args.indexOf('--output-last-message');
+if (outputIndex === -1 || !args[outputIndex + 1]) {
+	process.exit(2);
+}
+const prompt = fs.readFileSync(0, 'utf8');
+fs.writeFileSync(
+	process.env.BGV_FAKE_CODEX_CAPTURE_PATH,
+	JSON.stringify({ args, cwd: process.cwd(), prompt })
+);
+const scope = prompt.includes('The scope is staged.') ? 'staged' : 'working';
+fs.writeFileSync(args[outputIndex + 1], JSON.stringify({ commitMessage: \`test: generated \${scope} message\` }));
+`
+		);
+		fs.chmodSync(fakeCodexPath, 0o755);
+		process.env.BGV_FAKE_CODEX_PATH = fakeCodexPath;
+		process.env.BGV_FAKE_CODEX_CAPTURE_PATH = fakeCodexCapturePath;
+
 		// Download VS Code, unzip it and run the integration tests against the fixture workspace.
 		// CI normally downloads the requested stable build. Local diagnosis can set BGV_VSCODE_EXECUTABLE_PATH
 		// to reuse an already-installed Code binary, avoiding a 280MB download and making it practical to run
@@ -136,6 +164,8 @@ async function main() {
 		delete process.env.BGV_SCM_REVEAL_WORKTREE_PATH;
 		delete process.env.BGV_HEADER_WORKTREE_PATH;
 		delete process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH;
+		delete process.env.BGV_FAKE_CODEX_PATH;
+		delete process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
 		if (fixturePath) {
 			for (const worktreePath of [
 				revealWorktreePath,
@@ -178,6 +208,9 @@ async function main() {
 		}
 		if (testExtensionsPath) {
 			fs.rmSync(testExtensionsPath, { recursive: true, force: true });
+		}
+		if (fakeCodexDirectory) {
+			fs.rmSync(fakeCodexDirectory, { recursive: true, force: true });
 		}
 	}
 }

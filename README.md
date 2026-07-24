@@ -40,6 +40,14 @@ When you open a *staged* file, what you see is a frozen, read-only snapshot of w
 
 That is the core workflow. The same navigation keys also handle the awkward cases that ordinary hunk navigation skips: brand-new files and changes larger than the editor viewport.
 
+## Generate commit messages with Codex — no Copilot subscription
+
+Click **Generate Commit Message with Codex** (`$(sparkle)`) in a Git repository's Source Control header, choose it from the **Commit** dropdown, or run it from the Command Palette. Better Git uses your already-signed-in Codex CLI, so it does not need GitHub Copilot or a separate OpenAI API key.
+
+If the repository has staged changes, only the staged diff is used. With nothing staged, Better Git uses the working-tree diff and untracked files instead. Codex runs ephemerally in a read-only sandbox, returns a schema-validated message, and fills the selected repository's commit-message box; it never commits for you. If you type in the box while generation is running, Better Git will not overwrite your text without asking.
+
+VS Code's literal sparkle inside the right edge of the commit-message box belongs to the proposed `scm/inputBox` API, which Marketplace extensions are not permitted to use. Better Git therefore puts its Codex sparkle in the nearest supported Source Control surfaces instead of patching VS Code or hijacking Copilot's command. If VS Code cannot find `codex` on its PATH, set **Codex Executable Path** (`better-git-vscode.codexExecutablePath`) to the absolute executable path.
+
 ## Review edge cases without leaving the keyboard
 
 ### Read every line of brand-new files
@@ -247,6 +255,7 @@ A few behaviours are configurable under **Settings → Better Git VS Code**:
 - **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
 - **Experimental Source Control automation** — automatic tree manipulation is off by default behind `better-git-vscode.experimentalScmTreeStateManagement`. The manual Command Palette collapse remains available; the separate `collapseWorktreesOnStartup` double opt-in runs one built-in collapse with no retries. Exact mixed-state restoration is paused. See *Source Control show/hide automation is experimental and off by default* above.
 - **Auto-add worktree on reveal** — when reveal targets a worktree outside Explorer, add that worktree root as a workspace folder and reveal the file (`better-git-vscode.autoAddWorktreeOnReveal`, on by default; see *Pull a worktree into your sidebar* above).
+- **Codex executable path** — the signed-in Codex CLI used for commit-message generation (`better-git-vscode.codexExecutablePath`, default `codex`; set an absolute path if VS Code cannot resolve it).
 - **New-file line step** — how many lines the change keys step through a brand-new file (`better-git-vscode.newFileNavLineJump`, default 5).
 - **Tall-hunk staging** — present or step through any hunk whose complete rendered range is not on-screen, instead of letting unread lines run off the bottom (`better-git-vscode.hunkStagingEnabled`, default on — see *Step through tall hunks in stages* above). Tune the engage threshold (`hunkStagingThreshold`, 0 = auto/rendered visibility), the exact per-step move (`hunkStagingLineStep`, default 10; any positive custom value; 0 = viewport-minus-overlap auto mode), and the overlap used by auto mode (`hunkStagingOverlap`, default 4).
 - **List vs Tree view** in Source Control (`better-git-vscode.treeView`).

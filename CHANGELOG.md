@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.39] — Codex commit messages without Copilot
+
+- **Added Generate Commit Message with Codex to Source Control.** The sparkle in each Git repository header and the Commit dropdown use the already-signed-in Codex CLI, so no GitHub Copilot subscription or separate OpenAI API key is required.
+- **The selected repository is always explicit.** If anything is staged, only the staged diff is sent; otherwise the working-tree diff and untracked files are used. The generated text fills that repository's commit-message box and never commits automatically.
+- **Codex runs ephemerally and read-only.** Better Git passes only bounded change context, requests schema-validated output, keeps project/user instructions out of the generation prompt, supports cancellation, and leaves an edited commit-message box untouched unless the user confirms replacement.
+- VS Code reserves the literal right-of-input `scm/inputBox` slot for proposed-API extensions such as bundled Copilot. Better Git uses supported Marketplace surfaces beside it rather than patching VS Code or colliding with Copilot's command.
+
 ## [1.2.38] — Previous leaves the file at the first change
 
 - **Fixed Previous Change looping back to the bottom of the same file from its first change.** VS Code can implement an exhausted Previous by wrapping downward to a later change in the current diff. The large-replacement fallback introduced in v1.2.35 mistook that wrong-direction move for a no-op and consumed it as another within-file step.
