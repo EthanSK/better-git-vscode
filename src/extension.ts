@@ -4,6 +4,8 @@ import * as vscode from "vscode";
 // host — safe to import at top level.
 import * as fs from "fs";
 import * as path from "path";
+import { CodexCommitMessageGenerator } from "./codexCommitMessage";
+import { GitStatus } from "./gitStatus";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -421,6 +423,8 @@ const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefine
 };
 
 export function activate(context: vscode.ExtensionContext): BetterGitExtensionApi {
+    const codexCommitMessageGenerator = new CodexCommitMessageGenerator();
+
     // Persistent fixed-location mouse target for stage-and-advance (v1.2.20). Priority 101 places it directly
     // beside, and just before, the existing last-staged indicator at priority 100. Unlike editor/title, this
     // row does not gain/lose controls when the active file switches between modified/new/staged diff shapes.
@@ -911,6 +915,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,
         addWorktreeToWorkspaceCommand,
+        codexCommitMessageGenerator,
         stageAndAdvanceStatusBarItem, // fixed-location Stage & Next mouse target (v1.2.20)
         lastStagedStatusBarItem, // disposed cleanly on deactivate
         configListener,
@@ -1276,37 +1281,6 @@ const orderFilesForTreeView = (a: any, b: any) => {
 
     return 0;
 };
-
-// VS Code git API Status enum (extensions/git/src/api/git.d.ts). We only need the staged-side members to
-// pick the correct diff sides for a staged entry (see openChangeEntry). Kept as a plain const map (the git
-// API isn't typed in this project) so the values are documented at the call site instead of being magic
-// numbers. A newly-staged file is INDEX_ADDED (no HEAD blob); a staged deletion is INDEX_DELETED (no index
-// blob) — those two are exactly the cases that used to throw "editor could not be opened / file not found".
-// Every state a file can be in (vscode.git Status enum, extensions/git/src/api/git.d.ts). Listed in full so
-// each is accounted for. Index/working-tree states are navigated + diffed; merge-conflict states (12-18) are
-// navigated too (opened via git.openChange, which brings up the conflict / 3-way merge editor); IGNORED is
-// the only one we skip (it's not a change to review).
-const GitStatus = {
-    INDEX_MODIFIED: 0,   // staged edit
-    INDEX_ADDED: 1,      // staged new file (no HEAD side)
-    INDEX_DELETED: 2,    // staged deletion (no index side)
-    INDEX_RENAMED: 3,    // staged rename (HEAD side is at the ORIGINAL path)
-    INDEX_COPIED: 4,     // staged copy   (HEAD side is at the ORIGINAL path)
-    MODIFIED: 5,         // unstaged edit
-    DELETED: 6,          // unstaged deletion
-    UNTRACKED: 7,        // brand-new file, not yet added
-    IGNORED: 8,          // gitignored — skipped
-    INTENT_TO_ADD: 9,    // `git add -N` — treated like a new file (no HEAD side)
-    INTENT_TO_RENAME: 10,
-    TYPE_CHANGED: 11,    // e.g. file <-> symlink
-    ADDED_BY_US: 12,     // ── merge conflicts ──
-    ADDED_BY_THEM: 13,
-    DELETED_BY_US: 14,
-    DELETED_BY_THEM: 15,
-    BOTH_ADDED: 16,
-    BOTH_DELETED: 17,
-    BOTH_MODIFIED: 18,
-} as const;
 
 // One navigable entry in the changes list. `staged` distinguishes the index (Staged Changes) copy from
 // the working-tree (Changes) copy of the same file. They are SEPARATE diffs, and a partially-staged file

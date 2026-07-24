@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.38",
+  "version": "1.2.39",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -135,6 +135,12 @@
         "command": "better-git-vscode.add-worktree-to-workspace",
         "category": "Better Git",
         "title": "Add Worktree to Workspace"
+      },
+      {
+        "command": "better-git-vscode.generate-commit-message-with-codex",
+        "category": "Better Git",
+        "title": "Generate Commit Message with Codex",
+        "icon": "$(sparkle)"
       }
     ],
     "menus": {
@@ -144,6 +150,19 @@
           "_comment_editorTitleOrder": "Keep the + at navigation@100. VS Code's right-aligned editor-title navigation group sorts actions by ascending order, so the highest order is farthest right: @100 gives + the stable far-right hover spot promised in v1.2.16, while VS Code's built-in diff Previous/Next Change arrows at orders 10/11 stay to its LEFT. The v1.2.19 attempt to use @9 was a regression because it swapped + to the other side of those arrows, producing the user-reported 'inverse buttons' order and breaking that muscle memory. On crowded diffs, + may deliberately overflow into the ... menu at @100; v1.2.20's always-visible status-bar Stage & Next button now handles that case as the overflow-proof fallback, so preserving the stable title-bar position is the intentional tradeoff.",
           "group": "navigation@100",
           "when": "gitOpenRepositoryCount != 0"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "better-git-vscode.generate-commit-message-with-codex",
+          "group": "navigation@-4",
+          "when": "scmProvider == git"
+        }
+      ],
+      "git.commit": [
+        {
+          "command": "better-git-vscode.generate-commit-message-with-codex",
+          "group": "4_better_git@1"
         }
       ],
       "commandPalette": [
@@ -218,6 +237,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically add a file's git worktree as a workspace folder when Open & reveal current file in Explorer cannot reveal it because that worktree is outside the current Explorer workspace. Turn this off to open the editable file without changing workspace folders."
+        },
+        "better-git-vscode.codexExecutablePath": {
+          "type": "string",
+          "default": "codex",
+          "description": "The Codex CLI executable used by Generate Commit Message with Codex. The CLI must already be signed in. Use an absolute path if codex is not available on VS Code's PATH."
         },
         "better-git-vscode.currentFileBadge": {
           "type": "string",
