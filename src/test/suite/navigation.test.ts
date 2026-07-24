@@ -1092,6 +1092,54 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('copied profile-pic replacement: Previous at the first change leaves the file after the built-in wraps downward', async () => {
+		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
+		const diffConfig = vscode.workspace.getConfiguration('diffEditor');
+		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
+		const previousHideUnchanged = diffConfig.inspect<boolean>('hideUnchangedRegions.enabled')?.globalValue;
+		try {
+			await navConfig.update('hunkStagingThreshold', 0, vscode.ConfigurationTarget.Global);
+			await diffConfig.update('hideUnchangedRegions.enabled', false, vscode.ConfigurationTarget.Global);
+
+			const afterFixture = process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH;
+			assert.ok(afterFixture, 'profile-pic after fixture path was not supplied by the test runner');
+			const rel = 'committed/profile-pic.service.ts';
+			write(rel, fs.readFileSync(afterFixture, 'utf8'));
+			const previousFile = lines(40, 'mod_a').split('\n');
+			previousFile[4] = 'mod_a previous-file EDITED line 5';
+			write('committed/mod_a.txt', previousFile.join('\n'));
+			await refreshUntil(
+				() => inWorkingTree(rel, 5 /* MODIFIED */) && inWorkingTree('committed/mod_a.txt', 5),
+				'profile-pic wrap regression files to appear'
+			);
+
+			const firstChange = 0;
+			const editor = await openWorkingDiffAt(rel, firstChange);
+			await vscode.commands.executeCommand('workbench.view.scm');
+
+			// VS Code's compare editor wraps Previous from the first stop to a later stop in this same file.
+			// Better Git must classify that downward move as exhaustion, not as the no-op that needs outer-@@
+			// fallback stepping.
+			await vscode.commands.executeCommand('workbench.action.compareEditor.previousChange');
+			await sleep(100);
+			assert.ok(
+				editor.selection.active.line > firstChange,
+				'test precondition failed: built-in Previous must wrap downward within the copied replacement'
+			);
+
+			const resetPosition = new vscode.Position(firstChange, 0);
+			editor.selection = new vscode.Selection(resetPosition, resetPosition);
+			editor.revealRange(new vscode.Range(resetPosition, resetPosition), vscode.TextEditorRevealType.AtTop);
+			await poll(() => lineIsVisible(editor, firstChange), 'copied profile-pic first change to be visible again');
+
+			await previousChange();
+			await expectActiveTab('committed/mod_a.txt');
+		} finally {
+			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
+			await diffConfig.update('hideUnchangedRegions.enabled', previousHideUnchanged, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('MODIFIED tall hunk: sticky-context rapid one-line steps are caret-owned and reversible', async () => {
 		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
 		const editorConfig = vscode.workspace.getConfiguration('editor');

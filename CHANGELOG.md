@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.38] — Previous leaves the file at the first change
+
+- **Fixed Previous Change looping back to the bottom of the same file from its first change.** VS Code can implement an exhausted Previous by wrapping downward to a later change in the current diff. The large-replacement fallback introduced in v1.2.35 mistook that wrong-direction move for a no-op and consumed it as another within-file step.
+- **Outer-replacement rescue now runs only after a genuine no-op.** Opposite-direction wraps fall through to the adjacent changed file in both directions, while the unread large-replacement protection remains active when VS Code truly does not move.
+- **Added the exact intermittent edge case to the real-host suite.** The copied AIMVS `profile-pic.service.ts` fixture first proves native Previous wraps downward, then requires Better Git Previous to open the preceding changed file.
+
 ## [1.2.37] — ten lines by default
 
 - **Tall-hunk and large-replacement steps now move exactly ten logical lines by default.** `better-git-vscode.hunkStagingLineStep` remains fully configurable: any positive value is an exact custom step, while explicit `0` keeps viewport-minus-overlap auto mode.

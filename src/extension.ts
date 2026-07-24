@@ -2901,7 +2901,10 @@ const goToNextDiffOnce = async () => {
     const lineAfter = navEditor?.selection.active.line; // TextEditor.selection is live — same object, post-command state
 
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter > lineBefore)) {
-        if (stageCtx && lineBefore !== undefined && lineAfter !== undefined) {
+        // The outer-@@ fallback is only for a genuine built-in NO-OP. VS Code can wrap Next from the
+        // last change to an earlier change in this same file; consuming that backward move as an outer
+        // step traps navigation in the file instead of advancing to the next one.
+        if (stageCtx && lineBefore !== undefined && lineAfter === lineBefore) {
             if (await stepOuterHunk(stageCtx, "down", false)) {
                 return;
             }
@@ -2966,7 +2969,9 @@ const goToPreviousDiffOnce = async () => {
     const lineAfter = navEditor?.selection.active.line; // live selection — post-command state
 
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter < lineBefore)) {
-        if (stageCtx && lineBefore !== undefined && lineAfter !== undefined) {
+        // Mirror Next: only rescue a genuine built-in NO-OP. A larger lineAfter means Previous wrapped
+        // from the first change to a later change in this file and must fall through to openPreviousFile.
+        if (stageCtx && lineBefore !== undefined && lineAfter === lineBefore) {
             if (await stepOuterHunk(stageCtx, "up", false)) {
                 return;
             }
