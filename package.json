@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.39",
+  "version": "1.2.40",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -137,10 +137,15 @@
         "title": "Add Worktree to Workspace"
       },
       {
-        "command": "better-git-vscode.generate-commit-message-with-codex",
+        "command": "better-git-vscode.generate-commit-message-with-ai",
         "category": "Better Git",
-        "title": "Generate Commit Message with Codex",
+        "title": "Generate Commit Message with AI",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "better-git-vscode.change-commit-message-ai-provider",
+        "category": "Better Git",
+        "title": "Change Commit Message AI Provider"
       }
     ],
     "menus": {
@@ -154,14 +159,14 @@
       ],
       "scm/title": [
         {
-          "command": "better-git-vscode.generate-commit-message-with-codex",
+          "command": "better-git-vscode.generate-commit-message-with-ai",
           "group": "navigation@-4",
           "when": "scmProvider == git"
         }
       ],
       "git.commit": [
         {
-          "command": "better-git-vscode.generate-commit-message-with-codex",
+          "command": "better-git-vscode.generate-commit-message-with-ai",
           "group": "4_better_git@1"
         }
       ],
@@ -238,10 +243,31 @@
           "default": true,
           "description": "Automatically add a file's git worktree as a workspace folder when Open & reveal current file in Explorer cannot reveal it because that worktree is outside the current Explorer workspace. Turn this off to open the editable file without changing workspace folders."
         },
+        "better-git-vscode.commitMessageProvider": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "codex",
+            "claude"
+          ],
+          "enumDescriptions": [
+            "Ask which detected AI CLI to use, then save that choice globally.",
+            "Use the already-signed-in Codex CLI.",
+            "Use the already-signed-in Claude Code CLI."
+          ],
+          "default": "ask",
+          "scope": "application",
+          "description": "The local AI CLI used to generate commit messages. On first use, Ask detects Codex and Claude Code without scanning the whole filesystem, lets you choose the account explicitly, and saves the choice globally."
+        },
         "better-git-vscode.codexExecutablePath": {
           "type": "string",
           "default": "codex",
-          "description": "The Codex CLI executable used by Generate Commit Message with Codex. The CLI must already be signed in. Use an absolute path if codex is not available on VS Code's PATH."
+          "description": "The Codex CLI executable used for commit-message generation. The CLI must already be signed in. Use an absolute path if codex is not available on VS Code's PATH."
+        },
+        "better-git-vscode.claudeExecutablePath": {
+          "type": "string",
+          "default": "claude",
+          "description": "The Claude Code CLI executable used for commit-message generation. The CLI must already be signed in. Use an absolute path if claude is not available on VS Code's PATH."
         },
         "better-git-vscode.currentFileBadge": {
           "type": "string",

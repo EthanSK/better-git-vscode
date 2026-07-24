@@ -85,7 +85,7 @@ const activeTabPath = (): string | undefined => {
 const visibleEditorFor = (fileUri: vscode.Uri): vscode.TextEditor | undefined =>
 	vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === fileUri.toString());
 
-const readFakeCodexCapture = (capturePath: string): { args: string[]; cwd: string; prompt: string } => {
+const readFakeAiCapture = (capturePath: string): { args: string[]; cwd: string; prompt: string } => {
 	const parsed: unknown = JSON.parse(fs.readFileSync(capturePath, 'utf8'));
 	if (
 		typeof parsed !== 'object' ||
@@ -97,12 +97,12 @@ const readFakeCodexCapture = (capturePath: string): { args: string[]; cwd: strin
 		typeof parsed.cwd !== 'string' ||
 		typeof parsed.prompt !== 'string'
 	) {
-		throw new Error('Fake Codex capture has an invalid shape');
+		throw new Error('Fake AI capture has an invalid shape');
 	}
 	const args: string[] = [];
 	for (const arg of parsed.args) {
 		if (typeof arg !== 'string') {
-			throw new Error('Fake Codex capture contains a non-string argument');
+				throw new Error('Fake AI capture contains a non-string argument');
 		}
 		args.push(arg);
 	}
@@ -303,11 +303,13 @@ suite('SCM change navigation E2E', () => {
 		const copyWorktreeNameCommand = 'better-git-vscode.copy-worktree-name';
 		const revealFileCommand = 'better-git-vscode.reveal-current-file-in-explorer';
 		const addWorktreeCommand = 'better-git-vscode.add-worktree-to-workspace';
-		const codexCommitMessageCommand = 'better-git-vscode.generate-commit-message-with-codex';
+		const generateCommitMessageCommand = 'better-git-vscode.generate-commit-message-with-ai';
+		const changeProviderCommand = 'better-git-vscode.change-commit-message-ai-provider';
 		assert.ok(contributedCommands.some(({ command }) => command === openIndexCommand));
 		assert.ok(contributedCommands.some(({ command }) => command === copyWorktreeNameCommand));
 		assert.ok(contributedCommands.some(({ command }) => command === addWorktreeCommand));
-		assert.ok(contributedCommands.some(({ command }) => command === codexCommitMessageCommand));
+		assert.ok(contributedCommands.some(({ command }) => command === generateCommitMessageCommand));
+		assert.ok(contributedCommands.some(({ command }) => command === changeProviderCommand));
 
 		assert.deepStrictEqual(
 			menus['scm/resourceState/context'].find(({ command }) => command === openIndexCommand),
@@ -354,17 +356,17 @@ suite('SCM change navigation E2E', () => {
 			}
 		);
 		assert.deepStrictEqual(
-			menus['scm/title'].find(({ command }) => command === codexCommitMessageCommand),
+			menus['scm/title'].find(({ command }) => command === generateCommitMessageCommand),
 			{
-				command: codexCommitMessageCommand,
+				command: generateCommitMessageCommand,
 				group: 'navigation@-4',
 				when: 'scmProvider == git'
 			}
 		);
 		assert.deepStrictEqual(
-			menus['git.commit'].find(({ command }) => command === codexCommitMessageCommand),
+			menus['git.commit'].find(({ command }) => command === generateCommitMessageCommand),
 			{
-				command: codexCommitMessageCommand,
+				command: generateCommitMessageCommand,
 				group: '4_better_git@1'
 			}
 		);
@@ -374,15 +376,28 @@ suite('SCM change navigation E2E', () => {
 			"Marketplace extensions cannot use VS Code's proposed scm/inputBox contribution"
 		);
 		assert.strictEqual(
+			extension.packageJSON.contributes.configuration.properties['better-git-vscode.commitMessageProvider'].default,
+			'ask'
+		);
+		assert.strictEqual(
+			extension.packageJSON.contributes.configuration.properties['better-git-vscode.commitMessageProvider'].scope,
+			'application'
+		);
+		assert.strictEqual(
 			extension.packageJSON.contributes.configuration.properties['better-git-vscode.codexExecutablePath'].default,
 			'codex'
+		);
+		assert.strictEqual(
+			extension.packageJSON.contributes.configuration.properties['better-git-vscode.claudeExecutablePath'].default,
+			'claude'
 		);
 
 		const registeredCommands = await vscode.commands.getCommands(true);
 		assert.ok(registeredCommands.includes(openIndexCommand), 'browser command must be registered at runtime');
 		assert.ok(registeredCommands.includes(copyWorktreeNameCommand), 'copy command must be registered at runtime');
 		assert.ok(registeredCommands.includes(addWorktreeCommand), 'add-worktree command must be registered at runtime');
-		assert.ok(registeredCommands.includes(codexCommitMessageCommand), 'Codex commit-message command must be registered');
+		assert.ok(registeredCommands.includes(generateCommitMessageCommand), 'AI commit-message command must be registered');
+		assert.ok(registeredCommands.includes(changeProviderCommand), 'Change-provider command must be registered');
 
 		const originalClipboard = await vscode.env.clipboard.readText();
 		try {
@@ -401,8 +416,10 @@ suite('SCM change navigation E2E', () => {
 		assert.ok(capturePath, 'runTest.ts must provide the fake Codex capture path');
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const previousExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
+		const previousProvider = config.inspect<string>('commitMessageProvider')?.globalValue;
 		try {
 			await config.update('codexExecutablePath', fakeCodexPath, vscode.ConfigurationTarget.Global);
+			await config.update('commitMessageProvider', 'codex', vscode.ConfigurationTarget.Global);
 			const staged = lines(40, 'mod_a').split('\n');
 			staged[4] = 'STAGED_CODEX_MARKER';
 			write('committed/mod_a.txt', staged.join('\n'));
@@ -418,13 +435,13 @@ suite('SCM change navigation E2E', () => {
 			fs.rmSync(capturePath, { force: true });
 
 			await vscode.commands.executeCommand(
-				'better-git-vscode.generate-commit-message-with-codex',
+				'better-git-vscode.generate-commit-message-with-ai',
 				vscode.Uri.file(ws)
 			);
 
 			assert.strictEqual(repo.inputBox.value, 'test: generated staged message');
-			const capture = readFakeCodexCapture(capturePath);
-			assert.ok(path.basename(capture.cwd).startsWith('better-git-codex-'));
+			const capture = readFakeAiCapture(capturePath);
+			assert.ok(path.basename(capture.cwd).startsWith('better-git-ai-'));
 			assert.notStrictEqual(capture.cwd, ws);
 			assert.ok(capture.args.includes('--ephemeral'));
 			assert.ok(capture.args.includes('--ignore-user-config'));
@@ -432,6 +449,10 @@ suite('SCM change navigation E2E', () => {
 			assert.ok(capture.args.includes('--skip-git-repo-check'));
 			assert.ok(capture.args.includes('--output-schema'));
 			assert.ok(capture.args.includes('--output-last-message'));
+			assert.strictEqual(
+				capture.args[capture.args.indexOf('-c') + 1],
+				'model_reasoning_effort="none"'
+			);
 			assert.strictEqual(
 				path.basename(capture.args[capture.args.indexOf('-C') + 1]),
 				path.basename(capture.cwd)
@@ -442,6 +463,7 @@ suite('SCM change navigation E2E', () => {
 		} finally {
 			repo.inputBox.value = '';
 			await config.update('codexExecutablePath', previousExecutable, vscode.ConfigurationTarget.Global);
+			await config.update('commitMessageProvider', previousProvider, vscode.ConfigurationTarget.Global);
 		}
 	});
 
@@ -452,8 +474,10 @@ suite('SCM change navigation E2E', () => {
 		assert.ok(capturePath, 'runTest.ts must provide the fake Codex capture path');
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const previousExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
+		const previousProvider = config.inspect<string>('commitMessageProvider')?.globalValue;
 		try {
 			await config.update('codexExecutablePath', fakeCodexPath, vscode.ConfigurationTarget.Global);
+			await config.update('commitMessageProvider', 'codex', vscode.ConfigurationTarget.Global);
 			const working = lines(40, 'mod_a').split('\n');
 			working[4] = 'WORKING_CODEX_MARKER';
 			write('committed/mod_a.txt', working.join('\n'));
@@ -475,12 +499,12 @@ suite('SCM change navigation E2E', () => {
 			fs.rmSync(capturePath, { force: true });
 
 			await vscode.commands.executeCommand(
-				'better-git-vscode.generate-commit-message-with-codex',
+				'better-git-vscode.generate-commit-message-with-ai',
 				{ rootUri: vscode.Uri.file(ws) }
 			);
 
 			assert.strictEqual(repo.inputBox.value, 'test: generated working message');
-			const capture = readFakeCodexCapture(capturePath);
+			const capture = readFakeAiCapture(capturePath);
 			assert.ok(capture.prompt.includes('The scope is working tree.'));
 			assert.ok(capture.prompt.includes('WORKING_CODEX_MARKER'));
 			assert.ok(capture.prompt.includes('UNTRACKED_CODEX_MARKER'));
@@ -491,6 +515,55 @@ suite('SCM change navigation E2E', () => {
 		} finally {
 			repo.inputBox.value = '';
 			await config.update('codexExecutablePath', previousExecutable, vscode.ConfigurationTarget.Global);
+			await config.update('commitMessageProvider', previousProvider, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('Claude commit message uses low effort, no tools or settings, and fills the selected repository input', async () => {
+		const fakeClaudePath = process.env.BGV_FAKE_CLAUDE_PATH;
+		const capturePath = process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH;
+		assert.ok(fakeClaudePath, 'runTest.ts must provide the fake Claude executable');
+		assert.ok(capturePath, 'runTest.ts must provide the fake Claude capture path');
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousExecutable = config.inspect<string>('claudeExecutablePath')?.globalValue;
+		const previousProvider = config.inspect<string>('commitMessageProvider')?.globalValue;
+		try {
+			await config.update('claudeExecutablePath', fakeClaudePath, vscode.ConfigurationTarget.Global);
+			await config.update('commitMessageProvider', 'claude', vscode.ConfigurationTarget.Global);
+			const working = lines(40, 'mod_a').split('\n');
+			working[4] = 'CLAUDE_REPOSITORY_INPUT_MARKER';
+			write('committed/mod_a.txt', working.join('\n'));
+			await refreshUntil(
+				() => inWorkingTree('committed/mod_a.txt', 5),
+				'Claude working-tree fixture to appear'
+			);
+			repo.inputBox.value = '';
+			fs.rmSync(capturePath, { force: true });
+
+			await vscode.commands.executeCommand(
+				'better-git-vscode.generate-commit-message-with-ai',
+				{ rootUri: vscode.Uri.file(ws) }
+			);
+
+			assert.strictEqual(repo.inputBox.value, 'test: generated working message with Claude');
+			const capture = readFakeAiCapture(capturePath);
+			assert.ok(path.basename(capture.cwd).startsWith('better-git-ai-'));
+			assert.notStrictEqual(capture.cwd, ws);
+			assert.ok(capture.args.includes('-p'));
+			assert.strictEqual(capture.args[capture.args.indexOf('--output-format') + 1], 'json');
+			assert.strictEqual(capture.args[capture.args.indexOf('--effort') + 1], 'low');
+			assert.strictEqual(capture.args[capture.args.indexOf('--tools') + 1], '');
+			assert.strictEqual(capture.args[capture.args.indexOf('--setting-sources') + 1], '');
+			assert.ok(capture.args.includes('--no-session-persistence'));
+			const schema = JSON.parse(capture.args[capture.args.indexOf('--json-schema') + 1]);
+			assert.deepStrictEqual(schema.required, ['commitMessage']);
+			assert.strictEqual(schema.additionalProperties, false);
+			assert.ok(capture.prompt.includes('The scope is working tree.'));
+			assert.ok(capture.prompt.includes('CLAUDE_REPOSITORY_INPUT_MARKER'));
+		} finally {
+			repo.inputBox.value = '';
+			await config.update('claudeExecutablePath', previousExecutable, vscode.ConfigurationTarget.Global);
+			await config.update('commitMessageProvider', previousProvider, vscode.ConfigurationTarget.Global);
 		}
 	});
 

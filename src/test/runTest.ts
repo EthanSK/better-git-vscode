@@ -28,6 +28,8 @@ async function main() {
 	let fakeCodexDirectory: string | undefined;
 	let fakeCodexPath: string | undefined;
 	let fakeCodexCapturePath: string | undefined;
+	let fakeClaudePath: string | undefined;
+	let fakeClaudeCapturePath: string | undefined;
 	try {
 		// The folder containing the Extension Manifest package.json
 		// Passed to `--extensionDevelopmentPath`
@@ -135,6 +137,27 @@ fs.writeFileSync(args[outputIndex + 1], JSON.stringify({ commitMessage: \`test: 
 		fs.chmodSync(fakeCodexPath, 0o755);
 		process.env.BGV_FAKE_CODEX_PATH = fakeCodexPath;
 		process.env.BGV_FAKE_CODEX_CAPTURE_PATH = fakeCodexCapturePath;
+		fakeClaudePath = path.join(fakeCodexDirectory, 'claude');
+		fakeClaudeCapturePath = path.join(fakeCodexDirectory, 'claude-capture.json');
+		fs.writeFileSync(
+			fakeClaudePath,
+			`#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const prompt = fs.readFileSync(0, 'utf8');
+fs.writeFileSync(
+	process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH,
+	JSON.stringify({ args, cwd: process.cwd(), prompt })
+);
+const scope = prompt.includes('The scope is staged.') ? 'staged' : 'working';
+process.stdout.write(JSON.stringify({
+	structured_output: { commitMessage: \`test: generated \${scope} message with Claude\` }
+}));
+`
+		);
+		fs.chmodSync(fakeClaudePath, 0o755);
+		process.env.BGV_FAKE_CLAUDE_PATH = fakeClaudePath;
+		process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH = fakeClaudeCapturePath;
 
 		// Download VS Code, unzip it and run the integration tests against the fixture workspace.
 		// CI normally downloads the requested stable build. Local diagnosis can set BGV_VSCODE_EXECUTABLE_PATH
@@ -166,6 +189,8 @@ fs.writeFileSync(args[outputIndex + 1], JSON.stringify({ commitMessage: \`test: 
 		delete process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH;
 		delete process.env.BGV_FAKE_CODEX_PATH;
 		delete process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
+		delete process.env.BGV_FAKE_CLAUDE_PATH;
+		delete process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH;
 		if (fixturePath) {
 			for (const worktreePath of [
 				revealWorktreePath,

@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.40] — choose Codex or Claude for commit messages
+
+- **Commit-message generation now supports Codex and Claude Code.** The first click detects the locally installed CLIs, asks which signed-in account to use instead of silently choosing one, and saves that provider globally. **Better Git: Change Commit Message AI Provider** switches it later.
+- **Fast effort is explicit and deterministic.** Codex runs with `model_reasoning_effort="none"` and Claude with `--effort low`; both receive the same bounded staged-first change context and schema-validated output contract.
+- **Claude keeps the existing privacy boundary.** It runs from an empty temporary workspace with tools, settings sources, and session persistence disabled. Cancellation, untracked-symbolic-link protection, no automatic commit, and edited-input overwrite protection remain shared across both providers.
+
 ## [1.2.39] — Codex commit messages without Copilot
 
 - **Added Generate Commit Message with Codex to Source Control.** The sparkle in each Git repository header and the Commit dropdown use the already-signed-in Codex CLI, so no GitHub Copilot subscription or separate OpenAI API key is required.
