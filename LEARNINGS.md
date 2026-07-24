@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-24T13:22:18Z
+**Trigger:** Ethan 2026-07-24: “once it goes to the top it loops back to the bottom of the same file again after another go to prev”; “but not always, look for the edge case”
+**Symptom:** Previous Change behaved normally in most diffs, but at the first change of certain broad replacements another Previous returned to the bottom of that same file instead of opening the preceding changed file.
+**Root cause:** v1.2.35's post-built-in outer-`@@` fallback ran for every result that failed the requested directional comparison. That conflated a genuine no-op with VS Code's opposite-direction intra-file wrap: at the first change, native Previous could move to a later change, then `stepOuterHunk(..., "up", false)` consumed the wrapped position as another upward replacement step and trapped navigation in the file.
+**Fix:** v1.2.38 limits post-built-in outer-`@@` rescue to exact no-movement (`lineAfter === lineBefore`). An opposite-direction wrap is now treated as exhaustion and opens the adjacent changed file. The mirrored Next path uses the same distinction.
+**Commit:** pending (v1.2.38).
+**Guard:** A real VS Code 1.130 Extension Development Host regression uses the frozen AIMVS `profile-pic.service.ts` replacement, first proves native Previous wraps downward from its first change, then requires Better Git Previous to open `mod_a.txt`. The pre-fix run failed only this new case with the active tab stuck on `profile-pic.service.ts`; after the two equality gates, the full suite passed 42/42. Release closeout must record the production checks and exact Marketplace verifier result.
+---
+
+---
 **Date:** 2026-07-21T22:30:00Z
 **Trigger:** Ethan after installing v1.2.35: “Actually think the default should be 10”
 **Symptom:** The configurable tall-hunk and large-replacement step worked correctly at five logical lines, but the default movement was smaller than Ethan wanted for normal review.
