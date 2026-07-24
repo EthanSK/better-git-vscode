@@ -113,12 +113,29 @@ suite('Extension Test Suite', () => {
 		const collapseCommand = (extension.packageJSON.contributes?.commands as Array<{
 			command: string;
 			enablement?: string;
+			icon?: string;
 		}>).find(command => command.command === 'better-git-vscode.collapse-worktrees');
 		assert.ok(collapseCommand, 'collapse-worktrees command contribution is missing');
+		assert.strictEqual(collapseCommand.icon, '$(collapse-all)', 'manual collapse must use the collapse-all toolbar icon');
 		assert.strictEqual(
 			collapseCommand.enablement,
 			undefined,
 			'manual collapse must remain enabled independently of startup automation'
+		);
+
+		const titleEntry = (extension.packageJSON.contributes?.menus?.['scm/title'] as Array<{
+			command: string;
+			group?: string;
+			when?: string;
+		}> | undefined)?.find(entry => entry.command === 'better-git-vscode.collapse-worktrees');
+		assert.deepStrictEqual(
+			titleEntry,
+			{
+				command: 'better-git-vscode.collapse-worktrees',
+				group: 'navigation@-3',
+				when: 'scmProvider == git'
+			},
+			'manual collapse must remain a one-click action beside the AI sparkle in Git Source Control headers'
 		);
 
 		const paletteEntry = (extension.packageJSON.contributes?.menus?.commandPalette as Array<{

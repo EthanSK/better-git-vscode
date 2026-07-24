@@ -70,7 +70,7 @@ VS Code saves Source Control tree data per workspace, but current releases can s
 
 - **Default:** pure VS Code behavior. Better Git does not read Source Control tree storage, start a discovery timer, reveal or focus Source Control, select or walk rows, or expand/collapse anything during startup.
 - **Experimental automatic-behavior switch:** `better-git-vscode.experimentalScmTreeStateManagement` is off by default. Turning it on permits the optional startup behavior below, but does not itself perform any startup action.
-- **Manual command:** `Better Git: Collapse all worktree / repository sections in Source Control` (`better-git-vscode.collapse-worktrees`) is always available in the Command Palette and invokes VS Code's built-in all-repositories collapse once. It does not require either automatic setting.
+- **Manual button and command:** click Better Git's **Collapse All** button (`$(collapse-all)`) beside the AI sparkle in a Git repository's Source Control header, or run `Better Git: Collapse all worktree / repository sections in Source Control` (`better-git-vscode.collapse-worktrees`) from the Command Palette. Both invoke VS Code's built-in all-repositories collapse once and do not require either automatic setting.
 - **Optional startup collapse:** also turn on `better-git-vscode.collapseWorktreesOnStartup` to run that same built-in collapse once after 2+ repositories finish discovery. There are no retries and no row traversal.
 
 Exact mixed-state restoration remains paused until VS Code provides a dependable per-node contract that can be tested without selecting rows or accidentally targeting another Source Control list such as Source Control Graph.
