@@ -25,6 +25,7 @@ async function main() {
 	let disabledRevealWorktreePath: string | undefined;
 	let scmRevealWorktreePath: string | undefined;
 	let headerWorktreePath: string | undefined;
+	let lastStagedWorktreePath: string | undefined;
 	let fakeCodexDirectory: string | undefined;
 	let fakeCodexPath: string | undefined;
 	let fakeCodexCapturePath: string | undefined;
@@ -94,6 +95,7 @@ async function main() {
 		disabledRevealWorktreePath = path.join(revealWorktreeParent, 'disabled-linked-worktree');
 		scmRevealWorktreePath = path.join(revealWorktreeParent, 'scm-linked-worktree');
 		headerWorktreePath = path.join(revealWorktreeParent, 'header-linked-worktree');
+		lastStagedWorktreePath = path.join(revealWorktreeParent, 'last-staged-linked-worktree');
 		execFileSync('git', ['worktree', 'add', '--detach', revealWorktreePath], { cwd: fixturePath, stdio: 'pipe' });
 		execFileSync('git', ['worktree', 'add', '--detach', disabledRevealWorktreePath], {
 			cwd: fixturePath,
@@ -107,10 +109,15 @@ async function main() {
 			cwd: fixturePath,
 			stdio: 'pipe',
 		});
+		execFileSync('git', ['worktree', 'add', '--detach', lastStagedWorktreePath], {
+			cwd: fixturePath,
+			stdio: 'pipe',
+		});
 		process.env.BGV_REVEAL_WORKTREE_PATH = revealWorktreePath;
 		process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH = disabledRevealWorktreePath;
 		process.env.BGV_SCM_REVEAL_WORKTREE_PATH = scmRevealWorktreePath;
 		process.env.BGV_HEADER_WORKTREE_PATH = headerWorktreePath;
+		process.env.BGV_LAST_STAGED_WORKTREE_PATH = lastStagedWorktreePath;
 		process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH = profilePicFixtureAfterPath;
 
 		fakeCodexDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'better-git-vscode-fake-codex-'));
@@ -186,6 +193,7 @@ process.stdout.write(JSON.stringify({
 		delete process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH;
 		delete process.env.BGV_SCM_REVEAL_WORKTREE_PATH;
 		delete process.env.BGV_HEADER_WORKTREE_PATH;
+		delete process.env.BGV_LAST_STAGED_WORKTREE_PATH;
 		delete process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH;
 		delete process.env.BGV_FAKE_CODEX_PATH;
 		delete process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
@@ -197,6 +205,7 @@ process.stdout.write(JSON.stringify({
 				disabledRevealWorktreePath,
 				scmRevealWorktreePath,
 				headerWorktreePath,
+				lastStagedWorktreePath,
 			]) {
 				if (!worktreePath) {
 					continue;

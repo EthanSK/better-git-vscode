@@ -782,6 +782,78 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('last-staged badge reopens the staged diff after focus moves to another worktree', async () => {
+		const worktreePath = process.env.BGV_LAST_STAGED_WORKTREE_PATH;
+		assert.ok(worktreePath, 'runTest.ts must provide the last-staged linked-worktree fixture path');
+		const worktreeRoot = vscode.Uri.file(worktreePath);
+		const stagedRelativePath = 'last-staged-new.ts';
+		const stagedPath = path.join(worktreePath, stagedRelativePath);
+		const stagedUri = vscode.Uri.file(stagedPath);
+		const primaryChangeUri = wsUri('committed/mod_a.txt');
+		const gitExt = vscode.extensions.getExtension<any>('vscode.git')!;
+		const api = gitExt.exports.getAPI(1);
+
+		try {
+			await vscode.commands.executeCommand(
+				'better-git-vscode.add-worktree-to-workspace',
+				{ rootUri: worktreeRoot }
+			);
+			const worktreeRepo = await poll(
+				() => api.getRepository(stagedUri),
+				'vscode.git to discover the last-staged worktree'
+			);
+
+			fs.writeFileSync(stagedPath, 'export const stagedFromAnotherWorktree = true;\n');
+			await worktreeRepo.status();
+			await poll(
+				() => [...(worktreeRepo.state.workingTreeChanges ?? []), ...(worktreeRepo.state.untrackedChanges ?? [])].some(
+					(change: any) => change.uri.path === stagedUri.path
+				),
+				'linked-worktree file to appear as untracked'
+			);
+			await vscode.window.showTextDocument(stagedUri, { preview: false });
+			await vscode.commands.executeCommand('better-git-vscode.stage-current-file-and-advance');
+			await worktreeRepo.status();
+			await poll(
+				() => (worktreeRepo.state.indexChanges ?? []).some(
+					(change: any) => change.uri.path === stagedUri.path
+				),
+				'linked-worktree file to become staged'
+			);
+
+			// Match the live failure: the badge remembers a newly staged file in worktree A, that file then
+			// disappears from disk, and the active review context moves to a changed file in worktree B.
+			// A raw-file fallback cannot help here; the click must resolve the repository that OWNS the
+			// remembered URI and reopen its still-valid empty-tree ↔ index diff.
+			fs.rmSync(stagedPath);
+			await worktreeRepo.status();
+			fs.appendFileSync(primaryChangeUri.fsPath, 'active in the primary worktree\n');
+			await refreshUntil(
+				() => inWorkingTree('committed/mod_a.txt', 5),
+				'primary-worktree change to appear'
+			);
+			await vscode.commands.executeCommand('git.openChange', primaryChangeUri);
+			await expectActiveTab('committed/mod_a.txt');
+
+			await vscode.commands.executeCommand('better-git-vscode.reveal-last-staged-file');
+
+			await poll(
+				() => activeTabPath() === stagedUri.path,
+				'last-staged badge to reopen the staged file from its owning worktree'
+			);
+			const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+			assert.ok(input instanceof vscode.TabInputTextDiff, 'last-staged badge must open the staged diff');
+			assert.strictEqual(
+				(input as vscode.TabInputTextDiff).modified.scheme,
+				'git',
+				'last-staged badge must open the index side, not a raw working file'
+			);
+		} finally {
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			execFileSync('git', ['reset', '--hard', baseSha], { cwd: worktreePath, stdio: 'pipe' });
+		}
+	});
+
 	test('untracked new file: rapid repeated next presses are serialized and none are lost', async () => {
 		write('zz_new.txt', lines(240, 'new'));
 		await refreshUntil(() => isUntracked('zz_new.txt'), 'zz_new.txt to appear as untracked');
