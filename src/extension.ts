@@ -867,7 +867,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             return; // nothing staged via the extension yet this session
         }
         const target = lastStagedUri.path.toLowerCase();
-        const fileChanges = await getFileChanges();
+        // Resolve the list from the repository that OWNS the remembered file, not from whichever worktree
+        // happens to be active when the status-bar item is clicked. In a multi-root/worktree workspace Ethan
+        // can stage in repo A, continue reviewing in repo B, then click this persistent badge. The old
+        // active-tab-derived lookup searched repo B, missed the staged entry, and fell back to opening the raw
+        // working file. That was visibly a no-op when the working file no longer existed (for example a
+        // staged-new file deleted after staging), even though its index blob was still available to diff.
+        const fileChanges = await getFileChanges(lastStagedUri);
         // Prefer the STAGED (index) entry — that's the diff that shows what got staged and lets him unstage it.
         const stagedEntry = fileChanges.find((c) => c.staged && c.uri.path.toLowerCase() === target);
         if (stagedEntry) {
@@ -1317,7 +1323,7 @@ const getUnstagedUris = (repo: any, isTreeView: boolean): vscode.Uri[] => {
     return [...byPath.values()].sort(isTreeView ? orderFilesForTreeView : orderFilesForListView);
 };
 
-const getFileChanges = async (): Promise<FileChange[]> => {
+const getFileChanges = async (preferredUri?: vscode.Uri): Promise<FileChange[]> => {
     // BUG 10 FIX (v1.2.9 — getFileChanges threw instead of no-oping when git wasn't ready / no repos):
     // the old code did `getExtension("vscode.git")!.exports` (`.exports` is undefined until the git extension
     // ACTIVATES, so `.getAPI(1)` threw TypeError) and then `git.repositories[0]` + unguarded `activeRepo.state`
@@ -1330,15 +1336,18 @@ const getFileChanges = async (): Promise<FileChange[]> => {
         return []; // git extension not present / not activated yet -> no changes, callers no-op gracefully
     }
     const workspaceUri = vscode.workspace.workspaceFolders?.map((ws) => ws.uri)[0];
-    // Prefer the repo that owns the file CURRENTLY BEING REVIEWED (tab-derived, focus-independent) so a
-    // multi-root workspace navigates within the right repo — falling through from a file in repo B used to
-    // build repo A's list, miss the file (findCurrentIndex -1) and silently stop (Codex review, v1.2.1).
+    // An explicit preferredUri belongs to a command target that must remain stable even if focus is elsewhere
+    // (currently the persistent last-staged badge). Otherwise prefer the repo that owns the file CURRENTLY
+    // BEING REVIEWED (tab-derived, focus-independent) so normal navigation stays within the active repo.
     // Fall back to the first workspace folder's repo, then the shared getPrimaryRepository() (the same
-    // "pick the primary repo" predicate the worktree-collapse uses) instead of a raw git.repositories[0]
-    // that could be undefined. Null-check the result so a still-scanning window returns [] rather than throws.
+    // "pick the primary repo" predicate the worktree-collapse uses) instead of a raw git.repositories[0].
+    // Null-check the result so a still-scanning window returns [] rather than throws.
     const reviewUri = currentReviewFileUri();
     const activeRepo =
-        (reviewUri && git.getRepository(reviewUri)) || git.getRepository(workspaceUri?.path) || getPrimaryRepository();
+        (preferredUri && git.getRepository(preferredUri)) ||
+        (reviewUri && git.getRepository(reviewUri)) ||
+        git.getRepository(workspaceUri?.path) ||
+        getPrimaryRepository();
     if (!activeRepo) {
         return []; // no repositories populated yet / non-git workspace -> no changes, callers no-op gracefully
     }

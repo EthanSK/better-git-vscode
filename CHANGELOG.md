@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.43] — last-staged badge follows its worktree
+
+- **Fixed the persistent `Staged: …` status-bar badge sometimes failing to reopen the file after review moved to another worktree.** The click now resolves the Git repository from the remembered staged file instead of whichever repository owns the currently active tab.
+- **The staged diff remains available even when the working file is gone.** A staged-new file that is subsequently removed from disk now reopens from its index blob rather than falling into a raw-file open that can silently fail.
+- **Added the exact multi-worktree edge case to the real-host suite.** It stages a new file in one linked worktree, removes its working copy, switches the active diff to the primary worktree, and requires the badge to reopen the original worktree's staged index diff.
+
 ## [1.2.42] — one-click Source Control collapse
 
 - **Added a Collapse All button beside Better Git's AI sparkle in Git Source Control headers.** It invokes the existing manual collapse command, folding every worktree / repository section without opening the Command Palette.

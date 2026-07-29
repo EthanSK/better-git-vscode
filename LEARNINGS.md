@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-29T23:06:52Z
+**Trigger:** Ethan 2026-07-29 with a screenshot of `Staged: users.ts`: “Sometimes when I click this button in VSCode, it doesn't open the file. I feel like sometimes it does though.”
+**Symptom:** The persistent last-staged status-bar badge usually reopened its staged diff, but could appear to do nothing after review focus moved among AIMVS worktrees. In the live report, `users.ts` had been staged in `ai-music-video-studio-profile-picture-assets`, while later active Git activity came from the primary and R2-retention worktrees.
+**Root cause:** The badge remembered the correct absolute `lastStagedUri`, but its click handler called the focus-derived `getFileChanges()` with no target. That built only the currently active worktree's change list, missed the staged entry from the remembered worktree, and fell back to `showTextDocument(lastStagedUri)`. For a staged-new file whose working copy was subsequently absent, the raw-file fallback threw and was intentionally swallowed even though the owning repository still had a valid index blob.
+**Fix:** v1.2.43 lets `getFileChanges(preferredUri)` resolve an explicit target's owning Git repository before the active review URI. `reveal-last-staged-file` passes `lastStagedUri`, so it finds the correct staged status and reuses `openChangeEntry` to open the index diff regardless of current focus or working-file existence. Normal navigation keeps the existing focus-derived behavior because every other caller omits the preference.
+**Commit:** pending on `codex/fix-last-staged-open`; Marketplace release pending.
+**Guard:** The real VS Code 1.129 Extension Development Host regression creates a dedicated linked worktree, stages a new file through Better Git, removes its working copy, activates a primary-worktree diff, and invokes the badge command. Before the fix it reached the remembered path only as a plain tab and failed the staged-diff assertion; after the fix it opened a `TabInputTextDiff` whose modified side is the `git:` index URI. The full suite passed 46/46, plus TypeScript, development webpack, and ESLint.
+---
+
+---
 **Date:** 2026-07-24T18:37:00Z
 **Trigger:** Ethan 2026-07-24: “in where we have the generate commit message with AI sparkle in the top of the source control Changes section”; “add a button to the top right to collapse all”
 **Symptom:** The safe manual **Collapse all worktree / repository sections in Source Control** action existed only in the Command Palette, so collapsing the Source Control repository headers required taking a hand off the mouse. Better Git's AI sparkle already occupied the supported per-repository `scm/title` toolbar.
