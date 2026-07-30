@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.47",
+  "version": "1.2.48",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -273,16 +273,16 @@
           ],
           "enumDescriptions": [
             "Use the established physical > and < keys with Alt/Option.",
-            "Use the physical Z and 1 keys with Alt/Option.",
+            "Use the physical Z and X keys with Alt/Option.",
             "Enable both physical key pairs so either hand can navigate."
           ],
           "default": "both",
-          "description": "Choose which hand can run Next/Previous Change and Stage-and-Advance. Both (default) enables both physical key pairs; Right uses only > / <; Left uses Z for next and 1 for previous. Under Dvorak mode the bindings follow those same physical keys. On QWERTY, Both or Left claims Alt/Option+Z, overriding VS Code's Toggle Word Wrap shortcut while active; choose Right to restore that shortcut."
+          "description": "Choose which hand can run Next/Previous Change and Stage-and-Advance. Both (default) enables both physical key pairs; Right uses only > / <; Left uses Z for next and X for previous. Under Dvorak mode the bindings follow those same physical keys. On QWERTY, Both or Left claims Alt/Option+Z, overriding VS Code's Toggle Word Wrap shortcut while active. On Dvorak, physical X produces Q, so Both or Left claims Alt/Option+Q instead of the Revert-and-Save shortcut. Choose Right to preserve those established shortcuts."
         },
         "better-git-vscode.dvorakMode": {
           "type": "boolean",
           "default": false,
-          "description": "Keep both navigation pairs on the same physical keys under Dvorak. The right-hand > / < pair uses alt+v / alt+w, and physical Z uses alt+; while physical 1 is unchanged. Character bindings are required because VS Code deliberately dispatches the macOS Dvorak - QWERTY Cmd layout by key code. Stage-and-advance uses Shift with the same physical keys. Your own keybindings.json entries always take precedence."
+          "description": "Keep both navigation pairs on the same physical keys under Dvorak. The right-hand > / < pair uses alt+v / alt+w, while physical Z / X uses alt+; / alt+q. Character bindings are required because VS Code deliberately dispatches the macOS Dvorak - QWERTY Cmd layout by key code. Stage-and-advance uses Shift with the same physical keys. When Left or Both is active, physical X owns Alt/Option+Q, so Revert-and-Save has no default shortcut in that Dvorak configuration. Your own keybindings.json entries always take precedence."
         },
         "better-git-vscode.showLastStagedInStatusBar": {
           "type": "boolean",
@@ -362,10 +362,12 @@
       "  physical > key : QWERTY types `.`  -> alt+.  | Dvorak types `v` -> alt+v  => next-scm-change",
       "  physical < key : QWERTY types `,`  -> alt+,  | Dvorak types `w` -> alt+w  => previous-scm-change",
       "",
-      "The optional left-hand pair uses physical Z and the adjacent physical 1 key:",
+      "The optional left-hand pair uses the adjacent physical Z and X keys:",
       "  physical Z key : QWERTY types `z` -> alt+z | Dvorak types `;` -> alt+; => next-scm-change",
-      "  physical 1 key : alt+1 in both layouts                              => previous-scm-change",
+      "  physical X key : QWERTY types `x` -> alt+x | Dvorak types `q` -> alt+q => previous-scm-change",
       "  shift + either enabled pair = stage-and-next / stage-and-previous in both layouts.",
+      "  Dvorak physical X therefore collides with the established alt+q revert default. When the left",
+      "  pair is active, navigation wins and the revert binding is disabled; right-only preserves revert.",
       "",
       "The gates use VS Code's native `config.<settingId>` when-clause support. `dvorakMode` selects the",
       "character mapping for both pairs, while `navigationHands` enables the right pair, left pair,",
@@ -391,9 +393,10 @@
       "mouse-button commands (bind F13/F17 or your own key in keybindings.json if you want them). Do NOT",
       "give them QWERTY defaults on >/< again; that is exactly the bug v1.2.5 fixed.",
       "",
-      "Everything else (changed-file nav cmd+alt+,/cmd+alt+. , alt+q revert, alt+r reveal) is LEFT ON ITS",
-      "DEFAULT regardless of dvorakMode — those characters are reachable/comfortable on both layouts and",
-      "Ethan never remapped them."
+      "Changed-file nav cmd+alt+,/cmd+alt+. and alt+r reveal stay on their defaults regardless of layout.",
+      "The alt+q revert default is available everywhere except Dvorak left/both, where that character is",
+      "the requested physical X Previous key. The mutually exclusive when-clauses prevent a revert/navigation",
+      "collision; users can assign Revert-and-Save a different shortcut if they use the Dvorak left pair."
     ],
     "_comment_ctrlShiftG_keybinding": [
       "ctrl+shift+g (the LAST entry in `keybindings` below) is a COMPOSITE binding built on VS Code's",
@@ -449,9 +452,15 @@
       },
       {
         "command": "better-git-vscode.previous-scm-change",
-        "key": "alt+1",
-        "mac": "alt+1",
-        "when": "config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both"
+        "key": "alt+x",
+        "mac": "alt+x",
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.previous-scm-change",
+        "key": "alt+q",
+        "mac": "alt+q",
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.smart-forward",
@@ -513,14 +522,21 @@
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
-        "key": "shift+alt+1",
-        "mac": "shift+alt+1",
-        "when": "config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both"
+        "key": "shift+alt+x",
+        "mac": "shift+alt+x",
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.stage-and-previous-changed-file",
+        "key": "shift+alt+q",
+        "mac": "shift+alt+q",
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.revert-and-save",
         "key": "alt+q",
-        "mac": "alt+q"
+        "mac": "alt+q",
+        "when": "!config.better-git-vscode.dvorakMode || config.better-git-vscode.navigationHands == right"
       },
       {
         "command": "better-git-vscode.reveal-current-file-in-explorer",

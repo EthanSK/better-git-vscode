@@ -82,14 +82,16 @@ suite('Extension Test Suite', () => {
 			['better-git-vscode.next-scm-change', 'alt+;', `config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.previous-scm-change', 'alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.previous-scm-change', 'alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.previous-scm-change', 'alt+1', left],
+			['better-git-vscode.previous-scm-change', 'alt+x', `!config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.previous-scm-change', 'alt+q', `config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+;', `config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+1', left]
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+x', `!config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+q', `config.better-git-vscode.dvorakMode && (${left})`]
 		];
 		const handAwareCommandIds = new Set([
 			'better-git-vscode.next-scm-change',
@@ -113,6 +115,19 @@ suite('Extension Test Suite', () => {
 				assert.ok(!binding.key.includes('['), `${binding.command} must not use printable scan codes under Dvorak - QWERTY Cmd`);
 			}
 		}
+
+		const revertBinding = (manifest.contributes?.keybindings as Array<{
+			command: string;
+			key: string;
+			mac?: string;
+			when?: string;
+		}>).find(binding => binding.command === 'better-git-vscode.revert-and-save');
+		assert.deepStrictEqual(revertBinding, {
+			command: 'better-git-vscode.revert-and-save',
+			key: 'alt+q',
+			mac: 'alt+q',
+			when: '!config.better-git-vscode.dvorakMode || config.better-git-vscode.navigationHands == right'
+		}, 'Dvorak physical X navigation and Alt+Q revert must be mutually exclusive');
 	});
 
 	test('auto-add worktree on reveal defaults to enabled', () => {

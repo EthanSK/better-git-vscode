@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.48] — adjacent Z/X left-hand navigation
+
+- **The left-hand pair is now physical `Z` / `X`:** Option+Z goes to the next change and Option+X goes to the previous change, with Shift adding Stage-and-Advance. Both hands remain enabled by default.
+- **Dvorak uses the characters VS Code actually dispatches:** physical Z / X is contributed as `Alt+;` / `Alt+Q`; QWERTY uses `Alt+Z` / `Alt+X`. Both are ordinary non-composing keys, avoiding the dead-key failure of Option+backtick while keeping the pair adjacent.
+- **The existing Dvorak `Alt+Q` Revert-and-Save collision is handled explicitly:** when Dvorak and Left/Both are active, physical X owns `Alt+Q` for Previous and the revert default is disabled. Dvorak Right-only and every QWERTY hand setting retain `Alt+Q` for Revert-and-Save.
+- **Regression coverage pins the full 16-binding hand/layout matrix and the mutually exclusive Revert when-clause,** so physical X can never silently invoke a revert while it is configured for navigation.
+
 ## [1.2.47] — reliable left-hand navigation on macOS Dvorak
 
 - **The left-hand pair is now physical `Z` / `1`:** Option+Z goes to the next change and Option+1 goes to the previous change, with Shift adding Stage-and-Advance. The adjacent `1` key replaces tilde because macOS consumes Option+backtick as grave-accent composition inside text editors before VS Code can run a shortcut.
