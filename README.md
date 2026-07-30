@@ -107,7 +107,7 @@ All bindings ship as defaults and are fully overridable (see below).
 | Previous changed file | `Cmd+Alt+,` | `Ctrl+Alt+,` |
 | Stage current file + next change | `Shift+Alt+.` | `Shift+Alt+.` |
 | Stage current file + previous change | `Shift+Alt+,` | `Shift+Alt+,` |
-| Revert selected change and save | `Alt+Q` | `Alt+Q` |
+| Revert selected change and save | `Alt+Q`* | `Alt+Q`* |
 | Reveal current file in Explorer | `Alt+R` | `Alt+R` |
 | Open changes at cursor/scroll + Source Control | `Ctrl+Shift+G` | `Ctrl+Shift+G` |
 
@@ -203,15 +203,15 @@ to stage-and-advance, all without touching the keyboard.
 ## Left/right-hand navigation and Dvorak mode
 
 By default, change navigation is available from both the right-hand **physical `>` and `<` keys**
-and the left-hand **physical `Z` and `1` keys**. Set
+and the left-hand **physical `Z` and `X` keys**. Set
 **`better-git-vscode.navigationHands`** to `left` or `right` to keep only one pair active:
 
 | Action | Right-hand pair | Left-hand pair |
 | --- | --- | --- |
 | Next change | `Alt+.` (physical `>`) | `Alt+Z` (physical `Z`) |
-| Previous change | `Alt+,` (physical `<`) | `Alt+1` (physical `1`) |
+| Previous change | `Alt+,` (physical `<`) | `Alt+X` (physical `X`) |
 | Stage + next | `Shift+Alt+.` | `Shift+Alt+Z` |
-| Stage + previous | `Shift+Alt+,` | `Shift+Alt+1` |
+| Stage + previous | `Shift+Alt+,` | `Shift+Alt+X` |
 
 `both` is the default, so either hand works immediately. On QWERTY this intentionally
 claims VS Code's built-in `Alt+Z` **Toggle Word Wrap** binding. Choose `right` if you want
@@ -225,7 +225,7 @@ the extension contributes the characters that those physical keys actually produ
 | Physical pair | QWERTY bindings | Dvorak bindings |
 | --- | --- | --- |
 | Right (`>` / `<`) | `Alt+.` / `Alt+,` | `Alt+V` / `Alt+W` |
-| Left (`Z` / `1`) | `Alt+Z` / `Alt+1` | `Alt+;` / `Alt+1` |
+| Left (`Z` / `X`) | `Alt+Z` / `Alt+X` | `Alt+;` / `Alt+Q` |
 
 Shift adds Stage-and-Advance to the same pair in either layout. These settings use VS
 Code's native configuration when-clauses, so changing either one swaps the active bindings
@@ -233,11 +233,14 @@ without an extension restart. Neither setting changes what the commands do.
 
 The physical tilde/backtick key cannot be a reliable macOS Option shortcut inside text editors:
 Option+backtick starts the system grave-accent dead-key composition, and VS Code receives
-`KeyInComposition` instead of the physical key. The adjacent physical `1` key is used for
-Previous because Option+1 and Shift+Option+1 are ordinary non-composing key events.
+`KeyInComposition` instead of the physical key. Physical X is an ordinary non-composing key and
+keeps the pair together under one hand.
 
-Changed-file nav (`Cmd/Ctrl+Alt+.` / `,`), revert (`Alt+Q`) and reveal (`Alt+R`) are
-**left on their defaults** in both modes. In Dvorak mode the freed-up `Alt+.` / `Alt+,`
+Changed-file nav (`Cmd/Ctrl+Alt+.` / `,`) and reveal (`Alt+R`) stay on their defaults.
+On Dvorak, physical X produces `Q`, so enabling the left pair makes `Alt+Q` Previous Change
+and disables the conflicting Revert-and-Save default; choose `navigationHands: "right"` to
+keep Revert on `Alt+Q`, or assign Revert another shortcut. This is the `*` exception in the
+main shortcut table above. In Dvorak mode the freed-up `Alt+.` / `Alt+,`
 characters additionally map to the smart forward/back mouse commands (they sit on
 different physical keys there, so nothing collides).
 
@@ -267,7 +270,7 @@ own key. To disable a default instead, add a rule prefixed with `-` in `keybindi
 
 A few behaviours are configurable under **Settings → Better Git VS Code**:
 
-- **Navigation hands** — choose the right-hand physical `>` / `<` pair, the left-hand physical `Z` / `1` pair, or both (`better-git-vscode.navigationHands`, default `both`). On QWERTY, choose `right` to preserve VS Code's built-in `Alt+Z` Toggle Word Wrap shortcut.
+- **Navigation hands** — choose the right-hand physical `>` / `<` pair, the left-hand physical `Z` / `X` pair, or both (`better-git-vscode.navigationHands`, default `both`). On QWERTY, choose `right` to preserve VS Code's built-in `Alt+Z` Toggle Word Wrap shortcut. On Dvorak, choose `right` to preserve Better Git's `Alt+Q` Revert-and-Save shortcut.
 - **Dvorak mode** — remap both navigation pairs to the characters produced by the same physical keys under Dvorak (`better-git-vscode.dvorakMode`, see the section above).
 - **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
 - **Experimental Source Control automation** — automatic tree manipulation is off by default behind `better-git-vscode.experimentalScmTreeStateManagement`. The manual Command Palette collapse remains available; the separate `collapseWorktreesOnStartup` double opt-in runs one built-in collapse with no retries. Exact mixed-state restoration is paused. See *Source Control show/hide automation is experimental and off by default* above.
