@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-30T15:08:34Z
+**Trigger:** Ethan 2026-07-30: first Option+Z worked; then back inserted a backtick and both left shortcuts inserted characters
+**Symptom:** Under DVORAK - QWERTY CMD, left Option plus physical Z worked once, then left Option plus physical tilde inserted a backtick; afterward both left navigation chords inserted text instead of navigating.
+**Root cause:** The left pair was contributed as layout-produced characters. macOS treats Option plus physical Backquote as a dead-key composition under the live Dvorak input source, so the editor consumed that chord and subsequent Option presses as text before the character binding could reliably dispatch.
+**Fix:** v1.2.46 replaces the left pair with VS Code physical scan codes: alt+[KeyZ] / alt+[Backquote] and Shift variants, independent of dvorakMode; the right-hand QWERTY/Dvorak mappings remain unchanged. Product commit 9d900b186f3ee3bb1fe1ea98e527ec2aa19c466f.
+**Commit:** 9d900b186f3ee3bb1fe1ea98e527ec2aa19c466f
+**Guard:** Carbon UCKeyTranslate confirmed the live Backquote dead-key state. The real VS Code 1.129 isolated Extension Development Host clean rerun passed 47/47, including the exact 12-row scan-code manifest matrix; TypeScript, webpack, ESLint, JSON, git diff, and nine-file VSIX checks passed. Marketplace verifier printed BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED for v1.2.46 with SHA-256 d50f238b0b12d6ffc1e5821844c739fd40cdbd3a3633c19451b76b7ebffef6e3; normal VS Code was not installed, updated, reloaded, or restarted.
+---
+
+---
 **Date:** 2026-07-30T14:41:47Z
 **Trigger:** Ethan after installing v1.2.44: “im getting command 'fsi.SendFile' not found when doing left opitn z (; on dvorak)”
 **Symptom:** Pressing left Option plus the physical Z key under `DVORAK - QWERTY CMD` invoked the missing command `fsi.SendFile` instead of Better Git Next Change, even though `navigationHands` was set to `both` and `dvorakMode` was enabled.
