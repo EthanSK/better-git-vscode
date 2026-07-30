@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-30T14:41:47Z
+**Trigger:** Ethan after installing v1.2.44: “im getting command 'fsi.SendFile' not found when doing left opitn z (; on dvorak)”
+**Symptom:** Pressing left Option plus the physical Z key under `DVORAK - QWERTY CMD` invoked the missing command `fsi.SendFile` instead of Better Git Next Change, even though `navigationHands` was set to `both` and `dvorakMode` was enabled.
+**Root cause:** The user-level VS Code `keybindings.json` still contained an old unconditional `{ "key": "alt+;", "command": "fsi.SendFile" }` entry. User keybindings have higher priority than extension-contributed defaults, so it overrode Better Git's valid installed v1.2.44 `alt+;` Dvorak binding before Better Git could receive the key. The command provider was no longer installed, producing the command-not-found error.
+**Fix:** Removed only the obsolete `fsi.SendFile` user binding. The installed Better Git v1.2.44 manifest already contained `alt+; -> better-git-vscode.next-scm-change` under `dvorakMode && (navigationHands == left || navigationHands == both)`, and the live user settings already contained `navigationHands: "both"` plus `dvorakMode: true`; no extension product change or new release was required.
+**Commit:** none (live user-keybinding repair and durable investigation evidence only; v1.2.45 was already Marketplace-verified separately).
+**Guard:** Parsed the complete user `keybindings.json` and `settings.json` as JSONC after the edit, required zero remaining `fsi.SendFile` or user `alt+;` entries, required `navigationHands == both` and `dvorakMode == true`, and inspected the installed v1.2.44 manifest for the exact Better Git `alt+;` contribution. VS Code normally watches user keybindings immediately; physical-key confirmation remains with Ethan after the repair, and normal VS Code was not reloaded or restarted.
+---
+
+---
 **Date:** 2026-07-30T14:33:30Z
 **Trigger:** Ethan 2026-07-30 after v1.2.44: “i think the defalut should be both and make sure readyme documnest this”
 **Symptom:** v1.2.44 supported Right, Left, and Both navigation-hand choices, but defaulted to Right, so new users had to discover and change the setting before either hand could drive Next/Previous Change.
