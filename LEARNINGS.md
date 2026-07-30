@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-30T14:33:30Z
+**Trigger:** Ethan 2026-07-30 after v1.2.44: “i think the defalut should be both and make sure readyme documnest this”
+**Symptom:** v1.2.44 supported Right, Left, and Both navigation-hand choices, but defaulted to Right, so new users had to discover and change the setting before either hand could drive Next/Previous Change.
+**Root cause:** The first release chose the conservative Right default to avoid reclaiming VS Code's QWERTY `Alt+Z` Toggle Word Wrap shortcut. Ethan preferred immediate two-hand ergonomics and explicitly accepted making Both the product default, with the shortcut tradeoff documented rather than hidden.
+**Fix:** v1.2.45 changes `better-git-vscode.navigationHands`'s manifest default to `both` while preserving explicit `right` and `left` values. The Settings description, README navigation section, README settings list, and changelog now state that both physical pairs work by default and that QWERTY users can select Right to restore VS Code's `Alt+Z` Toggle Word Wrap shortcut. Dvorak mappings and all runtime navigation code are unchanged.
+**Commit:** d3365b34dfb61601bf4f723a075ddf15bed1212b (PR #78, squash-merged; published as v1.2.45).
+**Guard:** Manifest coverage now pins `both` as the default and still pins all 16 QWERTY/Dvorak navigation and stage bindings. TypeScript, development and production webpack, ESLint, JSON parsing, and `git diff --check` passed. The first real VS Code 1.131 Extension Development Host run passed the new manifest test and 46 other tests but hit one unrelated stage-and-Previous landing timeout; an immediate clean-host rerun passed all 47/47, including that test. The production archive contains exactly nine entries, excludes `.git`, has `navigationHands: both` in its tested v1.2.45 manifest, and contains a byte-identical production bundle. The exact VSIX at SHA-256 `8a3d2408055058b4a6d8bc71097e7c0797008f260d3c512bd200bd0e06092405` passed authenticated publisher validation, the public validated-only Gallery query used by VS Code, exact download, and byte comparison when the verifier printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED`. Normal VS Code remained installed at v1.2.44 and was not installed, updated, reloaded, or restarted by release work.
+---
+
+---
 **Date:** 2026-07-30T14:02:45Z
 **Trigger:** Ethan 2026-07-30: “i actually wanna have the choice of using my left or right hand to do the go to next prev change”; “use the left option with the z and tilde key”; “set it up for dvorak however i'm currently doing that”
 **Symptom:** Better Git exposed only one physical Next/Previous Change pair at a time. `dvorakMode` correctly kept the existing right-hand `>` / `<` pair in place across layouts, but Ethan could not opt into a second physical `Z` / tilde pair or keep both hands available.
