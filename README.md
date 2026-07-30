@@ -208,28 +208,29 @@ and the physical tilde/backtick key for Previous, or `both` to keep both pairs a
 
 | Action | Right-hand pair | Left-hand pair |
 | --- | --- | --- |
-| Next change | `Alt+.` (physical `>`) | `Alt+Z` (physical `Z`) |
-| Previous change | `Alt+,` (physical `<`) | `Alt+backtick` (physical tilde) |
-| Stage + next | `Shift+Alt+.` | `Shift+Alt+Z` |
-| Stage + previous | `Shift+Alt+,` | `Shift+Alt+backtick` |
+| Next change | `Alt+.` (physical `>`) | `Alt+[KeyZ]` (physical `Z`) |
+| Previous change | `Alt+,` (physical `<`) | `Alt+[Backquote]` (physical tilde) |
+| Stage + next | `Shift+Alt+.` | `Shift+Alt+[KeyZ]` |
+| Stage + previous | `Shift+Alt+,` | `Shift+Alt+[Backquote]` |
 
 `both` is the default, so either hand works immediately. On QWERTY this intentionally
 claims VS Code's built-in `Alt+Z` **Toggle Word Wrap** binding. Choose `right` if you want
 only the established `>` / `<` pair and want VS Code's `Alt+Z` word-wrap shortcut back.
 
 On **Dvorak**, also enable **`better-git-vscode.dvorakMode`** (Settings → Better Git
-VS Code, or add it to `settings.json`). Both hand choices then stay on the same physical
-keys while using the characters Dvorak produces:
+VS Code, or add it to `settings.json`) for the right-hand pair. The left-hand pair uses
+VS Code physical scan codes in every layout; this is important because macOS treats
+Option + physical tilde as a dead-key composition instead of a normal backtick shortcut:
 
 | Physical pair | QWERTY bindings | Dvorak bindings |
 | --- | --- | --- |
 | Right (`>` / `<`) | `Alt+.` / `Alt+,` | `Alt+V` / `Alt+W` |
-| Left (`Z` / tilde) | `Alt+Z` / `Alt+backtick` | `Alt+;` / `Alt+backtick` |
+| Left (`Z` / tilde) | `Alt+[KeyZ]` / `Alt+[Backquote]` | Same physical scan-code bindings |
 
 Shift adds Stage-and-Advance to the same pair in either layout. These settings use VS
 Code's native configuration when-clauses, so changing either one swaps the active bindings
-without an extension restart. Dvorak mode is only a physical-key remap; it never changes
-what the commands do.
+without an extension restart. Dvorak mode remaps the right pair only; the left pair is
+already layout-independent. Neither setting changes what the commands do.
 
 Changed-file nav (`Cmd/Ctrl+Alt+.` / `,`), revert (`Alt+Q`) and reveal (`Alt+R`) are
 **left on their defaults** in both modes. In Dvorak mode the freed-up `Alt+.` / `Alt+,`
@@ -263,7 +264,7 @@ own key. To disable a default instead, add a rule prefixed with `-` in `keybindi
 A few behaviours are configurable under **Settings → Better Git VS Code**:
 
 - **Navigation hands** — choose the right-hand physical `>` / `<` pair, the left-hand physical `Z` / tilde pair, or both (`better-git-vscode.navigationHands`, default `both`). On QWERTY, choose `right` to preserve VS Code's built-in `Alt+Z` Toggle Word Wrap shortcut.
-- **Dvorak mode** — remap every enabled navigation-hand pair to the characters produced by the same physical keys under Dvorak (`better-git-vscode.dvorakMode`, see the section above).
+- **Dvorak mode** — remap the right-hand navigation pair to the characters produced by the same physical keys under Dvorak; the left pair already uses layout-independent scan codes (`better-git-vscode.dvorakMode`, see the section above).
 - **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
 - **Experimental Source Control automation** — automatic tree manipulation is off by default behind `better-git-vscode.experimentalScmTreeStateManagement`. The manual Command Palette collapse remains available; the separate `collapseWorktreesOnStartup` double opt-in runs one built-in collapse with no retries. Exact mixed-state restoration is paused. See *Source Control show/hide automation is experimental and off by default* above.
 - **Auto-add worktree on reveal** — when reveal targets a worktree outside Explorer, add that worktree root as a workspace folder and reveal the file (`better-git-vscode.autoAddWorktreeOnReveal`, on by default; see *Pull a worktree into your sidebar* above).
