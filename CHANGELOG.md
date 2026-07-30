@@ -1,6 +1,15 @@
 # Change Log
 
+## [1.2.47] — reliable left-hand navigation on macOS Dvorak
+
+- **The left-hand pair is now physical `Z` / `1`:** Option+Z goes to the next change and Option+1 goes to the previous change, with Shift adding Stage-and-Advance. The adjacent `1` key replaces tilde because macOS consumes Option+backtick as grave-accent composition inside text editors before VS Code can run a shortcut.
+- **Dvorak now uses the characters VS Code actually dispatches:** physical Z is contributed as `Alt+;` while physical 1 remains `Alt+1`. VS Code deliberately forces `Dvorak - QWERTY Cmd` through its key-code fallback, where the v1.2.46 `[KeyZ]` scan-code binding could never match the live `Alt+;` event.
+- **Both hands remain enabled by default.** The established right-hand QWERTY `Alt+.` / `Alt+,` and Dvorak `Alt+V` / `Alt+W` pair is unchanged, as are explicit `left` and `right` choices.
+- **Regression coverage rejects printable scan-code navigation bindings.** The exact QWERTY/Dvorak matrix is pinned as character bindings so a manifest-only scan-code test cannot repeat v1.2.46's false pass.
+
 ## [1.2.46] — physical left-hand keys avoid Dvorak dead-key composition
+
+> **Superseded by v1.2.47:** live VS Code 1.129 troubleshooting proved that these scan-code bindings do not work reliably. `Dvorak - QWERTY Cmd` is forced through key-code dispatch, and text inputs still turn Option+backtick into `KeyInComposition` before shortcut resolution.
 
 - **The left-hand pair now binds VS Code physical scan codes:** `Alt+[KeyZ]` for Next and `Alt+[Backquote]` for Previous, with matching Shift stage-and-advance variants. The physical keys stay fixed across QWERTY and Dvorak without character remapping.
 - **Fixed Option + physical tilde inserting a backtick and breaking subsequent shortcuts under Dvorak.** macOS treats that chord as a dead-key composition, so the old character binding was not reliably dispatched; the editor then consumed later Option presses as text. The scan-code binding intercepts the physical chord instead.
