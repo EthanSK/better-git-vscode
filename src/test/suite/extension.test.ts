@@ -61,6 +61,61 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(stageAndAdvanceContribution.group, 'navigation@100');
 	});
 
+	test('navigation hands enable the correct physical keys in QWERTY and Dvorak', () => {
+		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
+		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');
+		const manifest = extension.packageJSON;
+
+		const setting = manifest.contributes?.configuration?.properties?.['better-git-vscode.navigationHands'];
+		assert.ok(setting, 'navigationHands setting is missing from package.json');
+		assert.strictEqual(setting.type, 'string');
+		assert.deepStrictEqual(setting.enum, ['right', 'left', 'both']);
+		assert.strictEqual(setting.default, 'right', 'existing right-hand navigation must remain the default');
+		assert.strictEqual(setting.enumDescriptions?.length, 3, 'every navigation-hand choice needs a Settings UI description');
+
+		const right = '(config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)';
+		const left = '(config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)';
+		const expected = [
+			['better-git-vscode.next-scm-change', 'alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
+			['better-git-vscode.next-scm-change', 'alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
+			['better-git-vscode.next-scm-change', 'alt+z', `!config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.next-scm-change', 'alt+;', `config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.previous-scm-change', 'alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
+			['better-git-vscode.previous-scm-change', 'alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
+			['better-git-vscode.previous-scm-change', 'alt+`', `!config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.previous-scm-change', 'alt+`', `config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+z', `!config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+;', `config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+`', `!config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+`', `config.better-git-vscode.dvorakMode && ${left}`]
+		];
+		const handAwareCommandIds = new Set([
+			'better-git-vscode.next-scm-change',
+			'better-git-vscode.previous-scm-change',
+			'better-git-vscode.stage-and-next-changed-file',
+			'better-git-vscode.stage-and-previous-changed-file'
+		]);
+		const actual = (manifest.contributes?.keybindings as Array<{
+			command: string;
+			key: string;
+			mac?: string;
+			when?: string;
+		}>)
+			.filter(binding => handAwareCommandIds.has(binding.command))
+			.map(binding => [binding.command, binding.key, binding.when]);
+
+		assert.deepStrictEqual(actual, expected);
+		for (const binding of (manifest.contributes?.keybindings as Array<{ command: string; key: string; mac?: string }>)) {
+			if (handAwareCommandIds.has(binding.command)) {
+				assert.strictEqual(binding.mac, binding.key, `${binding.command} must use the same physical mapping on macOS`);
+			}
+		}
+	});
+
 	test('auto-add worktree on reveal defaults to enabled', () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');

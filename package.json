@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.43",
+  "version": "1.2.44",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -264,10 +264,25 @@
           "default": "🔥🔥",
           "description": "The badge shown on the file you're currently reviewing, in the Source Control panel (and Explorer/tabs). Max 2 characters — an emoji renders in colour and is the most visible option (the Source Control panel ignores decoration colours). Default is double fire 🔥🔥. Loud choices: 🔥 🔴 🚨 🟥 ❗ ⭐ 👉. Tip: two emoji (e.g. 🔥🔥) is allowed and renders a bit wider. Set to empty to disable the badge."
         },
+        "better-git-vscode.navigationHands": {
+          "type": "string",
+          "enum": [
+            "right",
+            "left",
+            "both"
+          ],
+          "enumDescriptions": [
+            "Use the physical > and < keys with Alt/Option (the existing default).",
+            "Use the physical Z and tilde/backtick keys with Alt/Option.",
+            "Enable both physical key pairs so either hand can navigate."
+          ],
+          "default": "right",
+          "description": "Choose which hand can run Next/Previous Change and Stage-and-Advance. Right uses the physical > / < keys; Left uses physical Z for next and tilde/backtick for previous; Both enables both pairs. Under Dvorak mode the bindings follow those same physical keys. Enabling Left or Both claims Alt/Option+Z, which overrides VS Code's Toggle Word Wrap shortcut while active."
+        },
         "better-git-vscode.dvorakMode": {
           "type": "boolean",
           "default": false,
-          "description": "Keep navigation on the same PHYSICAL '>' and '<' keys under a Dvorak layout: next/previous change become alt+v / alt+w (and stage-and-advance shift+alt+v / shift+alt+w) — the characters a Dvorak keyboard types on the keys where QWERTY has '.' and ','. Same commands and behaviour as the QWERTY alt+. / alt+, defaults, just remapped characters. Your own keybindings.json entries always take precedence."
+          "description": "Keep navigation on the same PHYSICAL keys under a Dvorak layout. The right-hand > / < pair becomes alt+v / alt+w; the optional left-hand Z / tilde pair becomes alt+; / alt+`. Stage-and-advance uses Shift with the same keys. This only remaps characters—the commands and behavior stay identical. Your own keybindings.json entries always take precedence."
         },
         "better-git-vscode.showLastStagedInStatusBar": {
           "type": "boolean",
@@ -325,7 +340,7 @@
         }
       }
     },
-    "_comment_dvorakMode_keybindings": [
+    "_comment_navigation_keybindings": [
       "LAYOUT KEYBINDINGS — the single-source-of-truth architecture (package.json is strict JSON,",
       "so this human-readable explanation lives in this ignored `_comment_*` key; VS Code ignores",
       "any contributes key it doesn't recognise).",
@@ -336,16 +351,24 @@
       "they only change WHICH CHARACTER the same physical key produces. Dvorak mode is therefore a THIN",
       "KEY-REMAP WRAPPER: same commands, different character labels for the same physical keys.",
       "",
-      "The design centre is the PHYSICAL `>` and `<` keys (the . and , keycaps — the arrows literally",
+      "`better-git-vscode.navigationHands` chooses right, left, or both physical key pairs. Its default",
+      "is right, preserving the established shortcuts and avoiding the built-in Alt+Z Toggle Word Wrap",
+      "collision unless the user explicitly enables the left pair.",
+      "",
+      "The right-hand pair is the PHYSICAL `>` and `<` keys (the . and , keycaps — the arrows literally",
       "point forward/back):",
       "  physical > key : QWERTY types `.`  -> alt+.  | Dvorak types `v` -> alt+v  => next-scm-change",
       "  physical < key : QWERTY types `,`  -> alt+,  | Dvorak types `w` -> alt+w  => previous-scm-change",
-      "  shift + the same physical key = stage-and-next / stage-and-previous, in BOTH layouts",
-      "  (QWERTY shift+alt+. / shift+alt+, ; Dvorak shift+alt+v / shift+alt+w).",
-      "The gate is VS Code's native `config.<settingId>` when-clause support on the boolean setting",
-      "`better-git-vscode.dvorakMode` — `when: config...dvorakMode` enables the Dvorak-character entry,",
-      "`!config...dvorakMode` enables the QWERTY-character entry. Exactly one entry per command is live at",
-      "a time; toggling the setting swaps them with no restart. User keybindings.json entries still win.",
+      "",
+      "The optional left-hand pair follows Ethan's requested PHYSICAL Z and tilde/backtick keys:",
+      "  physical Z key       : QWERTY types `z` -> alt+z | Dvorak types `;` -> alt+; => next-scm-change",
+      "  physical tilde key   : QWERTY and Dvorak type backtick -> alt+` => previous-scm-change",
+      "  shift + either enabled pair = stage-and-next / stage-and-previous in both layouts.",
+      "",
+      "The gates use VS Code's native `config.<settingId>` when-clause support. `dvorakMode` selects the",
+      "character mapping for each physical key, while `navigationHands` enables the right pair, left pair,",
+      "or both. Toggling either setting swaps the active manifest bindings with no restart. User",
+      "keybindings.json entries still win.",
       "",
       "HISTORY OF THE v1.2.5 FIX (why next/previous-scm-change moved from alt+z/alt+a to alt+./alt+,):",
       "Before v1.2.5 the QWERTY >/< keys (alt+./alt+,) were bound to smart-forward/smart-back instead.",
@@ -390,25 +413,49 @@
         "command": "better-git-vscode.next-scm-change",
         "key": "alt+.",
         "mac": "alt+.",
-        "when": "!config.better-git-vscode.dvorakMode"
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.next-scm-change",
         "key": "alt+v",
         "mac": "alt+v",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.next-scm-change",
+        "key": "alt+z",
+        "mac": "alt+z",
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.next-scm-change",
+        "key": "alt+;",
+        "mac": "alt+;",
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.previous-scm-change",
         "key": "alt+,",
         "mac": "alt+,",
-        "when": "!config.better-git-vscode.dvorakMode"
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.previous-scm-change",
         "key": "alt+w",
         "mac": "alt+w",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.previous-scm-change",
+        "key": "alt+`",
+        "mac": "alt+`",
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.previous-scm-change",
+        "key": "alt+`",
+        "mac": "alt+`",
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.smart-forward",
@@ -436,25 +483,49 @@
         "command": "better-git-vscode.stage-and-next-changed-file",
         "key": "shift+alt+.",
         "mac": "shift+alt+.",
-        "when": "!config.better-git-vscode.dvorakMode"
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.stage-and-next-changed-file",
         "key": "shift+alt+v",
         "mac": "shift+alt+v",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.stage-and-next-changed-file",
+        "key": "shift+alt+z",
+        "mac": "shift+alt+z",
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.stage-and-next-changed-file",
+        "key": "shift+alt+;",
+        "mac": "shift+alt+;",
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
         "key": "shift+alt+,",
         "mac": "shift+alt+,",
-        "when": "!config.better-git-vscode.dvorakMode"
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
         "key": "shift+alt+w",
         "mac": "shift+alt+w",
-        "when": "config.better-git-vscode.dvorakMode"
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.stage-and-previous-changed-file",
+        "key": "shift+alt+`",
+        "mac": "shift+alt+`",
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.stage-and-previous-changed-file",
+        "key": "shift+alt+`",
+        "mac": "shift+alt+`",
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.revert-and-save",
