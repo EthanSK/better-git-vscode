@@ -78,20 +78,20 @@ suite('Extension Test Suite', () => {
 		const expected = [
 			['better-git-vscode.next-scm-change', 'alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.next-scm-change', 'alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.next-scm-change', 'alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.next-scm-change', 'alt+;', `config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.next-scm-change', 'alt+x', `!config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.next-scm-change', 'alt+q', `config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.previous-scm-change', 'alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.previous-scm-change', 'alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.previous-scm-change', 'alt+x', `!config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.previous-scm-change', 'alt+q', `config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.previous-scm-change', 'alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.previous-scm-change', 'alt+;', `config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+;', `config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+x', `!config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+q', `config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+x', `!config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+q', `config.better-git-vscode.dvorakMode && (${left})`]
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+;', `config.better-git-vscode.dvorakMode && (${left})`]
 		];
 		const handAwareCommandIds = new Set([
 			'better-git-vscode.next-scm-change',
@@ -127,7 +127,7 @@ suite('Extension Test Suite', () => {
 			key: 'alt+q',
 			mac: 'alt+q',
 			when: '!config.better-git-vscode.dvorakMode || config.better-git-vscode.navigationHands == right'
-		}, 'Dvorak physical X navigation and Alt+Q revert must be mutually exclusive');
+		}, 'Dvorak physical X Next navigation and Alt+Q revert must be mutually exclusive');
 	});
 
 	test('auto-add worktree on reveal defaults to enabled', () => {

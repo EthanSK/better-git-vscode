@@ -208,10 +208,10 @@ and the left-hand **physical `Z` and `X` keys**. Set
 
 | Action | Right-hand pair | Left-hand pair |
 | --- | --- | --- |
-| Next change | `Alt+.` (physical `>`) | `Alt+Z` (physical `Z`) |
-| Previous change | `Alt+,` (physical `<`) | `Alt+X` (physical `X`) |
-| Stage + next | `Shift+Alt+.` | `Shift+Alt+Z` |
-| Stage + previous | `Shift+Alt+,` | `Shift+Alt+X` |
+| Next change | `Alt+.` (physical `>`) | `Alt+X` (physical `X`) |
+| Previous change | `Alt+,` (physical `<`) | `Alt+Z` (physical `Z`) |
+| Stage + next | `Shift+Alt+.` | `Shift+Alt+X` |
+| Stage + previous | `Shift+Alt+,` | `Shift+Alt+Z` |
 
 `both` is the default, so either hand works immediately. On QWERTY this intentionally
 claims VS Code's built-in `Alt+Z` **Toggle Word Wrap** binding. Choose `right` if you want
@@ -222,10 +222,10 @@ VS Code, or add it to `settings.json`) so both pairs stay on the same physical k
 deliberately dispatches the macOS **Dvorak – QWERTY Cmd** layout by character key code, so
 the extension contributes the characters that those physical keys actually produce:
 
-| Physical pair | QWERTY bindings | Dvorak bindings |
+| Physical pair | QWERTY Next / Previous | Dvorak Next / Previous |
 | --- | --- | --- |
 | Right (`>` / `<`) | `Alt+.` / `Alt+,` | `Alt+V` / `Alt+W` |
-| Left (`Z` / `X`) | `Alt+Z` / `Alt+X` | `Alt+;` / `Alt+Q` |
+| Left (`Z` / `X`) | `Alt+X` / `Alt+Z` | `Alt+Q` / `Alt+;` |
 
 Shift adds Stage-and-Advance to the same pair in either layout. These settings use VS
 Code's native configuration when-clauses, so changing either one swaps the active bindings
@@ -237,7 +237,7 @@ Option+backtick starts the system grave-accent dead-key composition, and VS Code
 keeps the pair together under one hand.
 
 Changed-file nav (`Cmd/Ctrl+Alt+.` / `,`) and reveal (`Alt+R`) stay on their defaults.
-On Dvorak, physical X produces `Q`, so enabling the left pair makes `Alt+Q` Previous Change
+On Dvorak, physical X produces `Q`, so enabling the left pair makes `Alt+Q` Next Change
 and disables the conflicting Revert-and-Save default; choose `navigationHands: "right"` to
 keep Revert on `Alt+Q`, or assign Revert another shortcut. This is the `*` exception in the
 main shortcut table above. In Dvorak mode the freed-up `Alt+.` / `Alt+,`
