@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.46",
+  "version": "1.2.47",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -272,17 +272,17 @@
             "both"
           ],
           "enumDescriptions": [
-            "Use the physical > and < keys with Alt/Option (the existing default).",
-            "Use the physical Z and tilde/backtick keys with Alt/Option.",
+            "Use the established physical > and < keys with Alt/Option.",
+            "Use the physical Z and 1 keys with Alt/Option.",
             "Enable both physical key pairs so either hand can navigate."
           ],
           "default": "both",
-          "description": "Choose which hand can run Next/Previous Change and Stage-and-Advance. Both (default) enables both physical key pairs; Right uses only > / <; Left uses only Z for next and tilde/backtick for previous. Under Dvorak mode the bindings follow those same physical keys. On QWERTY, Both or Left claims Alt/Option+Z, overriding VS Code's Toggle Word Wrap shortcut while active; choose Right to restore that shortcut."
+          "description": "Choose which hand can run Next/Previous Change and Stage-and-Advance. Both (default) enables both physical key pairs; Right uses only > / <; Left uses Z for next and 1 for previous. Under Dvorak mode the bindings follow those same physical keys. On QWERTY, Both or Left claims Alt/Option+Z, overriding VS Code's Toggle Word Wrap shortcut while active; choose Right to restore that shortcut."
         },
         "better-git-vscode.dvorakMode": {
           "type": "boolean",
           "default": false,
-          "description": "Keep the right-hand navigation pair on the same PHYSICAL > / < keys under Dvorak by using alt+v / alt+w. The left-hand Z / tilde pair is layout-independent because it uses VS Code physical scan codes, avoiding macOS Option+backtick dead-key composition. Stage-and-advance uses Shift with the same physical keys. Your own keybindings.json entries always take precedence."
+          "description": "Keep both navigation pairs on the same physical keys under Dvorak. The right-hand > / < pair uses alt+v / alt+w, and physical Z uses alt+; while physical 1 is unchanged. Character bindings are required because VS Code deliberately dispatches the macOS Dvorak - QWERTY Cmd layout by key code. Stage-and-advance uses Shift with the same physical keys. Your own keybindings.json entries always take precedence."
         },
         "better-git-vscode.showLastStagedInStatusBar": {
           "type": "boolean",
@@ -348,9 +348,10 @@
       "THE CANONICAL BEHAVIOUR lives in exactly TWO commands: `next-scm-change` and `previous-scm-change`",
       "(goToNextDiff / goToPreviousDiff in src/extension.ts — hunk-to-hunk nav, new-file scroll mode,",
       "cross-file fallthrough, all the accumulated fixes). Keyboard layouts do NOT get their own behaviour.",
-      "The legacy right pair uses a thin QWERTY/Dvorak character remap; the left pair uses layout-independent",
-      "VS Code physical scan codes because macOS Option+physical-backtick starts dead-key composition before",
-      "a character binding can reliably dispatch.",
+      "Both pairs use thin QWERTY/Dvorak character remaps. Do not use printable-key scan codes here:",
+      "VS Code deliberately falls back to key-code dispatch for macOS DVORAK-QWERTYCMD, so a contributed",
+      "[KeyZ] resolves as Alt+Z while the physical key arrives as Alt+;. Option+physical-backtick is also",
+      "unavailable in macOS text inputs because it starts dead-key composition before shortcut dispatch.",
       "",
       "`better-git-vscode.navigationHands` chooses right, left, or both physical key pairs. Its default",
       "is both, so either hand works immediately. On QWERTY this intentionally claims the built-in Alt+Z",
@@ -361,13 +362,13 @@
       "  physical > key : QWERTY types `.`  -> alt+.  | Dvorak types `v` -> alt+v  => next-scm-change",
       "  physical < key : QWERTY types `,`  -> alt+,  | Dvorak types `w` -> alt+w  => previous-scm-change",
       "",
-      "The optional left-hand pair follows Ethan's requested PHYSICAL Z and tilde/backtick keys by scan code:",
-      "  physical Z key       : alt+[KeyZ]      => next-scm-change in every keyboard layout",
-      "  physical tilde key   : alt+[Backquote] => previous-scm-change in every keyboard layout",
+      "The optional left-hand pair uses physical Z and the adjacent physical 1 key:",
+      "  physical Z key : QWERTY types `z` -> alt+z | Dvorak types `;` -> alt+; => next-scm-change",
+      "  physical 1 key : alt+1 in both layouts                              => previous-scm-change",
       "  shift + either enabled pair = stage-and-next / stage-and-previous in both layouts.",
       "",
       "The gates use VS Code's native `config.<settingId>` when-clause support. `dvorakMode` selects the",
-      "right-pair character mapping, while `navigationHands` enables the right pair, scan-code left pair,",
+      "character mapping for both pairs, while `navigationHands` enables the right pair, left pair,",
       "or both. Toggling either setting swaps the active manifest bindings with no restart. User",
       "keybindings.json entries still win.",
       "",
@@ -424,9 +425,15 @@
       },
       {
         "command": "better-git-vscode.next-scm-change",
-        "key": "alt+[KeyZ]",
-        "mac": "alt+[KeyZ]",
-        "when": "config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both"
+        "key": "alt+z",
+        "mac": "alt+z",
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.next-scm-change",
+        "key": "alt+;",
+        "mac": "alt+;",
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.previous-scm-change",
@@ -442,8 +449,8 @@
       },
       {
         "command": "better-git-vscode.previous-scm-change",
-        "key": "alt+[Backquote]",
-        "mac": "alt+[Backquote]",
+        "key": "alt+1",
+        "mac": "alt+1",
         "when": "config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both"
       },
       {
@@ -482,9 +489,15 @@
       },
       {
         "command": "better-git-vscode.stage-and-next-changed-file",
-        "key": "shift+alt+[KeyZ]",
-        "mac": "shift+alt+[KeyZ]",
-        "when": "config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both"
+        "key": "shift+alt+z",
+        "mac": "shift+alt+z",
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+      },
+      {
+        "command": "better-git-vscode.stage-and-next-changed-file",
+        "key": "shift+alt+;",
+        "mac": "shift+alt+;",
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
@@ -500,8 +513,8 @@
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
-        "key": "shift+alt+[Backquote]",
-        "mac": "shift+alt+[Backquote]",
+        "key": "shift+alt+1",
+        "mac": "shift+alt+1",
         "when": "config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both"
       },
       {

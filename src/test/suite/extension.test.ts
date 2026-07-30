@@ -78,16 +78,18 @@ suite('Extension Test Suite', () => {
 		const expected = [
 			['better-git-vscode.next-scm-change', 'alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.next-scm-change', 'alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.next-scm-change', 'alt+[KeyZ]', left],
+			['better-git-vscode.next-scm-change', 'alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.next-scm-change', 'alt+;', `config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.previous-scm-change', 'alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.previous-scm-change', 'alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.previous-scm-change', 'alt+[Backquote]', left],
+			['better-git-vscode.previous-scm-change', 'alt+1', left],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+[KeyZ]', left],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+;', `config.better-git-vscode.dvorakMode && (${left})`],
 			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+[Backquote]', left]
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+1', left]
 		];
 		const handAwareCommandIds = new Set([
 			'better-git-vscode.next-scm-change',
@@ -107,7 +109,8 @@ suite('Extension Test Suite', () => {
 		assert.deepStrictEqual(actual, expected);
 		for (const binding of (manifest.contributes?.keybindings as Array<{ command: string; key: string; mac?: string }>)) {
 			if (handAwareCommandIds.has(binding.command)) {
-				assert.strictEqual(binding.mac, binding.key, `${binding.command} must use the same physical mapping on macOS`);
+				assert.strictEqual(binding.mac, binding.key, `${binding.command} must use the same character mapping on macOS`);
+				assert.ok(!binding.key.includes('['), `${binding.command} must not use printable scan codes under Dvorak - QWERTY Cmd`);
 			}
 		}
 	});
