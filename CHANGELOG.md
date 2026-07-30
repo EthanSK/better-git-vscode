@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.49] — consistent left/right navigation direction
+
+- **Fixed the new physical Z/X pair being directionally reversed:** physical Z is now Previous and physical X is Next, matching the established right-hand rule where the left key (`<`) is Previous and the right key (`>`) is Next.
+- **QWERTY now contributes `Alt+Z` / `Alt+X` for Previous / Next; Dvorak contributes `Alt+;` / `Alt+Q` for Previous / Next.** Shift adds the matching Stage-and-Previous / Stage-and-Next actions.
+- **The Dvorak `Alt+Q` collision remains safe:** physical X now owns `Alt+Q` for Next when Left/Both is active, while Revert-and-Save remains disabled on that chord. Right-only keeps the Revert shortcut.
+- **Removed the temporary user-level Dvorak bindings used during diagnosis,** so the installed extension is the sole owner of the hand/layout mapping and future releases cannot be masked by stale overrides.
+
 ## [1.2.48] — adjacent Z/X left-hand navigation
 
 - **The left-hand pair is now physical `Z` / `X`:** Option+Z goes to the next change and Option+X goes to the previous change, with Shift adding Stage-and-Advance. Both hands remain enabled by default.
