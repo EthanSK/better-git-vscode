@@ -213,9 +213,9 @@ and the physical tilde/backtick key for Previous, or `both` to keep both pairs a
 | Stage + next | `Shift+Alt+.` | `Shift+Alt+Z` |
 | Stage + previous | `Shift+Alt+,` | `Shift+Alt+backtick` |
 
-`right` remains the default, so existing shortcuts are unchanged and VS Code keeps its
-built-in `Alt+Z` **Toggle Word Wrap** binding. Choosing `left` or `both` intentionally
-claims `Alt+Z` for Better Git while that setting is active.
+`both` is the default, so either hand works immediately. On QWERTY this intentionally
+claims VS Code's built-in `Alt+Z` **Toggle Word Wrap** binding. Choose `right` if you want
+only the established `>` / `<` pair and want VS Code's `Alt+Z` word-wrap shortcut back.
 
 On **Dvorak**, also enable **`better-git-vscode.dvorakMode`** (Settings → Better Git
 VS Code, or add it to `settings.json`). Both hand choices then stay on the same physical
@@ -262,7 +262,7 @@ own key. To disable a default instead, add a rule prefixed with `-` in `keybindi
 
 A few behaviours are configurable under **Settings → Better Git VS Code**:
 
-- **Navigation hands** — choose the right-hand physical `>` / `<` pair, the left-hand physical `Z` / tilde pair, or both (`better-git-vscode.navigationHands`, default `right`).
+- **Navigation hands** — choose the right-hand physical `>` / `<` pair, the left-hand physical `Z` / tilde pair, or both (`better-git-vscode.navigationHands`, default `both`). On QWERTY, choose `right` to preserve VS Code's built-in `Alt+Z` Toggle Word Wrap shortcut.
 - **Dvorak mode** — remap every enabled navigation-hand pair to the characters produced by the same physical keys under Dvorak (`better-git-vscode.dvorakMode`, see the section above).
 - **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
 - **Experimental Source Control automation** — automatic tree manipulation is off by default behind `better-git-vscode.experimentalScmTreeStateManagement`. The manual Command Palette collapse remains available; the separate `collapseWorktreesOnStartup` double opt-in runs one built-in collapse with no retries. Exact mixed-state restoration is paused. See *Source Control show/hide automation is experimental and off by default* above.

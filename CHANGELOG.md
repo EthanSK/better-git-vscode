@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.45] — both navigation hands by default
+
+- **Both physical navigation pairs are now enabled by default.** New installs can use either the right-hand `>` / `<` pair or the left-hand `Z` / tilde pair without changing Settings; existing explicit `right` or `left` choices remain respected.
+- **The README and Settings description state the QWERTY tradeoff clearly.** Because `Alt+Z` now belongs to Better Git by default, choose `navigationHands: "right"` to restore VS Code's built-in Toggle Word Wrap shortcut.
+- **Dvorak behavior is unchanged.** Both still maps the physical left pair to `Option+;` / `Option+backtick` and the physical right pair to `Option+V` / `Option+W`.
+
 ## [1.2.44] — left- or right-hand change navigation
 
 - **Added a navigation-hand setting with Right, Left, and Both choices.** The existing physical `>` / `<` shortcuts remain the default. Left adds physical `Z` for Next Change and the tilde/backtick key for Previous Change; Both keeps both pairs active so either hand can navigate.

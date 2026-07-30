@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git review for the agentic age.",
-  "version": "1.2.44",
+  "version": "1.2.45",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -276,8 +276,8 @@
             "Use the physical Z and tilde/backtick keys with Alt/Option.",
             "Enable both physical key pairs so either hand can navigate."
           ],
-          "default": "right",
-          "description": "Choose which hand can run Next/Previous Change and Stage-and-Advance. Right uses the physical > / < keys; Left uses physical Z for next and tilde/backtick for previous; Both enables both pairs. Under Dvorak mode the bindings follow those same physical keys. Enabling Left or Both claims Alt/Option+Z, which overrides VS Code's Toggle Word Wrap shortcut while active."
+          "default": "both",
+          "description": "Choose which hand can run Next/Previous Change and Stage-and-Advance. Both (default) enables both physical key pairs; Right uses only > / <; Left uses only Z for next and tilde/backtick for previous. Under Dvorak mode the bindings follow those same physical keys. On QWERTY, Both or Left claims Alt/Option+Z, overriding VS Code's Toggle Word Wrap shortcut while active; choose Right to restore that shortcut."
         },
         "better-git-vscode.dvorakMode": {
           "type": "boolean",
@@ -352,8 +352,8 @@
       "KEY-REMAP WRAPPER: same commands, different character labels for the same physical keys.",
       "",
       "`better-git-vscode.navigationHands` chooses right, left, or both physical key pairs. Its default",
-      "is right, preserving the established shortcuts and avoiding the built-in Alt+Z Toggle Word Wrap",
-      "collision unless the user explicitly enables the left pair.",
+      "is both, so either hand works immediately. On QWERTY this intentionally claims the built-in Alt+Z",
+      "Toggle Word Wrap shortcut; choosing right restores that built-in shortcut.",
       "",
       "The right-hand pair is the PHYSICAL `>` and `<` keys (the . and , keycaps — the arrows literally",
       "point forward/back):",

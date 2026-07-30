@@ -70,7 +70,7 @@ suite('Extension Test Suite', () => {
 		assert.ok(setting, 'navigationHands setting is missing from package.json');
 		assert.strictEqual(setting.type, 'string');
 		assert.deepStrictEqual(setting.enum, ['right', 'left', 'both']);
-		assert.strictEqual(setting.default, 'right', 'existing right-hand navigation must remain the default');
+		assert.strictEqual(setting.default, 'both', 'both physical key pairs must be enabled by default');
 		assert.strictEqual(setting.enumDescriptions?.length, 3, 'every navigation-hand choice needs a Settings UI description');
 
 		const right = '(config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)';
