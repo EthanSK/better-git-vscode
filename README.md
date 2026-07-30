@@ -200,28 +200,37 @@ clause to get wrong:
 That's it — thumb-Back/Forward to fly through changes, the two extra buttons (or the title-bar `+`)
 to stage-and-advance, all without touching the keyboard.
 
-## Dvorak mode (one toggle)
+## Left/right-hand navigation and Dvorak mode
 
-The change-nav defaults live on the **physical `>` and `<` keys**. On QWERTY those keys
-type `.` and `,`; on **Dvorak** the *same physical keys* type `v` and `w`, so the QWERTY
-character bindings would land under the wrong fingers.
+By default, change navigation lives on the right-hand **physical `>` and `<` keys**.
+Set **`better-git-vscode.navigationHands`** to `left` to use physical `Z` for Next
+and the physical tilde/backtick key for Previous, or `both` to keep both pairs active:
 
-Flip the single setting **`better-git-vscode.dvorakMode`** (Settings → Better Git VS Code,
-or add `"better-git-vscode.dvorakMode": true` to your `settings.json`) and the bindings
-swap to the Dvorak characters for the *same physical keys* — same commands, same
-behaviour, same finger positions, different keycap labels. Dvorak mode is a thin key
-remap over the one canonical navigation behaviour; it never changes what the commands do:
-
-| Action (physical key) | QWERTY default | Dvorak mode |
+| Action | Right-hand pair | Left-hand pair |
 | --- | --- | --- |
-| Next change (`>` key) | `Alt+.` | `Alt+V` |
-| Previous change (`<` key) | `Alt+,` | `Alt+W` |
-| Stage current file + next change (`Shift+>`) | `Shift+Alt+.` | `Shift+Alt+V` |
-| Stage current file + previous change (`Shift+<`) | `Shift+Alt+,` | `Shift+Alt+W` |
+| Next change | `Alt+.` (physical `>`) | `Alt+Z` (physical `Z`) |
+| Previous change | `Alt+,` (physical `<`) | `Alt+backtick` (physical tilde) |
+| Stage + next | `Shift+Alt+.` | `Shift+Alt+Z` |
+| Stage + previous | `Shift+Alt+,` | `Shift+Alt+backtick` |
 
-When the toggle is on, the QWERTY defaults for those four commands are automatically
-disabled and the Dvorak-character keys take over (it uses VS Code's native
-`config.better-git-vscode.dvorakMode` when-clauses — no extension restart trick).
+`right` remains the default, so existing shortcuts are unchanged and VS Code keeps its
+built-in `Alt+Z` **Toggle Word Wrap** binding. Choosing `left` or `both` intentionally
+claims `Alt+Z` for Better Git while that setting is active.
+
+On **Dvorak**, also enable **`better-git-vscode.dvorakMode`** (Settings → Better Git
+VS Code, or add it to `settings.json`). Both hand choices then stay on the same physical
+keys while using the characters Dvorak produces:
+
+| Physical pair | QWERTY bindings | Dvorak bindings |
+| --- | --- | --- |
+| Right (`>` / `<`) | `Alt+.` / `Alt+,` | `Alt+V` / `Alt+W` |
+| Left (`Z` / tilde) | `Alt+Z` / `Alt+backtick` | `Alt+;` / `Alt+backtick` |
+
+Shift adds Stage-and-Advance to the same pair in either layout. These settings use VS
+Code's native configuration when-clauses, so changing either one swaps the active bindings
+without an extension restart. Dvorak mode is only a physical-key remap; it never changes
+what the commands do.
+
 Changed-file nav (`Cmd/Ctrl+Alt+.` / `,`), revert (`Alt+Q`) and reveal (`Alt+R`) are
 **left on their defaults** in both modes. In Dvorak mode the freed-up `Alt+.` / `Alt+,`
 characters additionally map to the smart forward/back mouse commands (they sit on
@@ -253,7 +262,8 @@ own key. To disable a default instead, add a rule prefixed with `-` in `keybindi
 
 A few behaviours are configurable under **Settings → Better Git VS Code**:
 
-- **Dvorak mode** — swap the navigation keys to Dvorak-comfortable positions with one toggle (`better-git-vscode.dvorakMode`, see the *Dvorak mode* section above).
+- **Navigation hands** — choose the right-hand physical `>` / `<` pair, the left-hand physical `Z` / tilde pair, or both (`better-git-vscode.navigationHands`, default `right`).
+- **Dvorak mode** — remap every enabled navigation-hand pair to the characters produced by the same physical keys under Dvorak (`better-git-vscode.dvorakMode`, see the section above).
 - **Last-staged status bar** — a bottom-left `✓ Staged: <filename>` indicator showing the last file you staged through the extension, so a fast stage-and-advance never stages something without you noticing. Click it to reopen that file's staged diff and unstage it if it was a mistake. Toggle with `better-git-vscode.showLastStagedInStatusBar` (default on).
 - **Experimental Source Control automation** — automatic tree manipulation is off by default behind `better-git-vscode.experimentalScmTreeStateManagement`. The manual Command Palette collapse remains available; the separate `collapseWorktreesOnStartup` double opt-in runs one built-in collapse with no retries. Exact mixed-state restoration is paused. See *Source Control show/hide automation is experimental and off by default* above.
 - **Auto-add worktree on reveal** — when reveal targets a worktree outside Explorer, add that worktree root as a workspace folder and reveal the file (`better-git-vscode.autoAddWorktreeOnReveal`, on by default; see *Pull a worktree into your sidebar* above).

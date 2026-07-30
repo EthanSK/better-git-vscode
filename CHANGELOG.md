@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.44] — left- or right-hand change navigation
+
+- **Added a navigation-hand setting with Right, Left, and Both choices.** The existing physical `>` / `<` shortcuts remain the default. Left adds physical `Z` for Next Change and the tilde/backtick key for Previous Change; Both keeps both pairs active so either hand can navigate.
+- **Dvorak mode follows the same physical keys.** On Dvorak, the left-hand pair resolves to `Option+;` for Next and `Option+backtick` for Previous, while the established right-hand `Option+V` / `Option+W` pair remains unchanged.
+- **Stage-and-advance mirrors every enabled pair.** Adding Shift to either hand's shortcuts stages the current file and advances in the corresponding direction. Left and Both are opt-in because `Option+Z` takes over VS Code's Toggle Word Wrap shortcut while enabled.
+
 ## [1.2.43] — last-staged badge follows its worktree
 
 - **Fixed the persistent `Staged: …` status-bar badge sometimes failing to reopen the file after review moved to another worktree.** The click now resolves the Git repository from the remembered staged file instead of whichever repository owns the currently active tab.
