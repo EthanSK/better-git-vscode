@@ -74,24 +74,20 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(setting.enumDescriptions?.length, 3, 'every navigation-hand choice needs a Settings UI description');
 
 		const right = '(config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)';
-		const left = '(config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)';
+		const left = 'config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both';
 		const expected = [
 			['better-git-vscode.next-scm-change', 'alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.next-scm-change', 'alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.next-scm-change', 'alt+z', `!config.better-git-vscode.dvorakMode && ${left}`],
-			['better-git-vscode.next-scm-change', 'alt+;', `config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.next-scm-change', 'alt+[KeyZ]', left],
 			['better-git-vscode.previous-scm-change', 'alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.previous-scm-change', 'alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.previous-scm-change', 'alt+`', `!config.better-git-vscode.dvorakMode && ${left}`],
-			['better-git-vscode.previous-scm-change', 'alt+`', `config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.previous-scm-change', 'alt+[Backquote]', left],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+z', `!config.better-git-vscode.dvorakMode && ${left}`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+;', `config.better-git-vscode.dvorakMode && ${left}`],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+[KeyZ]', left],
 			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
 			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+`', `!config.better-git-vscode.dvorakMode && ${left}`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+`', `config.better-git-vscode.dvorakMode && ${left}`]
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+[Backquote]', left]
 		];
 		const handAwareCommandIds = new Set([
 			'better-git-vscode.next-scm-change',

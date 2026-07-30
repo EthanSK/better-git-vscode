@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.46] — physical left-hand keys avoid Dvorak dead-key composition
+
+- **The left-hand pair now binds VS Code physical scan codes:** `Alt+[KeyZ]` for Next and `Alt+[Backquote]` for Previous, with matching Shift stage-and-advance variants. The physical keys stay fixed across QWERTY and Dvorak without character remapping.
+- **Fixed Option + physical tilde inserting a backtick and breaking subsequent shortcuts under Dvorak.** macOS treats that chord as a dead-key composition, so the old character binding was not reliably dispatched; the editor then consumed later Option presses as text. The scan-code binding intercepts the physical chord instead.
+- **The established right-hand pair is unchanged.** QWERTY still uses `Alt+.` / `Alt+,`, Dvorak still uses `Alt+V` / `Alt+W`, and `navigationHands` still defaults to `both`.
+
 ## [1.2.45] — both navigation hands by default
 
 - **Both physical navigation pairs are now enabled by default.** New installs can use either the right-hand `>` / `<` pair or the left-hand `Z` / tilde pair without changing Settings; existing explicit `right` or `left` choices remain respected.
