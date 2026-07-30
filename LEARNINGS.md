@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-07-30T17:08:17Z
+**Trigger:** Ethan 2026-07-30 after updating to v1.2.48: “x and z are flipped rn it should be the other way round ... it should be consistent with the right hand one”
+**Symptom:** With Dvorak mode and both hands enabled, physical X moved to the previous change while physical Z moved to the next change. The adjacent left pair therefore ran opposite to the established right pair's spatial rule: `<` on the left is Previous and `>` on the right is Next.
+**Root cause:** v1.2.48 correctly solved physical-key dispatch and the Alt+Q collision but assigned the requested Z/X keys to the earlier verbal directions instead of preserving the keyboard's left-to-right navigation invariant. Live VS Code troubleshooting logs proved both layers: physical X arrived as `KeyX` / keyCode 81 and matched the extension's Previous binding, while physical Z arrived as `KeyZ` / keyCode 186 and matched a stale user-level Alt+; → Next override left from diagnosis. The override had higher priority but agreed with the same wrong direction, so this was an extension bug plus a stale configuration that would have masked the correction for Z.
+**Fix:** v1.2.49 maps the left key to Previous and the right key to Next: QWERTY physical Z / X contributes Alt+Z Previous / Alt+X Next; Dvorak contributes Alt+; Previous / Alt+Q Next; Shift uses the matching Stage-and-Previous / Stage-and-Next commands. The mutually exclusive Revert when-clause remains, so Dvorak Left/Both gives Alt+Q only to Next and Right-only preserves Revert-and-Save. The four temporary Dvorak user bindings were removed from the live `keybindings.json`, leaving the extension as the sole owner of this mapping.
+**Commit:** fe3c28f04e70826a0607efd56b2e04fc152aa510 (PR #87, squash-merged; published as v1.2.49).
+**Guard:** The complete live user keybindings file parsed as JSONC with zero remaining temporary Alt+;, Alt+backtick, Shift+Alt+;, or Shift+Alt+backtick Better Git entries. The isolated host passed 47/47 and pins the full 16-binding QWERTY/Dvorak matrix plus the Alt+Q Revert exclusion. A separate isolated VS Code 1.129 resolver replayed the exact physical events three times each: KeyX/keyCode 81 invoked Next 3/3; KeyZ/keyCode 186 invoked Previous 3/3; Revert 0; composition 0. The exact nine-file VSIX has SHA-256 `34ff9f974ae7376ccea57127bbc2e5fbd2132f9e3433af9a56de9292547cb3f7`; `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` proved authenticated validation, public visibility, exact download, and byte comparison. Normal VS Code remained installed at v1.2.48 and was not updated, reloaded, restarted, or targeted by isolated input.
+---
+
+---
 **Date:** 2026-07-30T16:49:05Z
 **Trigger:** Ethan 2026-07-30 after the v1.2.47 investigation: preferred adjacent physical Z/X for the left hand, asked what debugging state had been left behind, and reported a red Source Control outline whenever Option was held.
 **Symptom:** The v1.2.47 physical Z/1 pair was reliable but not the requested adjacent one-hand shape. In Ethan's normal VS Code, every Option keydown briefly painted Source Control with a translucent red fill and red border, making it look like Better Git had left visual instrumentation running.
