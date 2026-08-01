@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-08-01T14:56:15Z
+**Trigger:** Ethan 2026-08-01 after switching macOS from Dvorak to British: Option+< / Option+> navigated in reverse and Option+Z / Option+X did nothing.
+**Symptom:** With the macOS input source on British but the global `better-git-vscode.dvorakMode` setting still true, the visible right-hand keys ran backward and the British left-hand pair had no active Better Git binding.
+**Root cause:** Layout selection is a static VS Code setting and did not follow the macOS input-source switch. The manifest correctly gated the canonical British bindings off, but two obsolete Dvorak-only keyboard defaults still mapped `Alt+.` / `Alt+,` to `smart-forward` / `smart-back`. Those commands are intentionally direction-flipped for G502 thumb buttons, so the mismatched setting leaked mouse semantics onto visible keyboard keys.
+**Fix:** v1.2.50 removes every shipped keyboard binding for `smart-forward` and `smart-back`; they remain callable commands for Ethan's explicit F13/F17 user bindings. The live global Dvorak setting was changed to false for the current British input source, immediately activating Option+Z Previous, Option+X Next, Option+< Previous, and Option+> Next without a reload. The G502 Karabiner and VS Code user bindings were not changed.
+**Commit:** 8407e9d (product commit; v1.2.50 release).
+**Guard:** The installed VS Code 1.131 executable launched with isolated temporary user-data/extensions directories and passed 47/47 real-host tests, including the complete 16-row canonical QWERTY/Dvorak navigation matrix, zero contributed keybindings for either smart mouse command, and exact Command Palette titles for the intentional mouse directions. The nine-file VSIX contains the tested manifest and byte-identical production bundle; its local SHA-256 is `c0c3b3c61d4559080eb7ee8c454fad5dadcd8f7a7f0d674b4c9d5addbe7313e7`. Marketplace verification remains required before completion; normal VS Code must not be installed, updated, reloaded, or restarted by release work.
+---
+
+---
 **Date:** 2026-07-30T17:08:17Z
 **Trigger:** Ethan 2026-07-30 after updating to v1.2.48: “x and z are flipped rn it should be the other way round ... it should be consistent with the right hand one”
 **Symptom:** With Dvorak mode and both hands enabled, physical X moved to the previous change while physical Z moved to the next change. The adjacent left pair therefore ran opposite to the established right pair's spatial rule: `<` on the left is Previous and `>` on the right is Next.
