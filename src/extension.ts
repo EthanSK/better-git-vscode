@@ -617,15 +617,17 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // SMART MOUSE-BUTTON COMMANDS (smart-forward / smart-back)
     //
     // These are bound to Ethan's mouse Forward/Back buttons (via Karabiner -> F13/F17 -> these
-    // commands). MOUSE-ONLY since v1.2.5: they used to ALSO hold the default QWERTY keyboard keys
+    // commands). Strictly MOUSE-ONLY since v1.2.50: they used to ALSO hold the default QWERTY keyboard keys
     // alt+. / alt+, (the physical >/< keys), which silently inherited the intentional mouse-direction
     // flip below (commit 6043d05) — so on QWERTY keyboards ">" went BACKWARD through diff changes and
     // "<" went FORWARD, while Dvorak keyboards were fine (their physical >/< type v/w, which hit
     // next/previous-scm-change directly). v1.2.5 gave the QWERTY >/< keys back to the canonical
     // next/previous-scm-change commands (see _comment_dvorakMode_keybindings in package.json); these
-    // smart commands now have no default QWERTY keyboard binding (alt+./alt+, remain only under
-    // dvorakMode, where those characters live on different physical keys, to keep Ethan's working
-    // Dvorak setup untouched). They give ONE pair of buttons a dual meaning depending on what's on screen:
+    // smart commands have no default keyboard binding in either layout. v1.2.50 also removed the old
+    // Dvorak-only alt+./alt+, compatibility defaults: after switching macOS back to QWERTY/GB while the
+    // static dvorakMode setting remained enabled, the visible >/< keys reached these intentionally flipped
+    // mouse commands while the canonical GB bindings were gated off. They give ONE pair of mouse buttons a
+    // dual meaning depending on what's on screen:
     //   - When a side-by-side DIFF editor is the active tab  -> next/previous SCM change (review flow)
     //   - Anywhere else                                      -> classic editor back/forward navigation
     //

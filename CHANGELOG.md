@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.50] — keyboard navigation cannot inherit mouse direction
+
+- **Removed the remaining Dvorak-only keyboard defaults from Smart Forward and Smart Back.** Those commands are intentionally direction-flipped for the G502 thumb buttons and must never own ordinary keyboard keys.
+- **Fixed the misleading reversal after switching macOS from Dvorak to British while Better Git's static Dvorak setting was still enabled.** The visible `Option+>` / `Option+<` keys can no longer fall into mouse navigation; British mode uses only the canonical `>` / `<` and `Z` / `X` bindings.
+- **Mouse behavior is unchanged.** User-configured F13/F17 continue to invoke Smart Back/Forward with the established thumb-button directions; only shipped keyboard shortcuts were removed.
+- **The Command Palette titles now state the actual mouse behavior:** Smart Back goes to the next review change and Smart Forward goes to the previous review change.
+
 ## [1.2.49] — consistent left/right navigation direction
 
 - **Fixed the new physical Z/X pair being directionally reversed:** physical Z is now Previous and physical X is Next, matching the established right-hand rule where the left key (`<`) is Previous and the right key (`>`) is Next.

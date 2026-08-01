@@ -222,6 +222,10 @@ VS Code, or add it to `settings.json`) so both pairs stay on the same physical k
 deliberately dispatches the macOS **Dvorak – QWERTY Cmd** layout by character key code, so
 the extension contributes the characters that those physical keys actually produce:
 
+This is a static VS Code setting, not automatic input-source detection. Turn it back off when
+switching macOS to QWERTY or British so those layouts' `Option+Z` / `Option+X` and
+`Option+<` / `Option+>` bindings become active.
+
 | Physical pair | QWERTY Next / Previous | Dvorak Next / Previous |
 | --- | --- | --- |
 | Right (`>` / `<`) | `Alt+.` / `Alt+,` | `Alt+V` / `Alt+W` |

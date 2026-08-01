@@ -109,12 +109,28 @@ suite('Extension Test Suite', () => {
 			.map(binding => [binding.command, binding.key, binding.when]);
 
 		assert.deepStrictEqual(actual, expected);
-		for (const binding of (manifest.contributes?.keybindings as Array<{ command: string; key: string; mac?: string }>)) {
+		const contributedKeybindings = manifest.contributes?.keybindings as Array<{ command: string; key: string; mac?: string }>;
+		for (const binding of contributedKeybindings) {
 			if (handAwareCommandIds.has(binding.command)) {
 				assert.strictEqual(binding.mac, binding.key, `${binding.command} must use the same character mapping on macOS`);
 				assert.ok(!binding.key.includes('['), `${binding.command} must not use printable scan codes under Dvorak - QWERTY Cmd`);
 			}
 		}
+		assert.deepStrictEqual(
+			contributedKeybindings.filter(binding =>
+				binding.command === 'better-git-vscode.smart-forward' || binding.command === 'better-git-vscode.smart-back'),
+			[],
+			'smart mouse commands must never ship keyboard defaults in any layout'
+		);
+		const commands = manifest.contributes?.commands as Array<{ command: string; title: string }>;
+		assert.strictEqual(
+			commands.find(command => command.command === 'better-git-vscode.smart-back')?.title,
+			'Smart back (next change in a review, else navigate back)'
+		);
+		assert.strictEqual(
+			commands.find(command => command.command === 'better-git-vscode.smart-forward')?.title,
+			'Smart forward (previous change in a review, else navigate forward)'
+		);
 
 		const revertBinding = (manifest.contributes?.keybindings as Array<{
 			command: string;
