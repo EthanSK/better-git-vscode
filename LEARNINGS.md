@@ -32,6 +32,15 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-08-14T16:45:00Z
+**Trigger:** Ethan asked for the Agentic Mouse VS Code wildcard to Stage + Next on one press and undo that same action on a rapid double press.
+**Symptom:** F18 could stage and immediately advance, but there was no safe mouse command that reversed the exact stage transaction. A generic unstage command could remove earlier partial staging or newer staged work.
+**Root cause:** Better Git remembered only the last staged URI for presentation. It did not retain the Git index state before and after the extension-owned stage operation, so it could not distinguish an exact inverse from a potentially destructive broad unstage.
+**Fix:** v1.2.51 captures the repository's pre-stage and post-stage index tree IDs around the single `stageThroughExtension` chokepoint. `undo-last-stage-and-advance` restores the exact pre-stage tree only when the current index still equals the captured post-stage tree; any intervening index change makes the command refuse safely. Agentic Mouse maps its VS Code wildcard single press to F18 and rapid double press to the new F16 command.
+**Guard:** Real extension-host coverage restores a partially staged file to its exact prior staged/working split and separately proves that a later independent index change prevents the undo. Manifest coverage pins the command. TypeScript, webpack, ESLint, packaging, Marketplace validation, public Gallery visibility, and exact VSIX byte comparison remain required release gates. Normal VS Code is never installed, updated, or restarted by release work.
+---
+
+---
 **Date:** 2026-08-01T14:56:15Z
 **Trigger:** Ethan 2026-08-01 after switching macOS from Dvorak to British: Option+< / Option+> navigated in reverse and Option+Z / Option+X did nothing.
 **Symptom:** With the macOS input source on British but the global `better-git-vscode.dvorakMode` setting still true, the visible right-hand keys ran backward and the British left-hand pair had no active Better Git binding.

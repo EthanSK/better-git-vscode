@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.51] — exact fail-closed undo for Stage + Next
+
+- **Added `Undo the latest Stage + Next action`.** It restores the exact Git index tree from immediately before the latest Better Git Stage + Next, including a file's previous partial-staging state.
+- **The undo refuses after any later index change.** Staging through VS Code, Git, another Better Git action, or another tool cannot be silently removed by the new command.
+- **Added the Agentic Mouse F16 route.** A rapid double press can invoke the exact undo while the existing F18 single press remains Stage + Next.
+
 ## [1.2.50] — keyboard navigation cannot inherit mouse direction
 
 - **Removed the remaining Dvorak-only keyboard defaults from Smart Forward and Smart Back.** Those commands are intentionally direction-flipped for the G502 thumb buttons and must never own ordinary keyboard keys.
