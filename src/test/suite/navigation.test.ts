@@ -1599,6 +1599,57 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('undo latest Stage + Next restores the exact pre-stage index', async () => {
+		const partiallyStaged = lines(24, 'mod_a').split('\n');
+		partiallyStaged[2] = 'mod_a PREVIOUSLY STAGED line 3';
+		write('committed/mod_a.txt', partiallyStaged.join('\n') + '\n');
+		git('add committed/mod_a.txt');
+
+		const working = partiallyStaged.slice();
+		working[17] = 'mod_a WORKING-ONLY line 18';
+		write('committed/mod_a.txt', working.join('\n') + '\n');
+		await refreshUntil(
+			() => inIndex('committed/mod_a.txt', 0) && inWorkingTree('committed/mod_a.txt', 5),
+			'partially staged undo fixture to appear'
+		);
+		await openWorkingDiffAt('committed/mod_a.txt', 17);
+
+		await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+		await refreshUntil(
+			() => inIndex('committed/mod_a.txt', 0) && !inWorkingTree('committed/mod_a.txt', 5),
+			'Stage + Next to stage the working-only edit'
+		);
+
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await refreshUntil(
+			() => inIndex('committed/mod_a.txt', 0) && inWorkingTree('committed/mod_a.txt', 5),
+			'undo to restore the exact partially staged index'
+		);
+	});
+
+	test('undo latest Stage + Next refuses after a later index change', async () => {
+		const first = lines(24, 'mod_a').split('\n');
+		first[4] = 'mod_a STAGE-THEN-UNDO line 5';
+		write('committed/mod_a.txt', first.join('\n') + '\n');
+		const later = lines(10, 'mod_d').split('\n');
+		later[6] = 'mod_d LATER INDEX CHANGE line 7';
+		write('committed/mod_d.txt', later.join('\n') + '\n');
+		await refreshUntil(
+			() => inWorkingTree('committed/mod_a.txt', 5) && inWorkingTree('committed/mod_d.txt', 5),
+			'fail-closed undo fixtures to appear'
+		);
+		await openWorkingDiffAt('committed/mod_a.txt', 4);
+
+		await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+		await refreshUntil(() => inIndex('committed/mod_a.txt', 0), 'first file to stage');
+		git('add committed/mod_d.txt');
+		await refreshUntil(() => inIndex('committed/mod_d.txt', 0), 'later independent index change to appear');
+
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		assert.ok(inIndex('committed/mod_a.txt', 0), 'unsafe undo removed the original Stage + Next result');
+		assert.ok(inIndex('committed/mod_d.txt', 0), 'unsafe undo removed later independently staged work');
+	});
+
 	test('MODIFIED wrapped tall hunk: SCM-focused rapid steps and reversal stay exact and monotonic', async () => {
 		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
 		const editorConfig = vscode.workspace.getConfiguration('editor');

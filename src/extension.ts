@@ -4,6 +4,8 @@ import * as vscode from "vscode";
 // host — safe to import at top level.
 import * as fs from "fs";
 import * as path from "path";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 
@@ -88,6 +90,22 @@ let lastNavDirection: "next" | "previous" = "next";
 // clean disposal; we keep a module reference so recordLastStaged() can mutate it from anywhere.
 let lastStagedStatusBarItem: vscode.StatusBarItem | undefined; // the bottom-bar item; undefined before activate()
 let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file staged THROUGH this extension
+let lastStageTransaction: {
+    repo: any;
+    repoRoot: string;
+    beforeIndexTree: string;
+    afterIndexTree: string;
+    uri: vscode.Uri;
+} | undefined;
+const execFileAsync = promisify(execFile);
+
+const writeIndexTree = async (repoRoot: string): Promise<string> => {
+    const { stdout } = await execFileAsync("git", ["write-tree"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+    });
+    return stdout.trim();
+};
 
 // Reads the live setting that gates the whole feature. Read at update time (not cached) so toggling it
 // in Settings takes effect on the next stage without any restart; activate() ALSO wires an
@@ -124,9 +142,55 @@ const recordLastStaged = (uri: vscode.Uri): void => {
 // nothing to stage) never updates the indicator — so the bar never shows a file that wasn't actually
 // staged. Capture the staged URI here, BEFORE callers advance the active editor, so we record the file we
 // staged rather than whatever the editor switches to after the jump.
-const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> => {
+const stageThroughExtension = async (
+    repo: any,
+    uri: vscode.Uri,
+    capturesStageNextTransaction = false
+): Promise<void> => {
+    const repoRoot = String(repo.rootUri?.fsPath ?? "");
+    const beforeIndexTree = repoRoot ? await writeIndexTree(repoRoot) : "";
     await repo.add([uri.fsPath]); // the real stage; throws -> recordLastStaged below is skipped
+    const afterIndexTree = repoRoot ? await writeIndexTree(repoRoot) : "";
+    if (capturesStageNextTransaction) {
+        lastStageTransaction = beforeIndexTree && afterIndexTree && beforeIndexTree !== afterIndexTree
+            ? { repo, repoRoot, beforeIndexTree, afterIndexTree, uri }
+            : undefined;
+    }
     recordLastStaged(uri); // success -> update the status bar with the file we just staged
+};
+
+// Undo only the latest Better Git stage transaction, and only while the index is still byte-for-byte the
+// index produced by that transaction. Restoring the captured pre-stage tree is an exact inverse even for a
+// partially staged file; refusing after any intervening index change prevents this command from silently
+// removing unrelated work that was staged through VS Code, Git, or another tool.
+const undoLastStageTransaction = async (): Promise<void> => {
+    const transaction = lastStageTransaction;
+    if (!transaction) {
+        vscode.window.showInformationMessage("Better Git: There is no recent Stage + Next action to undo.");
+        return;
+    }
+
+    const currentIndexTree = await writeIndexTree(transaction.repoRoot);
+    if (currentIndexTree !== transaction.afterIndexTree) {
+        vscode.window.showWarningMessage(
+            "Better Git: The Git index changed after Stage + Next, so it was not undone. Undo it manually to preserve newer staged work."
+        );
+        return;
+    }
+
+    await execFileAsync("git", ["read-tree", transaction.beforeIndexTree], {
+        cwd: transaction.repoRoot,
+        encoding: "utf8",
+    });
+    if (typeof transaction.repo.status === "function") {
+        await transaction.repo.status();
+    }
+    lastStageTransaction = undefined;
+    lastStagedUri = undefined;
+    lastStagedStatusBarItem?.hide();
+    vscode.window.showInformationMessage(
+        `Better Git: Undid Stage + Next for ${path.basename(transaction.uri.fsPath)}.`
+    );
 };
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
@@ -484,6 +548,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         lastNavDirection = "previous";
         await stageCurrentFileAndAdvance("previous");
     });
+
+    let undoLastStageDisposable = vscode.commands.registerCommand(
+        "better-git-vscode.undo-last-stage-and-advance",
+        undoLastStageTransaction
+    );
 
     // Legacy command: stage the current file WITHOUT navigating. Kept registered so anyone who bound it keeps
     // that behaviour, but as of v1.2.7 it is NO LONGER what the editor-title "+" button runs — the button now
@@ -920,6 +989,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         disposable, disposable2, disposable3, disposable4, disposable5, disposable6, disposable7, disposable8,
         disposable9, disposable10, disposable11, disposable12, disposable13, disposable14, disposable15,
         disposable16, // add-current-worktree-to-workspace (v1.2.14)
+        undoLastStageDisposable,
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,
         addWorktreeToWorkspaceCommand,
@@ -3101,7 +3171,7 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     // this function) now — the advance switches the editor to the NEXT file, so reading the active file
     // afterwards would record the wrong file. stageThroughExtension only updates the status bar if add()
     // succeeds, so a no-op/failed stage won't show a file in the bar.
-    await stageThroughExtension(activeRepo, currentUri);
+    await stageThroughExtension(activeRepo, currentUri, direction === "next");
 
     if (!targetUnstagedChange) {
         // Current was the ONLY unstaged file (no next and no previous) — nothing left to review, so close.

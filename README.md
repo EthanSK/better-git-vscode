@@ -145,7 +145,7 @@ is a two-hop mapping: **Karabiner-Elements** remaps your mouse's extra buttons t
 then VS Code's `keybindings.json` maps those F-keys to this extension's commands. This is the exact
 setup the author uses.
 
-**The four commands you bind:**
+**The five commands you bind:**
 
 | Mouse button | → F-key | → Command | What it does |
 | --- | --- | --- | --- |
@@ -153,6 +153,7 @@ setup the author uses.
 | **Forward** (thumb front) | `F17` | `better-git-vscode.smart-forward` | In a review view: **previous** change. Elsewhere: browser Forward. |
 | (extra button) | `F18` | `better-git-vscode.stage-and-next-changed-file` | Stage current file **+ next** change. |
 | (extra button) | `F19` | `better-git-vscode.stage-and-previous-changed-file` | Stage current file **+ previous** change. |
+| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo the latest Better Git Stage + Next, but only if the Git index has not changed since. |
 
 **Why the "smart" commands are dual-mode.** `smart-back` / `smart-forward` detect whether you're in a
 diff/review view (a diff, a brand-new/untracked file, a deleted file, a merge-conflict editor, or a
@@ -191,6 +192,8 @@ clause to get wrong:
   { "key": "f13", "command": "better-git-vscode.smart-back" },
   // Mouse FORWARD button (Karabiner sends F17) -> smart-forward: previous change while reviewing, else Forward
   { "key": "f17", "command": "better-git-vscode.smart-forward" },
+  // Rapid double press (Karabiner sends F16) -> exact fail-closed undo of the latest Stage + Next
+  { "key": "f16", "command": "better-git-vscode.undo-last-stage-and-advance" },
   // Extra mouse buttons (Karabiner sends F18 / F19) -> stage-and-advance in each direction
   { "key": "f18", "command": "better-git-vscode.stage-and-next-changed-file" },
   { "key": "f19", "command": "better-git-vscode.stage-and-previous-changed-file" }
@@ -198,7 +201,9 @@ clause to get wrong:
 ```
 
 That's it — thumb-Back/Forward to fly through changes, the two extra buttons (or the title-bar `+`)
-to stage-and-advance, all without touching the keyboard.
+to stage-and-advance, and rapid double press to reverse the exact latest stage transaction without
+touching the keyboard. If anything else changes the index afterward, the undo refuses instead of
+removing newer staged work.
 
 ## Left/right-hand navigation and Dvorak mode
 
