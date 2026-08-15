@@ -8,6 +8,8 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
+import { StageTransactionStore, StoredStageTransaction } from "./stageTransactionStore";
+import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./gitIndexRetry";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -90,21 +92,31 @@ let lastNavDirection: "next" | "previous" = "next";
 // clean disposal; we keep a module reference so recordLastStaged() can mutate it from anywhere.
 let lastStagedStatusBarItem: vscode.StatusBarItem | undefined; // the bottom-bar item; undefined before activate()
 let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file staged THROUGH this extension
-let lastStageTransaction: {
-    repo: any;
-    repoRoot: string;
-    beforeIndexTree: string;
-    afterIndexTree: string;
-    uri: vscode.Uri;
-} | undefined;
+let stageTransactionStore: StageTransactionStore | undefined;
 const execFileAsync = promisify(execFile);
 
 const writeIndexTree = async (repoRoot: string): Promise<string> => {
-    const { stdout } = await execFileAsync("git", ["write-tree"], {
-        cwd: repoRoot,
-        encoding: "utf8",
-    });
+    const { stdout } = await runWithTransientGitIndexRetry(() => execFileAsync(
+        "git",
+        ["write-tree"],
+        { cwd: repoRoot, encoding: "utf8" }
+    ));
     return stdout.trim();
+};
+
+const runStageCommand = async (operation: () => Promise<void>): Promise<void> => {
+    try {
+        await operation();
+    } catch (error) {
+        const candidate = error as { message?: unknown; stderr?: unknown };
+        const detail = [candidate?.stderr, candidate?.message]
+            .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+            ?.trim();
+        const message = isTransientGitIndexLockError(error)
+            ? "Better Git: Git's index stayed busy, so nothing was staged. Try the action again after the other Git operation finishes."
+            : `Better Git: Stage action failed${detail ? ` — ${detail}` : "."}`;
+        await vscode.window.showErrorMessage(message);
+    }
 };
 
 // Reads the live setting that gates the whole feature. Read at update time (not cached) so toggling it
@@ -148,13 +160,43 @@ const stageThroughExtension = async (
     capturesStageNextTransaction = false
 ): Promise<void> => {
     const repoRoot = String(repo.rootUri?.fsPath ?? "");
-    const beforeIndexTree = repoRoot ? await writeIndexTree(repoRoot) : "";
-    await repo.add([uri.fsPath]); // the real stage; throws -> recordLastStaged below is skipped
-    const afterIndexTree = repoRoot ? await writeIndexTree(repoRoot) : "";
+    // Do not involve `write-tree` in ordinary stage commands. The exact tree
+    // snapshots exist only for Stage + Next's inverse and should never create
+    // a new failure surface for plain staging.
+    const beforeIndexTree = capturesStageNextTransaction && repoRoot
+        ? await writeIndexTree(repoRoot)
+        : "";
+    await runWithTransientGitIndexRetry(() => repo.add([uri.fsPath]));
     if (capturesStageNextTransaction) {
-        lastStageTransaction = beforeIndexTree && afterIndexTree && beforeIndexTree !== afterIndexTree
-            ? { repo, repoRoot, beforeIndexTree, afterIndexTree, uri }
-            : undefined;
+        try {
+            const afterIndexTree = repoRoot ? await writeIndexTree(repoRoot) : "";
+            if (beforeIndexTree && afterIndexTree && beforeIndexTree !== afterIndexTree) {
+                const receipt: StoredStageTransaction = {
+                    schema: 1,
+                    repoRoot,
+                    beforeIndexTree,
+                    afterIndexTree,
+                    uri: uri.toString(),
+                    recordedAt: new Date().toISOString(),
+                };
+                await stageTransactionStore?.save(receipt);
+            } else {
+                await stageTransactionStore?.clear();
+            }
+        } catch (error) {
+            // `repo.add` already succeeded. Never tell Ethan that nothing was
+            // staged, and never preserve an older receipt that could undo the
+            // wrong transaction. Continue the requested navigation but make
+            // the unavailable exact undo explicit.
+            await stageTransactionStore?.clear();
+            const candidate = error as { message?: unknown; stderr?: unknown };
+            const detail = [candidate?.stderr, candidate?.message]
+                .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+                ?.trim();
+            await vscode.window.showWarningMessage(
+                `Better Git: The file was staged, but its exact undo receipt could not be saved${detail ? ` — ${detail}` : "."}`
+            );
+        }
     }
     recordLastStaged(uri); // success -> update the status bar with the file we just staged
 };
@@ -164,7 +206,7 @@ const stageThroughExtension = async (
 // partially staged file; refusing after any intervening index change prevents this command from silently
 // removing unrelated work that was staged through VS Code, Git, or another tool.
 const undoLastStageTransaction = async (): Promise<void> => {
-    const transaction = lastStageTransaction;
+    const transaction = await stageTransactionStore?.load();
     if (!transaction) {
         vscode.window.showInformationMessage("Better Git: There is no recent Stage + Next action to undo.");
         return;
@@ -172,25 +214,50 @@ const undoLastStageTransaction = async (): Promise<void> => {
 
     const currentIndexTree = await writeIndexTree(transaction.repoRoot);
     if (currentIndexTree !== transaction.afterIndexTree) {
+        await stageTransactionStore?.clear();
         vscode.window.showWarningMessage(
-            "Better Git: The Git index changed after Stage + Next, so it was not undone. Undo it manually to preserve newer staged work."
+            "Better Git: The Git index changed after Stage + Next, so the saved undo was discarded without changing your index. Undo it manually to preserve newer staged work."
         );
         return;
     }
 
-    await execFileAsync("git", ["read-tree", transaction.beforeIndexTree], {
-        cwd: transaction.repoRoot,
-        encoding: "utf8",
-    });
-    if (typeof transaction.repo.status === "function") {
-        await transaction.repo.status();
+    await runWithTransientGitIndexRetry(() => execFileAsync(
+        "git",
+        ["read-tree", transaction.beforeIndexTree],
+        { cwd: transaction.repoRoot, encoding: "utf8" }
+    ));
+    try {
+        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+        const repo = git?.repositories?.find(
+            (candidate: any) => String(candidate.rootUri?.fsPath ?? "") === transaction.repoRoot
+        );
+        if (typeof repo?.status === "function") {
+            await repo.status();
+        }
+    } catch {
+        // The exact Git index restore already succeeded. Refresh is best effort.
     }
-    lastStageTransaction = undefined;
+    await stageTransactionStore?.clear();
     lastStagedUri = undefined;
     lastStagedStatusBarItem?.hide();
     vscode.window.showInformationMessage(
-        `Better Git: Undid Stage + Next for ${path.basename(transaction.uri.fsPath)}.`
+        `Better Git: Undid Stage + Next for ${path.basename(vscode.Uri.parse(transaction.uri).fsPath)}.`
     );
+};
+
+const runUndoCommand = async (): Promise<void> => {
+    try {
+        await undoLastStageTransaction();
+    } catch (error) {
+        const candidate = error as { message?: unknown; stderr?: unknown };
+        const detail = [candidate?.stderr, candidate?.message]
+            .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+            ?.trim();
+        const message = isTransientGitIndexLockError(error)
+            ? "Better Git: Git's index stayed busy, so the saved Stage + Next was not undone. Try again after the other Git operation finishes."
+            : `Better Git: The saved Stage + Next could not be undone${detail ? ` — ${detail}` : "."}`;
+        await vscode.window.showErrorMessage(message);
+    }
 };
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
@@ -488,6 +555,9 @@ const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefine
 
 export function activate(context: vscode.ExtensionContext): BetterGitExtensionApi {
     const commitMessageGenerator = new CommitMessageGenerator(context.globalState);
+    stageTransactionStore = new StageTransactionStore(
+        path.join(context.globalStorageUri.fsPath, "last-stage-next-transaction.json")
+    );
 
     // Persistent fixed-location mouse target for stage-and-advance (v1.2.20). Priority 101 places it directly
     // beside, and just before, the existing last-staged indicator at priority 100. Unlike editor/title, this
@@ -539,26 +609,26 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // reviewing top-to-bottom, so the "+" button should keep advancing forward after this, and vice versa.
     let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async () => {
         lastNavDirection = "next";
-        await stageCurrentFileAndAdvance("next");
+        await runStageCommand(() => stageCurrentFileAndAdvance("next"));
     });
 
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
     // PREVIOUS unstaged file instead of the next. Bound to "shift + previous" so it parallels "shift + next".
     let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async () => {
         lastNavDirection = "previous";
-        await stageCurrentFileAndAdvance("previous");
+        await runStageCommand(() => stageCurrentFileAndAdvance("previous"));
     });
 
     let undoLastStageDisposable = vscode.commands.registerCommand(
         "better-git-vscode.undo-last-stage-and-advance",
-        undoLastStageTransaction
+        runUndoCommand
     );
 
     // Legacy command: stage the current file WITHOUT navigating. Kept registered so anyone who bound it keeps
     // that behaviour, but as of v1.2.7 it is NO LONGER what the editor-title "+" button runs — the button now
     // runs stage-current-file-and-advance (disposable15 below) for the mouse-only review flow.
     let disposable8 = vscode.commands.registerCommand("better-git-vscode.stage-current-file", async () => {
-        await stageCurrentFile();
+        await runStageCommand(stageCurrentFile);
     });
 
     // Editor-title "+" button (v1.2.7): stage the current file AND advance to the next/previous change in
@@ -569,7 +639,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // keyboard shortcut. On a non-diff / non-change editor stageCurrentFileAndAdvance safely no-ops (its
     // isChangedFile guard), so the button never errors even when "advance" is meaningless.
     let disposable15 = vscode.commands.registerCommand("better-git-vscode.stage-current-file-and-advance", async () => {
-        await stageCurrentFileAndAdvance(lastNavDirection);
+        await runStageCommand(() => stageCurrentFileAndAdvance(lastNavDirection));
     });
 
     // Manual trigger for collapsing the worktree/repository section headers (see the big comment block
