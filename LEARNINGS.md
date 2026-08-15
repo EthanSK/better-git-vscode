@@ -32,6 +32,15 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-08-15T18:00:00Z
+**Trigger:** Ethan immediately used Agentic Mouse Stage + Next and then Undo, but Better Git reported that there was no recent stage.
+**Symptom:** F18 appeared to run, then F16 truthfully found no undo receipt. The extension-host log contained `git write-tree` failing because a transient repository `index.lock` already existed.
+**Root cause:** The stage transaction captured the pre-stage tree before calling the Git API, but a short concurrent Git operation could make that capture fail. No stage occurred and therefore no receipt was created. Separately, the successful receipt lived only in one extension-host process, so a later window or host restart could also make a genuine recent stage appear absent.
+**Fix:** v1.2.52 retries only exact transient `index.lock` failures through one bounded helper and never removes the lock. A successful Stage + Next atomically persists its exact repository, file URI, before-tree, and after-tree receipt under VS Code extension global storage. F16 reloads that receipt across windows/hosts, requires the current index tree to equal the recorded after-tree, then restores the exact before-tree; any intervening index change discards the receipt without changing Git state.
+**Guard:** Unit tests pin the bounded lock retry, unrelated-error refusal, maximum attempt count, atomic mode-0600 receipt persistence, fresh-store reload, malformed-state refusal, and clear behavior. The isolated real VS Code host passes 54/54 tests, including exact partial-index restoration and refusal after a later index change. TypeScript, webpack, ESLint, and `git diff --check` pass.
+---
+
+---
 **Date:** 2026-08-14T16:45:00Z
 **Trigger:** Ethan asked for the Agentic Mouse VS Code wildcard to Stage + Next on one press and undo that same action on a rapid double press.
 **Symptom:** F18 could stage and immediately advance, but there was no safe mouse command that reversed the exact stage transaction. A generic unstage command could remove earlier partial staging or newer staged work.

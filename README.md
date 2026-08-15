@@ -153,7 +153,7 @@ setup the author uses.
 | **Forward** (thumb front) | `F17` | `better-git-vscode.smart-forward` | In a review view: **previous** change. Elsewhere: browser Forward. |
 | (extra button) | `F18` | `better-git-vscode.stage-and-next-changed-file` | Stage current file **+ next** change. |
 | (extra button) | `F19` | `better-git-vscode.stage-and-previous-changed-file` | Stage current file **+ previous** change. |
-| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo the latest Better Git Stage + Next, but only if the Git index has not changed since. |
+| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo the latest successful Better Git Stage + Next, including after a VS Code window/extension-host restart, but only if the Git index has not changed since. |
 
 **Why the "smart" commands are dual-mode.** `smart-back` / `smart-forward` detect whether you're in a
 diff/review view (a diff, a brand-new/untracked file, a deleted file, a merge-conflict editor, or a
@@ -202,7 +202,9 @@ clause to get wrong:
 
 That's it — thumb-Back/Forward to fly through changes, the two extra buttons (or the title-bar `+`)
 to stage-and-advance, and rapid double press to reverse the exact latest stage transaction without
-touching the keyboard. If anything else changes the index afterward, the undo refuses instead of
+touching the keyboard. A brief `index.lock` from another Git operation is retried for a bounded
+window; Better Git never deletes the lock and reports if staging still cannot proceed. The exact
+undo receipt persists across VS Code window/extension-host restarts. If anything else changes the index afterward, the undo refuses instead of
 removing newer staged work.
 
 ## Left/right-hand navigation and Dvorak mode

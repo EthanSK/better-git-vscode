@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.52] — Stage + Next survives brief Git locks and VS Code restarts
+
+- **Fixed Stage + Next failing silently when another Git operation briefly owns `index.lock`.** Better Git now retries only that exact transient lock condition for a short, bounded window, never deletes the lock, and reports a clear error if Git remains busy.
+- **Persisted the exact undo receipt outside the extension host.** F16 can still undo the latest successful Stage + Next after a VS Code window or extension-host restart.
+- **Kept undo fail-closed.** The receipt records the exact before/after index tree IDs; F16 restores the before tree only while the current index still equals the recorded after tree and refuses after any intervening staging change.
+
 ## [1.2.51] — exact fail-closed undo for Stage + Next
 
 - **Added `Undo the latest Stage + Next action`.** It restores the exact Git index tree from immediately before the latest Better Git Stage + Next, including a file's previous partial-staging state.
