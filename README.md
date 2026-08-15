@@ -153,7 +153,7 @@ setup the author uses.
 | **Forward** (thumb front) | `F17` | `better-git-vscode.smart-forward` | In a review view: **previous** change. Elsewhere: browser Forward. |
 | (extra button) | `F18` | `better-git-vscode.stage-and-next-changed-file` | Stage current file **+ next** change. |
 | (extra button) | `F19` | `better-git-vscode.stage-and-previous-changed-file` | Stage current file **+ previous** change. |
-| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo the latest successful Better Git Stage + Next, including after a VS Code window/extension-host restart, but only if the Git index has not changed since. |
+| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo the latest stage/index transition, whether it came from Better Git, VS Code's keyboard/UI, another mouse button, or `git add`. |
 
 **Why the "smart" commands are dual-mode.** `smart-back` / `smart-forward` detect whether you're in a
 diff/review view (a diff, a brand-new/untracked file, a deleted file, a merge-conflict editor, or a
@@ -192,7 +192,7 @@ clause to get wrong:
   { "key": "f13", "command": "better-git-vscode.smart-back" },
   // Mouse FORWARD button (Karabiner sends F17) -> smart-forward: previous change while reviewing, else Forward
   { "key": "f17", "command": "better-git-vscode.smart-forward" },
-  // Rapid double press (Karabiner sends F16) -> exact fail-closed undo of the latest Stage + Next
+  // Rapid double press (Karabiner sends F16) -> exact fail-closed undo of the latest stage
   { "key": "f16", "command": "better-git-vscode.undo-last-stage-and-advance" },
   // Extra mouse buttons (Karabiner sends F18 / F19) -> stage-and-advance in each direction
   { "key": "f18", "command": "better-git-vscode.stage-and-next-changed-file" },
@@ -201,11 +201,14 @@ clause to get wrong:
 ```
 
 That's it — thumb-Back/Forward to fly through changes, the two extra buttons (or the title-bar `+`)
-to stage-and-advance, and rapid double press to reverse the exact latest stage transaction without
-touching the keyboard. A brief `index.lock` from another Git operation is retried for a bounded
+to stage-and-advance, and rapid double press to reverse the exact latest stage without touching the
+keyboard. Better Git observes the repository's exact index tree, so a stage made through VS Code's
+keyboard/UI, another mouse control, or `git add` gets the same undo receipt. A brief `index.lock`
+from another Git operation is retried for a bounded
 window; Better Git never deletes the lock and reports if staging still cannot proceed. The exact
-undo receipt persists across VS Code window/extension-host restarts. If anything else changes the index afterward, the undo refuses instead of
-removing newer staged work.
+undo receipt persists across VS Code window/extension-host restarts. Every later index transition
+becomes the new exact undo target; the command still requires both `HEAD` and the current index to
+match its receipt before restoring the prior index tree. It never changes working files.
 
 ## Left/right-hand navigation and Dvorak mode
 

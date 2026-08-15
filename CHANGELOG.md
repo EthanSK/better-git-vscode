@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.53] — Undo Stage follows every staging route
+
+- **Made Undo Stage independent of the staging button.** Better Git now observes exact Git-index tree transitions, so F16 can undo a stage performed through Better Git, VS Code's keyboard or Source Control UI, another mouse control, or `git add`.
+- **Kept the operation exact and fail-closed.** Each receipt records `HEAD` plus the before/after index trees; a later index transition becomes the new undo target, while a commit, checkout, reset, conflicting index, or stale receipt is refused without changing the index.
+- **Prevented the undo from becoming a redo.** Better Git suppresses its own `read-tree` transition while refreshing vscode.git, updates the observer baseline, and never creates a second receipt from the restore itself.
+
 ## [1.2.52] — Stage + Next survives brief Git locks and VS Code restarts
 
 - **Fixed Stage + Next failing silently when another Git operation briefly owns `index.lock`.** Better Git now retries only that exact transient lock condition for a short, bounded window, never deletes the lock, and reports a clear error if Git remains busy.

@@ -8,7 +8,8 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
-import { StageTransactionStore, StoredStageTransaction } from "./stageTransactionStore";
+import { StageTransactionStore } from "./stageTransactionStore";
+import { IndexSnapshot, StageTransactionObserver } from "./stageTransactionObserver";
 import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./gitIndexRetry";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
@@ -93,6 +94,7 @@ let lastNavDirection: "next" | "previous" = "next";
 let lastStagedStatusBarItem: vscode.StatusBarItem | undefined; // the bottom-bar item; undefined before activate()
 let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file staged THROUGH this extension
 let stageTransactionStore: StageTransactionStore | undefined;
+let stageTransactionObserver: StageTransactionObserver | undefined;
 const execFileAsync = promisify(execFile);
 
 const writeIndexTree = async (repoRoot: string): Promise<string> => {
@@ -102,6 +104,69 @@ const writeIndexTree = async (repoRoot: string): Promise<string> => {
         { cwd: repoRoot, encoding: "utf8" }
     ));
     return stdout.trim();
+};
+
+const readHeadTree = async (repoRoot: string): Promise<string> => {
+    try {
+        const { stdout } = await execFileAsync(
+            "git",
+            ["rev-parse", "--verify", "--quiet", "HEAD^{tree}"],
+            { cwd: repoRoot, encoding: "utf8" }
+        );
+        return stdout.trim();
+    } catch (error) {
+        const code = (error as { code?: unknown }).code;
+        if (code === 1 || code === 128) {
+            // An unborn repository has no HEAD tree. The empty sentinel is
+            // stable until the first commit and still permits staging undo.
+            return "";
+        }
+        throw error;
+    }
+};
+
+const readIndexSnapshot = async (repoRoot: string): Promise<IndexSnapshot> => {
+    const [headTree, indexTree] = await Promise.all([
+        readHeadTree(repoRoot),
+        writeIndexTree(repoRoot),
+    ]);
+    return { headTree, indexTree };
+};
+
+const startIndexTransitionObservation = async (context: vscode.ExtensionContext): Promise<void> => {
+    const gitExtension = vscode.extensions.getExtension<any>("vscode.git");
+    if (!gitExtension || !stageTransactionObserver) {
+        return;
+    }
+    await gitExtension.activate();
+    const git = gitExtension.exports?.getAPI(1);
+    if (!git) {
+        return;
+    }
+
+    const attachedRoots = new Set<string>();
+    const attach = (repo: any): void => {
+        const repoRoot = String(repo?.rootUri?.fsPath ?? "");
+        if (!repoRoot || attachedRoots.has(repoRoot)) {
+            return;
+        }
+        attachedRoots.add(repoRoot);
+        void stageTransactionObserver?.prepare(repoRoot).catch((error) => {
+            debugLog("stage-undo", `Could not prepare ${repoRoot}: ${String(error)}`);
+        });
+        if (typeof repo?.state?.onDidChange === "function") {
+            context.subscriptions.push(repo.state.onDidChange(() => {
+                stageTransactionObserver?.notify(repoRoot);
+            }));
+        }
+    };
+
+    for (const repo of git.repositories ?? []) {
+        attach(repo);
+    }
+    if (typeof git.onDidOpenRepository === "function") {
+        context.subscriptions.push(git.onDidOpenRepository(attach));
+    }
 };
 
 const runStageCommand = async (operation: () => Promise<void>): Promise<void> => {
@@ -154,95 +219,99 @@ const recordLastStaged = (uri: vscode.Uri): void => {
 // nothing to stage) never updates the indicator — so the bar never shows a file that wasn't actually
 // staged. Capture the staged URI here, BEFORE callers advance the active editor, so we record the file we
 // staged rather than whatever the editor switches to after the jump.
-const stageThroughExtension = async (
-    repo: any,
-    uri: vscode.Uri,
-    capturesStageNextTransaction = false
-): Promise<void> => {
+const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> => {
     const repoRoot = String(repo.rootUri?.fsPath ?? "");
-    // Do not involve `write-tree` in ordinary stage commands. The exact tree
-    // snapshots exist only for Stage + Next's inverse and should never create
-    // a new failure surface for plain staging.
-    const beforeIndexTree = capturesStageNextTransaction && repoRoot
-        ? await writeIndexTree(repoRoot)
-        : "";
-    await runWithTransientGitIndexRetry(() => repo.add([uri.fsPath]));
-    if (capturesStageNextTransaction) {
+    let receiptCaptureError: unknown;
+    if (repoRoot) {
         try {
-            const afterIndexTree = repoRoot ? await writeIndexTree(repoRoot) : "";
-            if (beforeIndexTree && afterIndexTree && beforeIndexTree !== afterIndexTree) {
-                const receipt: StoredStageTransaction = {
-                    schema: 1,
-                    repoRoot,
-                    beforeIndexTree,
-                    afterIndexTree,
-                    uri: uri.toString(),
-                    recordedAt: new Date().toISOString(),
-                };
-                await stageTransactionStore?.save(receipt);
-            } else {
-                await stageTransactionStore?.clear();
-            }
+            await stageTransactionObserver?.prepare(repoRoot);
         } catch (error) {
-            // `repo.add` already succeeded. Never tell Ethan that nothing was
-            // staged, and never preserve an older receipt that could undo the
-            // wrong transaction. Continue the requested navigation but make
-            // the unavailable exact undo explicit.
-            await stageTransactionStore?.clear();
-            const candidate = error as { message?: unknown; stderr?: unknown };
-            const detail = [candidate?.stderr, candidate?.message]
-                .find((value): value is string => typeof value === "string" && value.trim().length > 0)
-                ?.trim();
-            await vscode.window.showWarningMessage(
-                `Better Git: The file was staged, but its exact undo receipt could not be saved${detail ? ` — ${detail}` : "."}`
-            );
+            // Staging itself must remain available even if the independent
+            // receipt snapshot cannot be prepared.
+            receiptCaptureError = error;
         }
+    }
+    await runWithTransientGitIndexRetry(() => repo.add([uri.fsPath]));
+    if (repoRoot && !receiptCaptureError) {
+        try {
+            await stageTransactionObserver?.observe(repoRoot, {
+                kind: "betterGitStage",
+                uri: uri.toString(),
+            });
+        } catch (error) {
+            receiptCaptureError = error;
+        }
+    }
+    if (receiptCaptureError) {
+        const candidate = receiptCaptureError as { message?: unknown; stderr?: unknown };
+        const detail = [candidate?.stderr, candidate?.message]
+            .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+            ?.trim();
+        await vscode.window.showWarningMessage(
+            `Better Git: The file was staged, but its exact undo receipt could not be saved${detail ? ` — ${detail}` : "."}`
+        );
     }
     recordLastStaged(uri); // success -> update the status bar with the file we just staged
 };
 
-// Undo only the latest Better Git stage transaction, and only while the index is still byte-for-byte the
-// index produced by that transaction. Restoring the captured pre-stage tree is an exact inverse even for a
-// partially staged file; refusing after any intervening index change prevents this command from silently
-// removing unrelated work that was staged through VS Code, Git, or another tool.
+// Undo only the latest observed stage/index transaction, and only while HEAD and
+// the index are still byte-for-byte the state produced by that transaction.
+// Restoring the captured pre-stage tree is an exact inverse even for a partially
+// staged file; refusing after any intervening change prevents this command from
+// silently removing newer staged work.
 const undoLastStageTransaction = async (): Promise<void> => {
     const transaction = await stageTransactionStore?.load();
     if (!transaction) {
-        vscode.window.showInformationMessage("Better Git: There is no recent Stage + Next action to undo.");
+        vscode.window.showInformationMessage("Better Git: There is no recent stage/index change to undo.");
         return;
     }
 
-    const currentIndexTree = await writeIndexTree(transaction.repoRoot);
-    if (currentIndexTree !== transaction.afterIndexTree) {
+    const current = await readIndexSnapshot(transaction.repoRoot);
+    if (current.headTree !== transaction.headTree) {
         await stageTransactionStore?.clear();
         vscode.window.showWarningMessage(
-            "Better Git: The Git index changed after Stage + Next, so the saved undo was discarded without changing your index. Undo it manually to preserve newer staged work."
+            "Better Git: HEAD changed after the saved stage, so the undo was discarded without changing your index."
+        );
+        return;
+    }
+    if (current.indexTree !== transaction.afterIndexTree) {
+        await stageTransactionStore?.clear();
+        vscode.window.showWarningMessage(
+            "Better Git: The Git index changed again after the saved stage, so the undo was discarded without changing your index. Undo it manually to preserve newer staged work."
         );
         return;
     }
 
-    await runWithTransientGitIndexRetry(() => execFileAsync(
-        "git",
-        ["read-tree", transaction.beforeIndexTree],
-        { cwd: transaction.repoRoot, encoding: "utf8" }
-    ));
-    try {
-        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
-        const repo = git?.repositories?.find(
-            (candidate: any) => String(candidate.rootUri?.fsPath ?? "") === transaction.repoRoot
-        );
-        if (typeof repo?.status === "function") {
-            await repo.status();
+    const restore = async (): Promise<void> => {
+        await runWithTransientGitIndexRetry(() => execFileAsync(
+            "git",
+            ["read-tree", transaction.beforeIndexTree],
+            { cwd: transaction.repoRoot, encoding: "utf8" }
+        ));
+        try {
+            const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+            const repo = git?.repositories?.find(
+                (candidate: any) => String(candidate.rootUri?.fsPath ?? "") === transaction.repoRoot
+            );
+            if (typeof repo?.status === "function") {
+                await repo.status();
+            }
+        } catch {
+            // The exact Git index restore already succeeded. Refresh is best effort.
         }
-    } catch {
-        // The exact Git index restore already succeeded. Refresh is best effort.
+    };
+    if (stageTransactionObserver) {
+        await stageTransactionObserver.runSuppressed(transaction.repoRoot, restore);
+    } else {
+        await restore();
     }
     await stageTransactionStore?.clear();
     lastStagedUri = undefined;
     lastStagedStatusBarItem?.hide();
-    vscode.window.showInformationMessage(
-        `Better Git: Undid Stage + Next for ${path.basename(vscode.Uri.parse(transaction.uri).fsPath)}.`
-    );
+    const subject = transaction.uri
+        ? ` for ${path.basename(vscode.Uri.parse(transaction.uri).fsPath)}`
+        : "";
+    vscode.window.showInformationMessage(`Better Git: Undid the latest stage${subject}.`);
 };
 
 const runUndoCommand = async (): Promise<void> => {
@@ -254,8 +323,8 @@ const runUndoCommand = async (): Promise<void> => {
             .find((value): value is string => typeof value === "string" && value.trim().length > 0)
             ?.trim();
         const message = isTransientGitIndexLockError(error)
-            ? "Better Git: Git's index stayed busy, so the saved Stage + Next was not undone. Try again after the other Git operation finishes."
-            : `Better Git: The saved Stage + Next could not be undone${detail ? ` — ${detail}` : "."}`;
+            ? "Better Git: Git's index stayed busy, so the saved stage was not undone. Try again after the other Git operation finishes."
+            : `Better Git: The saved stage could not be undone${detail ? ` — ${detail}` : "."}`;
         await vscode.window.showErrorMessage(message);
     }
 };
@@ -429,6 +498,7 @@ interface ScmTreeStartupOutcome {
 
 interface BetterGitExtensionApi {
     whenScmTreeStateSettled: Promise<ScmTreeStartupOutcome>;
+    whenStageTransactionsSettled(): Promise<void>;
     getScmTreeCommandTrace(): readonly string[];
 }
 
@@ -558,6 +628,14 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     stageTransactionStore = new StageTransactionStore(
         path.join(context.globalStorageUri.fsPath, "last-stage-next-transaction.json")
     );
+    stageTransactionObserver = new StageTransactionObserver(
+        stageTransactionStore,
+        readIndexSnapshot,
+        (error) => debugLog("stage-undo", `Index observer failed: ${String(error)}`)
+    );
+    void startIndexTransitionObservation(context).catch((error) => {
+        debugLog("stage-undo", `Could not start index observation: ${String(error)}`);
+    });
 
     // Persistent fixed-location mouse target for stage-and-advance (v1.2.20). Priority 101 places it directly
     // beside, and just before, the existing last-staged indicator at priority 100. Unlike editor/title, this
@@ -1075,6 +1153,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
 
     return {
         whenScmTreeStateSettled,
+        whenStageTransactionsSettled: () => stageTransactionObserver?.settled() ?? Promise.resolve(),
         getScmTreeCommandTrace: () => [...scmTreeCommandTrace],
     };
 }
@@ -3241,7 +3320,7 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     // this function) now — the advance switches the editor to the NEXT file, so reading the active file
     // afterwards would record the wrong file. stageThroughExtension only updates the status bar if add()
     // succeeds, so a no-op/failed stage won't show a file in the bar.
-    await stageThroughExtension(activeRepo, currentUri, direction === "next");
+    await stageThroughExtension(activeRepo, currentUri);
 
     if (!targetUnstagedChange) {
         // Current was the ONLY unstaged file (no next and no previous) — nothing left to review, so close.

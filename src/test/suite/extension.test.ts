@@ -125,7 +125,7 @@ suite('Extension Test Suite', () => {
 		const commands = manifest.contributes?.commands as Array<{ command: string; title: string }>;
 		assert.strictEqual(
 			commands.find(command => command.command === 'better-git-vscode.undo-last-stage-and-advance')?.title,
-			'Undo the latest Stage + Next action'
+			'Undo the latest stage'
 		);
 		assert.strictEqual(
 			commands.find(command => command.command === 'better-git-vscode.smart-back')?.title,

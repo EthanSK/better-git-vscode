@@ -19,8 +19,10 @@ suite("StageTransactionStore", () => {
 
     test("a fresh store instance loads the prior extension host's receipt", async () => {
         const receipt: StoredStageTransaction = {
-            schema: 1,
+            schema: 2,
+            kind: "betterGitStage",
             repoRoot: "/tmp/example-worktree",
+            headTree: "head-tree",
             beforeIndexTree: "before-tree",
             afterIndexTree: "after-tree",
             uri: "file:///tmp/example-worktree/file.ts",
@@ -38,5 +40,21 @@ suite("StageTransactionStore", () => {
         assert.strictEqual(await store.load(), undefined);
         await store.clear();
         assert.strictEqual(await store.load(), undefined);
+    });
+
+    test("legacy receipts without HEAD identity fail closed", async () => {
+        await fs.promises.writeFile(
+            receiptPath,
+            `${JSON.stringify({
+                schema: 1,
+                repoRoot: "/tmp/example-worktree",
+                beforeIndexTree: "before-tree",
+                afterIndexTree: "after-tree",
+                uri: "file:///tmp/example-worktree/file.ts",
+                recordedAt: "2026-08-15T18:00:00.000Z",
+            })}\n`,
+            "utf8"
+        );
+        assert.strictEqual(await new StageTransactionStore(receiptPath).load(), undefined);
     });
 });
