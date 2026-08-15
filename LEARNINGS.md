@@ -32,6 +32,15 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-08-15T20:30:00Z
+**Trigger:** Ethan asked whether the dedicated Agentic Mouse Undo Stage control would also undo a stage made with another mouse button, VS Code's keyboard/UI, or another route.
+**Symptom:** The v1.2.52 receipt was created only inside Better Git's Stage + Next chokepoint. F16 therefore truthfully reported no recent stage after VS Code or `git add` changed the index.
+**Root cause:** Command ownership was being used as a proxy for Git state. VS Code exposes no reliable public event naming every command that can stage, but every route changes the repository's index tree and vscode.git publishes repository-state changes.
+**Fix:** v1.2.53 keeps a serialized per-repository `HEAD`/index-tree baseline and persists the exact latest before/after index transition whenever `HEAD` is unchanged. Better Git commands enrich the same receipt with a file URI; external stages use the generic receipt. Undo requires matching `HEAD` and after-tree, restores only the before-tree, refreshes vscode.git under observer suppression, and cannot create a redo receipt.
+**Guard:** Pure observer/store tests pin external transitions, Better Git enrichment, HEAD invalidation, legacy-receipt refusal, and suppressed restore behavior. Real Extension Development Host coverage stages through VS Code's built-in Git command, undoes a later external stage without removing earlier staged work, rejects post-commit undo, and preserves exact partial-index restoration.
+---
+
+---
 **Date:** 2026-08-15T18:00:00Z
 **Trigger:** Ethan immediately used Agentic Mouse Stage + Next and then Undo, but Better Git reported that there was no recent stage.
 **Symptom:** F18 appeared to run, then F16 truthfully found no undo receipt. The extension-host log contained `git write-tree` failing because a transient repository `index.lock` already existed.

@@ -112,6 +112,7 @@ const readFakeAiCapture = (capturePath: string): { args: string[]; cwd: string; 
 suite('SCM change navigation E2E', () => {
 	let ws: string; // fixture workspace root (a real git repo, see runTest.ts)
 	let repo: any; // vscode.git API Repository for the fixture
+	let extensionApi: { whenStageTransactionsSettled(): Promise<void> };
 	let baseSha: string; // the base commit every test resets to
 
 	// Run a git command inside the fixture. All command strings are hardcoded test constants.
@@ -295,7 +296,7 @@ suite('SCM change navigation E2E', () => {
 
 		// Make sure OUR extension is active before the first executeCommand (onStartupFinished usually
 		// beats us here, but don't rely on the race).
-		await vscode.extensions.getExtension<any>('EthanSK.better-git-vscode')!.activate();
+		extensionApi = await vscode.extensions.getExtension<any>('EthanSK.better-git-vscode')!.activate();
 	});
 
 	// Every test starts from a pristine base commit + empty editor area, so tests are order-independent
@@ -312,6 +313,7 @@ suite('SCM change navigation E2E', () => {
 				(repo.state.untrackedChanges ?? []).length === 0,
 			'clean git state after reset'
 		);
+		await extensionApi.whenStageTransactionsSettled();
 		await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 	});
 
@@ -1627,7 +1629,27 @@ suite('SCM change navigation E2E', () => {
 		);
 	});
 
-	test('undo latest Stage + Next refuses after a later index change', async () => {
+	test('undo observes a stage performed by VS Code built-in Git rather than Better Git', async () => {
+		const content = lines(24, 'mod_a').split('\n');
+		content[8] = 'mod_a BUILT-IN GIT STAGE line 9';
+		write('committed/mod_a.txt', content.join('\n') + '\n');
+		await refreshUntil(() => inWorkingTree('committed/mod_a.txt', 5), 'built-in stage fixture to appear');
+		await vscode.window.showTextDocument(wsUri('committed/mod_a.txt'), { preview: false });
+
+		// No explicit resource argument is the real keyboard/Command Palette path:
+		// vscode.git resolves the active file to its internal SCM resource and stages it.
+		await vscode.commands.executeCommand('git.stage');
+		await refreshUntil(() => inIndex('committed/mod_a.txt', 0), 'VS Code built-in stage to reach the index');
+		await extensionApi.whenStageTransactionsSettled();
+
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await refreshUntil(
+			() => !inIndex('committed/mod_a.txt') && inWorkingTree('committed/mod_a.txt', 5),
+			'undo to restore a VS Code built-in stage'
+		);
+	});
+
+	test('undo follows the latest external stage without removing earlier staged work', async () => {
 		const first = lines(24, 'mod_a').split('\n');
 		first[4] = 'mod_a STAGE-THEN-UNDO line 5';
 		write('committed/mod_a.txt', first.join('\n') + '\n');
@@ -1644,10 +1666,34 @@ suite('SCM change navigation E2E', () => {
 		await refreshUntil(() => inIndex('committed/mod_a.txt', 0), 'first file to stage');
 		git('add committed/mod_d.txt');
 		await refreshUntil(() => inIndex('committed/mod_d.txt', 0), 'later independent index change to appear');
+		await extensionApi.whenStageTransactionsSettled();
 
 		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
-		assert.ok(inIndex('committed/mod_a.txt', 0), 'unsafe undo removed the original Stage + Next result');
-		assert.ok(inIndex('committed/mod_d.txt', 0), 'unsafe undo removed later independently staged work');
+		await refreshUntil(
+			() => inIndex('committed/mod_a.txt', 0) && !inIndex('committed/mod_d.txt') && inWorkingTree('committed/mod_d.txt', 5),
+			'undo to remove only the latest external stage'
+		);
+	});
+
+	test('undo refuses after HEAD changes even when the index tree still matches', async () => {
+		const content = lines(24, 'mod_a').split('\n');
+		content[10] = 'mod_a COMMIT AFTER STAGE line 11';
+		write('committed/mod_a.txt', content.join('\n') + '\n');
+		await refreshUntil(() => inWorkingTree('committed/mod_a.txt', 5), 'commit-after-stage fixture to appear');
+		git('add committed/mod_a.txt');
+		await refreshUntil(() => inIndex('committed/mod_a.txt', 0), 'external stage before commit');
+		await extensionApi.whenStageTransactionsSettled();
+		git('commit -m "test commit after observed stage"');
+		await refreshUntil(
+			() => !inIndex('committed/mod_a.txt') && !inWorkingTree('committed/mod_a.txt'),
+			'commit to leave a clean matching index'
+		);
+		await extensionApi.whenStageTransactionsSettled();
+		const committedHead = git('rev-parse HEAD');
+
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		assert.strictEqual(git('rev-parse HEAD'), committedHead, 'undo rewound HEAD after a commit');
+		assert.strictEqual(git('diff --cached --name-only'), '', 'undo changed the index after a commit');
 	});
 
 	test('MODIFIED wrapped tall hunk: SCM-focused rapid steps and reversal stay exact and monotonic', async () => {
