@@ -164,6 +164,33 @@ suite('SCM change navigation E2E', () => {
 	const isUntracked = (rel: string) =>
 		inWorkingTree(rel, 7 /* UNTRACKED */) ||
 		(repo.state.untrackedChanges ?? []).some((c: any) => c.uri.path === wsUri(rel).path);
+	const isMergeConflict = (rel: string) =>
+		(repo.state.mergeChanges ?? []).some((c: any) => c.uri.path === wsUri(rel).path);
+
+	// Create a real unresolved three-stage index entry without starting a repository-wide merge. The built-in
+	// Git extension sees exactly the same mergeChanges state as a normal content conflict, while each test remains
+	// self-contained and setup can restore the fixture with reset --hard.
+	const createMergeConflict = (rel: string, ours: string, theirs: string, working: string) => {
+		const baseBlob = git(`rev-parse ${baseSha}:${rel}`);
+		const hashBlob = (content: string) =>
+			execFileSync('git', ['hash-object', '-w', '--stdin'], {
+				cwd: ws,
+				input: content,
+				encoding: 'utf8'
+			}).trim();
+		execFileSync('git', ['update-index', '--force-remove', '--', rel], { cwd: ws, stdio: 'pipe' });
+		execFileSync('git', ['update-index', '--index-info'], {
+			cwd: ws,
+			input: [
+				`100644 ${baseBlob} 1\t${rel}`,
+				`100644 ${hashBlob(ours)} 2\t${rel}`,
+				`100644 ${hashBlob(theirs)} 3\t${rel}`,
+				''
+			].join('\n'),
+			encoding: 'utf8'
+		});
+		write(rel, working);
+	};
 
 	// Open a file as a PLAIN pinned editor with the cursor at `line` (how an untracked file shows up).
 	const openPlainAt = async (rel: string, line: number): Promise<vscode.TextEditor> => {
@@ -308,6 +335,7 @@ suite('SCM change navigation E2E', () => {
 			() =>
 				(repo.state.workingTreeChanges ?? []).length === 0 &&
 				(repo.state.indexChanges ?? []).length === 0 &&
+				(repo.state.mergeChanges ?? []).length === 0 &&
 				// git.untrackedChanges="separate" keeps untracked files in their own list — it must drain
 				// too, or an untracked file from the previous test could leak into this one's change list.
 				(repo.state.untrackedChanges ?? []).length === 0,
@@ -624,6 +652,100 @@ suite('SCM change navigation E2E', () => {
 		assertViewportMonotonic(secondUp, 'up', 'second untracked previous');
 		// stepping never leaves the file
 		assert.strictEqual(activeTabPath(), wsUri('zz_new.txt').path);
+	});
+
+	test('plain merge-conflict view: next/previous traverse blocks and roll across files', async () => {
+		const config = vscode.workspace.getConfiguration('git');
+		const previousMergeEditor = config.inspect<boolean>('mergeEditor')?.globalValue;
+		const firstRel = 'committed/mod_a.txt';
+		const secondRel = 'committed/mod_d.txt';
+		const firstConflictStarts = [2, 10, 18];
+		const firstWorking = [
+			'context before',
+			'more context',
+			'<<<<<<< HEAD',
+			'ours one',
+			'=======',
+			'theirs one',
+			'>>>>>>> topic',
+			'between one and two',
+			'more between',
+			'more between',
+			'<<<<<<< HEAD',
+			'ours two',
+			'=======',
+			'theirs two',
+			'>>>>>>> topic',
+			'between two and three',
+			'more between',
+			'more between',
+			'<<<<<<< HEAD',
+			'ours three',
+			'=======',
+			'theirs three',
+			'>>>>>>> topic',
+			'context after'
+		].join('\n');
+		const secondConflictStart = 3;
+		const secondWorking = [
+			'other context',
+			'more other context',
+			'even more context',
+			'<<<<<<< HEAD',
+			'ours four',
+			'=======',
+			'theirs four',
+			'>>>>>>> topic',
+			'other context after'
+		].join('\n');
+
+		try {
+			await config.update('mergeEditor', false, vscode.ConfigurationTarget.Global);
+			createMergeConflict(firstRel, lines(40, 'ours-a'), lines(40, 'theirs-a'), firstWorking);
+			createMergeConflict(secondRel, lines(10, 'ours-d'), lines(10, 'theirs-d'), secondWorking);
+			await refreshUntil(
+				() => isMergeConflict(firstRel) && isMergeConflict(secondRel),
+				'both unresolved files to appear in mergeChanges'
+			);
+
+			// git.openChange is the command behind clicking an unresolved row in Source Control. With the default
+			// merge editor disabled, it must produce the ordinary working-file editor Ethan uses.
+			await vscode.commands.executeCommand('git.openChange', wsUri(firstRel));
+			const editor = await poll(() => {
+				const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+				const visible = visibleEditorFor(wsUri(firstRel));
+				return activeTab?.input instanceof vscode.TabInputText && visible ? visible : undefined;
+			}, 'plain merge-conflict editor to open from Source Control');
+			const beforeFirst = new vscode.Position(0, 0);
+			editor.selection = new vscode.Selection(beforeFirst, beforeFirst);
+
+			await nextChange();
+			await expectCursorAt(firstRel, firstConflictStarts[0]);
+			await vscode.commands.executeCommand('workbench.view.scm'); // navigation remains tab-owned with SCM focus
+			await nextChange();
+			await expectCursorAt(firstRel, firstConflictStarts[1]);
+			await nextChange();
+			await expectCursorAt(firstRel, firstConflictStarts[2]);
+
+			await previousChange();
+			await expectCursorAt(firstRel, firstConflictStarts[1]);
+			await previousChange();
+			await expectCursorAt(firstRel, firstConflictStarts[0]);
+
+			await nextChange();
+			await expectCursorAt(firstRel, firstConflictStarts[1]);
+			await nextChange();
+			await expectCursorAt(firstRel, firstConflictStarts[2]);
+			await nextChange();
+			await expectActiveTab(secondRel);
+			await expectCursorAt(secondRel, secondConflictStart);
+
+			await previousChange();
+			await expectActiveTab(firstRel);
+			await expectCursorAt(firstRel, firstConflictStarts[2]);
+		} finally {
+			await config.update('mergeEditor', previousMergeEditor, vscode.ConfigurationTarget.Global);
+		}
 	});
 
 	test('reveal from an out-of-workspace worktree diff adds its root and opens the editable file', async () => {

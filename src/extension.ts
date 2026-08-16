@@ -1827,6 +1827,102 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
     await vscode.commands.executeCommand("vscode.diff", left, right, title, { preview: true });
 };
 
+type PlainMergeConflictBlock = {
+    startLine: number;
+    endLine: number;
+};
+
+// Parse the same standard conflict-marker form recognised by VS Code's built-in merge-conflict extension.
+// Deliberately require a complete start/separator/end sequence: marker-looking text or a partially edited group
+// must not become a review target.
+const plainMergeConflictBlocks = (document: vscode.TextDocument): PlainMergeConflictBlock[] => {
+    const blocks: PlainMergeConflictBlock[] = [];
+    let startLine: number | undefined;
+    let sawSeparator = false;
+    for (let line = 0; line < document.lineCount; line++) {
+        const text = document.lineAt(line).text;
+        if (startLine === undefined) {
+            if (text.startsWith("<<<<<<<")) {
+                startLine = line;
+                sawSeparator = false;
+            }
+            continue;
+        }
+        if (text === "=======") {
+            sawSeparator = true;
+            continue;
+        }
+        if (sawSeparator && text.startsWith(">>>>>>>")) {
+            blocks.push({ startLine, endLine: line });
+            startLine = undefined;
+            sawSeparator = false;
+        }
+    }
+    return blocks;
+};
+
+// THE STRUCTURAL GATE for the ordinary Source Control merge-conflict view. With git.mergeEditor=false VS Code
+// opens an unresolved file as a plain TabInputText, where compareEditor.nextChange cannot operate. Resolve the
+// exact editor owned by the active tab — never activeTextEditor, which can still point at a stale file while SCM
+// owns focus — and require Git's live mergeChanges state so ordinary files containing marker text are excluded.
+const plainMergeConflictEditor = (): vscode.TextEditor | undefined => {
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (!(tab?.input instanceof vscode.TabInputText) || tab.input.uri.scheme !== "file") {
+        return undefined;
+    }
+    if (!isMergeConflictFileUri(tab.input.uri)) {
+        return undefined;
+    }
+    const key = tab.input.uri.toString();
+    return vscode.window.visibleTextEditors.find((editor) => editor.document.uri.toString() === key);
+};
+
+// Treat every complete marker group as one normal review change. There is intentionally no within-file wrap:
+// false at the requested edge hands control to Better Git's existing cross-file sequence.
+const stepPlainMergeConflict = (editor: vscode.TextEditor, direction: "down" | "up"): boolean => {
+    const blocks = plainMergeConflictBlocks(editor.document);
+    const cursorLine = editor.selection.active.line;
+    const target = direction === "down"
+        ? blocks.find((block) => block.startLine > cursorLine)
+        : [...blocks].reverse().find((block) => block.endLine < cursorLine);
+    if (!target) {
+        return false;
+    }
+    const position = new vscode.Position(target.startLine, 0);
+    editor.selection = new vscode.Selection(position, position);
+    const end = new vscode.Position(target.endLine, editor.document.lineAt(target.endLine).text.length);
+    editor.revealRange(new vscode.Range(position, end), vscode.TextEditorRevealType.Default);
+    return true;
+};
+
+// Make cross-file conflict transitions match ordinary diff transitions: forward review lands on the first block
+// and backward review lands on the last. The retry runs only for an entry Git already marks unresolved, so normal
+// diff navigation never pays this rendering wait.
+const landPlainMergeConflictTarget = async (
+    entry: FileChange,
+    direction: "down" | "up",
+): Promise<boolean> => {
+    if (!isMergeConflictFileUri(entry.uri)) {
+        return false;
+    }
+    for (let i = 0; i < 8; i++) {
+        const editor = plainMergeConflictEditor();
+        if (editor && editor.document.uri.path.toLowerCase() === entry.uri.path.toLowerCase()) {
+            const blocks = plainMergeConflictBlocks(editor.document);
+            const target = direction === "down" ? blocks[0] : blocks[blocks.length - 1];
+            if (target) {
+                const position = new vscode.Position(target.startLine, 0);
+                editor.selection = new vscode.Selection(position, position);
+                const end = new vscode.Position(target.endLine, editor.document.lineAt(target.endLine).text.length);
+                editor.revealRange(new vscode.Range(position, end), vscode.TextEditorRevealType.Default);
+            }
+            return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    return false; // detailed merge editor or render failure: preserve the existing fallback behavior
+};
+
 const openFirstFile = async () => {
     const shouldOpenScmView = vscode.workspace.getConfiguration("better-git-vscode").get("shouldOpenScmView");
     if (shouldOpenScmView) {
@@ -1855,6 +1951,7 @@ const openFirstFile = async () => {
             : "next: no active file context -> no unstaged changes; picking first staged file",
     );
     await openChangeEntry(target);
+    await landPlainMergeConflictTarget(target, "down");
 };
 
 const openLastFile = async () => {
@@ -1944,6 +2041,9 @@ const landNewFileTargetAtBottom = async (entry: FileChange): Promise<boolean> =>
 // one helper prevents openPreviousFile, openLastFile, and stage-and-previous from drifting into three subtly
 // different behaviours again.
 const landChangeForBackwardReview = async (entry: FileChange): Promise<void> => {
+    if (await landPlainMergeConflictTarget(entry, "up")) {
+        return;
+    }
     if (await landNewFileTargetAtBottom(entry)) {
         return;
     }
@@ -1995,7 +2095,9 @@ const openNextFile = async () => {
     if (!isPreview) {
         await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
     }
-    await openChangeEntry(fileChanges[nextIndex]);
+    const target = fileChanges[nextIndex];
+    await openChangeEntry(target);
+    await landPlainMergeConflictTarget(target, "down");
 };
 
 const openPreviousFile = async () => {
@@ -3062,6 +3164,17 @@ const goToNextDiffOnce = async () => {
         return;
     }
 
+    // PLAIN MERGE-CONFLICT MODE: the ordinary Source Control view is a single working-file editor, not a
+    // compare editor. Step complete marker blocks directly; after the final block, continue to the next file.
+    const mergeConflictEditor = plainMergeConflictEditor();
+    if (mergeConflictEditor) {
+        if (stepPlainMergeConflict(mergeConflictEditor, "down")) {
+            return;
+        }
+        await openNextFile();
+        return;
+    }
+
     // NEW-FILE SCROLL MODE: for a brand-new file shown as a PLAIN editor (whole file is one new-diff with
     // no original side), step DOWN newFileNavLineJump lines to page through it; at the bottom fall through
     // to the next changed file. newFileScrollEditor() is the strict v1.2.1 gate — it both DECIDES (plain
@@ -3135,6 +3248,17 @@ const goToPreviousDiffOnce = async () => {
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath (see goToNextDiff).
     if (!(await activeNavFilePath())) {
         await openLastFile();
+        return;
+    }
+
+    // PLAIN MERGE-CONFLICT MODE, mirrored for upward review. A block is one change; exhausting the first block
+    // enters the previous file at its final reviewable position.
+    const mergeConflictEditor = plainMergeConflictEditor();
+    if (mergeConflictEditor) {
+        if (stepPlainMergeConflict(mergeConflictEditor, "up")) {
+            return;
+        }
+        await openPreviousFile();
         return;
     }
 
@@ -3536,14 +3660,9 @@ async function smartNavigate(direction: "forward" | "back") {
         //      (getFileChanges includes mergeChanges). Match a plain file: editor whose path is SPECIFICALLY in
         //      mergeChanges (isMergeConflictFileUri, NOT the general isChangeFileUri) so an ordinary modified file
         //      opened in a plain editor is still deliberately excluded from mouse change-nav (same intent as case 3).
-        let isPlainMergeFileView = false;
-        if (
+        const isPlainMergeFileView =
             !isDiff && !isNewFileView && !isDeletedFileView && !isMergeView && !isBinaryChangeView &&
-            input instanceof vscode.TabInputText && input.uri.scheme === "file"
-        ) {
-            const resolved = toFilePathUri(input.uri);
-            isPlainMergeFileView = resolved ? isMergeConflictFileUri(resolved) : false;
-        }
+            plainMergeConflictEditor() !== undefined;
         inReview = isDiff || isNewFileView || isDeletedFileView || isMergeView || isBinaryChangeView || isPlainMergeFileView;
     } catch {
         // Defensive fallback: on a very old host where TabInputTextDiff doesn't exist (or newFileScrollEditor

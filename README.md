@@ -5,7 +5,7 @@
 <h1 align="center">Better Git VS Code</h1>
 
 <p align="center">
-  <b>Fast, keyboard-driven Git review for the agentic age.</b>
+  <b>Fast, keyboard-driven Git change review in VS Code.</b>
 </p>
 
 <p align="center">
@@ -51,6 +51,10 @@ If the repository has staged changes, only the staged diff is used. With nothing
 VS Code's literal sparkle inside the right edge of the commit-message box belongs to the proposed `scm/inputBox` API, which Marketplace extensions are not permitted to use. Better Git therefore puts its AI sparkle in the nearest supported Source Control surfaces instead of patching VS Code or hijacking Copilot's command. If VS Code cannot find a CLI, set **Codex Executable Path** (`better-git-vscode.codexExecutablePath`) or **Claude Executable Path** (`better-git-vscode.claudeExecutablePath`) to its absolute path.
 
 ## Review edge cases without leaving the keyboard
+
+### Move through plain merge conflicts as normal changes
+
+Click an unresolved file in Source Control with VS Code's detailed Merge Editor disabled and Better Git treats every complete `<<<<<<<` / `=======` / `>>>>>>>` block as one review change. Next and Previous move down and up between those blocks even while Source Control has focus. At either edge they continue into the adjacent changed file, landing on its first or last reviewable change just like an ordinary diff.
 
 ### Read every line of brand-new files
 
@@ -111,8 +115,8 @@ All bindings ship as defaults and are fully overridable (see below).
 | Reveal current file in Explorer | `Alt+R` | `Alt+R` |
 | Open changes at cursor/scroll + Source Control | `Ctrl+Shift+G` | `Ctrl+Shift+G` |
 
-> **Next / previous change** walks hunk-to-hunk through the current diff, pages through
-> brand-new files a few lines at a time, and rolls over to the next/previous changed file
+> **Next / previous change** walks hunk-to-hunk through the current diff, block-to-block through
+> plain merge conflicts, pages through brand-new files, and rolls over to the next/previous changed file
 > at either end. It's the one pair of keys you need for most reviews. (Before v1.2.5 these
 > keys pointed at the *smart forward/back* mouse commands, whose in-diff direction is
 > deliberately reversed for mouse thumb-buttons — which made keyboard `>` / `<` navigate

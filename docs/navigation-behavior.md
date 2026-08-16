@@ -6,6 +6,8 @@ Better Git VS Code treats change review as one continuous, reversible sequence. 
 
 The current caret is the review position. Every press starts from that position; the viewport is used only to present it. Better Git VS Code does not keep a separate forward/backward state machine that can drift away from what the user is reading.
 
+An unresolved file opened from Source Control as a plain editor follows that same sequence. Better Git VS Code parses complete standard conflict-marker groups and treats each `<<<<<<<` / `=======` / `>>>>>>>` group as one change. Next selects the following block; Previous selects the preceding block. The blocks do not wrap inside the file: exhausting an edge rolls into the adjacent changed file, with forward navigation landing on its first block and backward navigation landing on its last. Git's live `mergeChanges` state and the active tab's exact visible editor form the gate, so marker-like text in an ordinary file and a stale focused editor cannot enter this mode.
+
 For a brand-new file, Next and Previous move by the configured logical-line step (five lines by default):
 
 1. Compute `caret ± step`.
@@ -28,9 +30,10 @@ The stable implementation uses editor-scoped `TextEditor.revealRange` calls, kee
 
 ## Regression coverage
 
-The isolated real VS Code Extension Development Host suite covers 41 scenarios, including:
+The isolated real VS Code Extension Development Host suite covers 42 navigation scenarios, including:
 
 - repeated Next and Previous in wrapped untracked and staged-new files;
+- a Source Control-opened plain merge-conflict file, including block traversal with SCM focus and cross-file landing in both directions;
 - partial final steps at the top and bottom before cross-file rollover;
 - direction reversal from the current caret;
 - rapid queued input while Source Control retains focus;

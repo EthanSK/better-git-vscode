@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.54] — plain merge conflicts navigate like normal changes
+
+- **Made the ordinary Source Control conflict view keyboard-navigable.** With the detailed Merge Editor disabled, Next and Previous now move between complete conflict-marker blocks in the plain working-file editor instead of immediately skipping to another file.
+- **Kept conflict review in the normal file sequence.** Reaching the final or first conflict rolls into the adjacent changed file, and entering another plain conflict lands on its first or last block in the matching direction—even while Source Control retains focus.
+- **Restored the full Better Git VS Code identity.** The current Marketplace subtitle and package keywords no longer use the mistaken agentic branding; the extension, repository, namespace, and canonical project path remain Better Git VS Code.
+
 ## [1.2.53] — Undo Stage follows every staging route
 
 - **Made Undo Stage independent of the staging button.** Better Git now observes exact Git-index tree transitions, so F16 can undo a stage performed through Better Git, VS Code's keyboard or Source Control UI, another mouse control, or `git add`.
@@ -166,7 +172,7 @@
 ## [1.2.27] — Better Git VS Code
 
 - **Restored the original Better Git VS Code identity everywhere.** The Marketplace identifier remains `EthanSK.better-git-vscode`, command and setting IDs remain `better-git-vscode.*`, and the repository, documentation, runtime strings, test fixtures, and active personal shortcuts all use the established name again.
-- **Kept the new Marketplace subtitle:** “Fast, keyboard-driven Git review for the agentic age.” The clearer README structure, SCM category, AI-review keywords, contributor guide, and navigation behavior documentation are also retained.
+- **Kept the refreshed Marketplace presentation.** The clearer README structure, SCM category, AI-review keywords, contributor guide, and navigation behavior documentation are also retained.
 - **The temporary alternate Marketplace identity was withdrawn.** Microsoft’s pending request to deprecate the established listing was cancelled before it could be applied; the original listing remains the maintained update path for existing users.
 - **Review behavior is unchanged from v1.2.26.** The caret-owned navigation contract, exact final-edge presentation, reversible stepping, restart collapse behavior, and all 35 real Extension Development Host regressions remain intact.
 

@@ -1,6 +1,7 @@
 .github/**
 .vscode/**
 .agents/**
+.outstanding-items/**
 .git
 AGENTS.md
 scripts/**

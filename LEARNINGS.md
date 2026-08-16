@@ -32,6 +32,15 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-08-16T18:09:00Z
+**Trigger:** Ethan 2026-08-16: plain merge-conflict files opened from Source Control should move up and down through conflict blocks like normal change navigation; keep the project at the canonical Better Git VS Code path on `main`, remove the mistaken agentic branding, and release it.
+**Symptom:** With VS Code's detailed Merge Editor disabled, Better Git recognised the plain unresolved working-file tab as review context but the first Next/Previous press skipped to another changed file instead of selecting a `<<<<<<<` / `=======` / `>>>>>>>` block.
+**Root cause:** Review-view detection and movement were only half-connected. `mergeChanges` made the plain tab visible to Better Git, but `goToNextDiffOnce` and `goToPreviousDiffOnce` still invoked `workbench.action.compareEditor.*Change`, which cannot move in a single-file text editor. Its unchanged caret was then interpreted as end-of-file. VS Code's built-in `merge-conflict.next`/`previous` commands were not a suitable substitute because they wrap within the file or show an edge message instead of handing rollover to Better Git's continuous file sequence.
+**Fix:** v1.2.54 uses one active-tab/Git-state gate for the ordinary conflict view, parses only complete standard marker groups, treats each group as one review change, and retains Better Git's cross-file rollover. Forward entry lands on the first conflict and backward entry on the last; Source Control focus cannot redirect movement into a stale editor. The current Marketplace subtitle/keywords no longer use the mistaken agentic branding. The canonical `/Users/ethansarif-kattan/Projects/better-git-vscode` worktree is `main`; the misleading clean `better-git-vscode-agentic-undo` linked worktree was removed without touching unrelated worktrees.
+**Guard:** A real unresolved three-stage Git index fixture opens through `git.openChange` with `git.mergeEditor=false`, traverses three blocks down and up while Source Control owns focus, rolls into a second conflicted file at its first block, then rolls backward to the first file's last block. Before the fix the isolated host passed 62 tests and failed only this regression because the first press left the file; after the fix all 63 tests passed. The identity test pins the Better Git VS Code subtitle and rejects the retired `agentic` package keyword. TypeScript, webpack, ESLint, production packaging, VSIX inspection, and the Marketplace verification result are release gates.
+---
+
+---
 **Date:** 2026-08-15T20:30:00Z
 **Trigger:** Ethan asked whether the dedicated Agentic Mouse Undo Stage control would also undo a stage made with another mouse button, VS Code's keyboard/UI, or another route.
 **Symptom:** The v1.2.52 receipt was created only inside Better Git's Stage + Next chokepoint. F16 therefore truthfully reported no recent stage after VS Code or `git add` changed the index.

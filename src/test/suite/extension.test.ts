@@ -15,7 +15,8 @@ suite('Extension Test Suite', () => {
 
 		assert.strictEqual(manifest.name, 'better-git-vscode');
 		assert.strictEqual(manifest.displayName, 'Better Git VS Code');
-		assert.strictEqual(manifest.description, 'Fast, keyboard-driven Git review for the agentic age.');
+		assert.strictEqual(manifest.description, 'Fast, keyboard-driven Git change review in VS Code.');
+		assert.ok(!manifest.keywords.includes('agentic'), 'current Better Git VS Code branding must not use the retired agentic label');
 		assert.strictEqual(manifest.repository?.url, 'https://github.com/EthanSK/better-git-vscode');
 
 		const commandIds = (manifest.contributes?.commands as Array<{ command: string }>).map(item => item.command);
