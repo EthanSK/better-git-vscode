@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.55] — Cmd-Z undoes staging from Source Control
+
+- **Made the Source Control Changes list's unused Undo shortcut useful.** `Cmd+Z` on macOS and `Ctrl+Z` on Windows/Linux now invoke Better Git's exact, fail-closed undo of the latest stage/index transition while that list has focus.
+- **Preserved ordinary editing undo.** The binding is disabled in every text input, including editors and the Source Control commit-message box, so their existing Undo behavior is unchanged.
+- **Kept every existing index-safety boundary.** Undo still requires the saved `HEAD` and current index tree to match the latest receipt before restoring the exact previous index, including partial staging.
+
 ## [1.2.54] — plain merge conflicts navigate like normal changes
 
 - **Made the ordinary Source Control conflict view keyboard-navigable.** With the detailed Merge Editor disabled, Next and Previous now move between complete conflict-marker blocks in the plain working-file editor instead of immediately skipping to another file.
