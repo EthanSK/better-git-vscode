@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.56] — immediate Cmd-Z waits for the latest stage receipt
+
+- **Removed the race between staging and Undo.** Cmd-Z now reads its receipt through the index observer's serialized queue, so every already-notified Git-index transition finishes saving before Undo decides what to restore.
+- **Kept the fix deterministic.** The barrier uses the observer's existing operation order; it adds no delay, polling interval, retry window, or focus-dependent guess.
+- **Preserved exact fail-closed restoration.** Undo still requires matching `HEAD` and index trees, restores the captured previous index exactly, clears the one-shot receipt, and never creates a redo entry.
+
 ## [1.2.55] — Cmd-Z undoes staging from Source Control
 
 - **Made the Source Control Changes list's unused Undo shortcut useful.** `Cmd+Z` on macOS and `Ctrl+Z` on Windows/Linux now invoke Better Git's exact, fail-closed undo of the latest stage/index transition while that list has focus.

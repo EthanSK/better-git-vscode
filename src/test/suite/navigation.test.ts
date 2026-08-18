@@ -1765,7 +1765,7 @@ suite('SCM change navigation E2E', () => {
 		);
 	});
 
-	test('undo observes a stage performed by VS Code built-in Git rather than Better Git', async () => {
+	test('undo waits for a stage performed by VS Code built-in Git rather than Better Git', async () => {
 		const content = lines(24, 'mod_a').split('\n');
 		content[8] = 'mod_a BUILT-IN GIT STAGE line 9';
 		write('committed/mod_a.txt', content.join('\n') + '\n');
@@ -1775,8 +1775,11 @@ suite('SCM change navigation E2E', () => {
 		// No explicit resource argument is the real keyboard/Command Palette path:
 		// vscode.git resolves the active file to its internal SCM resource and stages it.
 		await vscode.commands.executeCommand('git.stage');
-		await refreshUntil(() => inIndex('committed/mod_a.txt', 0), 'VS Code built-in stage to reach the index');
-		await extensionApi.whenStageTransactionsSettled();
+		assert.strictEqual(
+			git('diff --cached --name-only'),
+			'committed/mod_a.txt',
+			'VS Code built-in stage did not reach Git before immediate Undo'
+		);
 
 		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 		await refreshUntil(

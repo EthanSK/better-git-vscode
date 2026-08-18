@@ -55,6 +55,18 @@ export class StageTransactionObserver {
         return this.queue;
     }
 
+    /// Read the latest receipt from inside the same serialized queue used by
+    /// vscode.git notifications. This is a real ordering barrier: every index
+    /// transition notified before Undo is guaranteed to finish saving before
+    /// the receipt is returned, without relying on a timer or retry window.
+    async loadLatestReceipt(): Promise<StoredStageTransaction | undefined> {
+        let receipt: StoredStageTransaction | undefined;
+        await this.enqueue(async () => {
+            receipt = await this.store.load();
+        });
+        return receipt;
+    }
+
     /// Run an index mutation that must update the observer baseline without
     /// becoming a new undo receipt. This is used by the Undo command itself.
     async runSuppressed<T>(repoRoot: string, operation: () => Promise<T>): Promise<T> {

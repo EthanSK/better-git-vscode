@@ -260,7 +260,9 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
 // staged file; refusing after any intervening change prevents this command from
 // silently removing newer staged work.
 const undoLastStageTransaction = async (): Promise<void> => {
-    const transaction = await stageTransactionStore?.load();
+    const transaction = stageTransactionObserver
+        ? await stageTransactionObserver.loadLatestReceipt()
+        : await stageTransactionStore?.load();
     if (!transaction) {
         vscode.window.showInformationMessage("Better Git: There is no recent stage/index change to undo.");
         return;

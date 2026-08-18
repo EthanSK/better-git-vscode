@@ -47,6 +47,44 @@ suite("StageTransactionObserver", () => {
         assert.ok(receipt?.recordedAt);
     });
 
+    test("loads the receipt only after an already-notified transition settles", async () => {
+        const root = "/tmp/external-stage-race";
+        let readCount = 0;
+        let releaseTransitionRead: (() => void) | undefined;
+        let markTransitionReadStarted: (() => void) | undefined;
+        const transitionReadStarted = new Promise<void>((resolve) => {
+            markTransitionReadStarted = resolve;
+        });
+        const transitionReadGate = new Promise<void>((resolve) => {
+            releaseTransitionRead = resolve;
+        });
+        const subject = new StageTransactionObserver(store, async () => {
+            readCount += 1;
+            if (readCount === 1) {
+                return { headTree: "head", indexTree: "before" };
+            }
+            markTransitionReadStarted?.();
+            await transitionReadGate;
+            return { headTree: "head", indexTree: "after" };
+        });
+
+        await subject.prepare(root);
+        subject.notify(root);
+        await transitionReadStarted;
+
+        const receiptPromise = subject.loadLatestReceipt();
+        const resolvedBeforeTransition = await Promise.race([
+            receiptPromise.then(() => true),
+            new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
+        ]);
+        assert.strictEqual(resolvedBeforeTransition, false);
+
+        releaseTransitionRead?.();
+        const receipt = await receiptPromise;
+        assert.strictEqual(receipt?.beforeIndexTree, "before");
+        assert.strictEqual(receipt?.afterIndexTree, "after");
+    });
+
     test("upgrades an already-observed transition with Better Git file identity", async () => {
         const root = "/tmp/better-git-stage";
         snapshots.set(root, { headTree: "head", indexTree: "before" });

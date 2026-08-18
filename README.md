@@ -162,7 +162,7 @@ setup the author uses.
 | **Forward** (thumb front) | `F17` | `better-git-vscode.smart-forward` | In a review view: **previous** change. Elsewhere: browser Forward. |
 | (extra button) | `F18` | `better-git-vscode.stage-and-next-changed-file` | Stage current file **+ next** change. |
 | (extra button) | `F19` | `better-git-vscode.stage-and-previous-changed-file` | Stage current file **+ previous** change. |
-| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo the latest stage/index transition, whether it came from Better Git, VS Code's keyboard/UI, another mouse button, or `git add`. |
+| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo the latest stage/index transition, waiting for any already-notified index observation before reading its receipt. |
 
 **Why the "smart" commands are dual-mode.** `smart-back` / `smart-forward` detect whether you're in a
 diff/review view (a diff, a brand-new/untracked file, a deleted file, a merge-conflict editor, or a
