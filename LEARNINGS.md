@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-08-18T16:22:00Z
+**Trigger:** Ethan asked for `Cmd+Z` to undo the most recent stage and clarified that the intended location was Source Control focus, where VS Code currently performs no undo.
+**Symptom:** Better Git already recorded and exactly reversed the latest stage/index transition, but its undo command had no ordinary keyboard default; the Source Control Changes list's `Cmd+Z` / `Ctrl+Z` resolved to VS Code's generic Undo command and performed no action.
+**Root cause:** Git-index transitions cannot be inserted into VS Code's public editor undo/redo stack. However, VS Code's supported keybinding context keys distinguish the focused Source Control Changes view from editors and input controls, so the existing Better Git command can safely own only the list's unused shortcut.
+**Fix:** v1.2.55 contributes `Cmd+Z` on macOS and `Ctrl+Z` elsewhere to `better-git-vscode.undo-last-stage-and-advance` only when `focusedView == workbench.scm && !inputFocus`. Editors and the Source Control commit-message box retain normal Undo.
+**Commit:** 0940822cbb253238ddb31c2b70442cf8795a1622 (release in progress).
+**Guard:** A real VS Code 1.133 Extension Development Host asserts the exact contributed key, command, and `when` clause, then exercises the existing exact-index undo through Better Git and VS Code staging routes, latest-transition selection, partial-index restoration, and post-commit refusal. The first full host run passed 61/63 with two unrelated renderer/model-disposal timeouts; the immediate rerun passed 63/63. TypeScript, webpack, ESLint, `git diff --check`, the clean nine-file VSIX archive, packaged-manifest v1.2.55 keybinding, and byte-identical production bundle passed. The pre-publication VSIX SHA-256 is `fe7e33e35f7063eeb0c6962b3356c50c4011b2abaeb37d8bbac928f1eef0afb8`.
+---
+
+---
 **Date:** 2026-08-16T18:09:00Z
 **Trigger:** Ethan 2026-08-16: plain merge-conflict files opened from Source Control should move up and down through conflict blocks like normal change navigation; keep the project at the canonical Better Git VS Code path on `main`, remove the mistaken agentic branding, and release it.
 **Symptom:** With VS Code's detailed Merge Editor disabled, Better Git recognised the plain unresolved working-file tab as review context but the first Next/Previous press skipped to another changed file instead of selecting a `<<<<<<<` / `=======` / `>>>>>>>` block.
