@@ -349,6 +349,7 @@ suite('SCM change navigation E2E', () => {
 		const extension = vscode.extensions.getExtension<any>('EthanSK.better-git-vscode')!;
 		const contributedCommands = extension.packageJSON.contributes.commands as Array<{ command: string }>;
 		const menus = extension.packageJSON.contributes.menus as Record<string, Array<Record<string, string>>>;
+		const keybindings = extension.packageJSON.contributes.keybindings as Array<Record<string, string>>;
 
 		const openIndexCommand = 'better-git-vscode.open-index-in-system-browser';
 		const copyWorktreeNameCommand = 'better-git-vscode.copy-worktree-name';
@@ -425,6 +426,19 @@ suite('SCM change navigation E2E', () => {
 			menus['scm/inputBox'],
 			undefined,
 			"Marketplace extensions cannot use VS Code's proposed scm/inputBox contribution"
+		);
+		assert.deepStrictEqual(
+			keybindings.find(
+				({ command, mac }) =>
+					command === 'better-git-vscode.undo-last-stage-and-advance' && mac === 'cmd+z'
+			),
+			{
+				command: 'better-git-vscode.undo-last-stage-and-advance',
+				key: 'ctrl+z',
+				mac: 'cmd+z',
+				when: 'focusedView == workbench.scm && !inputFocus'
+			},
+			'Cmd/Ctrl+Z must replace only the Source Control Changes list no-op, never editor or commit-input undo'
 		);
 		assert.strictEqual(
 			extension.packageJSON.contributes.configuration.properties['better-git-vscode.commitMessageProvider'],

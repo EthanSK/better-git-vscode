@@ -111,6 +111,7 @@ All bindings ship as defaults and are fully overridable (see below).
 | Previous changed file | `Cmd+Alt+,` | `Ctrl+Alt+,` |
 | Stage current file + next change | `Shift+Alt+.` | `Shift+Alt+.` |
 | Stage current file + previous change | `Shift+Alt+,` | `Shift+Alt+,` |
+| Undo latest stage while Source Control Changes has focus | `Cmd+Z` | `Ctrl+Z` |
 | Revert selected change and save | `Alt+Q`* | `Alt+Q`* |
 | Reveal current file in Explorer | `Alt+R` | `Alt+R` |
 | Open changes at cursor/scroll + Source Control | `Ctrl+Shift+G` | `Ctrl+Shift+G` |
@@ -132,6 +133,10 @@ All bindings ship as defaults and are fully overridable (see below).
 > opened the panel) to *also* open the current file's changes (diff) at the exact cursor and
 > scroll position you were viewing first, then show Source Control. Override it like any other
 > binding if you want the original behaviour back.
+
+> **`Cmd+Z` / `Ctrl+Z` in the Source Control Changes list** exactly undoes the latest observed
+> stage/index transition. The binding applies only while that list owns focus and no text input
+> is active. Editors and the Source Control commit-message box keep their normal text Undo behavior.
 
 The **`+` button in the editor title bar** now **stages the current file _and_ advances** to the
 next change — in whatever direction you last navigated. Jump forward through changes (`>` / `Alt+.`)
