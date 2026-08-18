@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-08-18T17:33:08Z
+**Trigger:** Ethan reported that Source Control `Cmd+Z` worked but was not reliable, then asked for a simple non-guessy fix and release.
+**Symptom:** A rapid Undo after a stage observed through vscode.git could load global storage before the observer finished reading and saving the new index transition. It could therefore report no receipt or inspect the previous global receipt instead of the transition the user had just made.
+**Root cause:** `StageTransactionObserver.notify()` correctly serialized vscode.git state events through its promise queue, but `undoLastStageTransaction()` loaded `StageTransactionStore` directly. The consumer bypassed the producer's queue, so receipt persistence and receipt consumption had no happens-before relationship.
+**Fix:** v1.2.56 adds `StageTransactionObserver.loadLatestReceipt()`, which enqueues the store read behind every notification already accepted by the observer. Undo uses that method whenever the observer is active, with the direct store read retained only as the no-observer fallback. The fix uses the existing serialization order and adds no timer, polling, retry window, or guessed delay.
+**Commit:** pending.
+**Guard:** A focused observer regression blocks the notified transition's snapshot read, starts `loadLatestReceipt()`, proves the load cannot resolve early, releases the snapshot, and then requires the exact before/after receipt. Before the fix TypeScript failed because the ordering-barrier API did not exist; after the fix all six focused observer tests passed. The real VS Code 1.133 host stages through the built-in Git command, verifies the index directly, invokes Undo immediately without the former test-side `whenStageTransactionsSettled()` call, and restores the working change; the complete host suite passed 64/64.
+---
+
+---
 **Date:** 2026-08-18T16:22:00Z
 **Trigger:** Ethan asked for `Cmd+Z` to undo the most recent stage and clarified that the intended location was Source Control focus, where VS Code currently performs no undo.
 **Symptom:** Better Git already recorded and exactly reversed the latest stage/index transition, but its undo command had no ordinary keyboard default; the Source Control Changes list's `Cmd+Z` / `Ctrl+Z` resolved to VS Code's generic Undo command and performed no action.
