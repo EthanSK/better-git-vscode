@@ -501,6 +501,9 @@ interface ScmTreeStartupOutcome {
 interface BetterGitExtensionApi {
     whenScmTreeStateSettled: Promise<ScmTreeStartupOutcome>;
     whenStageTransactionsSettled(): Promise<void>;
+    whenReviewDecorationSettled(): Promise<void>;
+    getCurrentReviewUri(): string | undefined;
+    getReviewDecorationBadge(uri: vscode.Uri): string | vscode.ThemeIcon | undefined;
     getScmTreeCommandTrace(): readonly string[];
 }
 
@@ -744,7 +747,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         //    handles diff / merge / new-file / deleted / binary review tabs, and — crucially for Ethan's flow —
         //    still resolves when keyboard focus is in the SCM panel so activeTextEditor is stale/undefined). Fall
         //    back to the focused text editor for a plainly-opened file.
-        const fileUri = currentReviewFileUri() ?? vscode.window.activeTextEditor?.document.uri;
+        const fileUri = await currentReviewFileUriAsync() ?? vscode.window.activeTextEditor?.document.uri;
         if (!fileUri) {
             vscode.window.showInformationMessage("Better Git: No active file to resolve a git worktree from.");
             return;
@@ -1023,12 +1026,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
     });
 
-    // OVERLAY (supported API, no patching): badge the file currently open as a diff with a "▶" marker via a
+    // OVERLAY (supported API, no patching): badge the file currently under review with the configurable
+    // double-fire marker via a
     // FileDecorationProvider. The badge renders on the row in the built-in Source Control panel (and the
     // Explorer/tabs), giving a "you are here" indicator on the real Git rows. Caveat: decorations key on the
     // file URI, so a partially-staged (dual-state) file gets the badge on BOTH its staged and unstaged rows.
     const reviewDecoEmitter = new vscode.EventEmitter<vscode.Uri[]>();
-    let currentReviewUri: vscode.Uri | undefined; // file: URI of the file currently shown as a diff
+    let currentReviewUri: vscode.Uri | undefined; // file: URI of the file currently shown in a review view
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
         onDidChangeFileDecorations: reviewDecoEmitter.event,
         provideFileDecoration(uri) {
@@ -1059,10 +1063,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         },
     };
     // Recompute the current review file whenever the active editor/tab changes, and refresh the decoration
-    // for both the old and new file so the badge moves with you.
-    const refreshReviewDecoration = () => {
+    // for both the old and new file so the badge moves with you. Resolution is async because current VS Code
+    // exposes some non-text diffs (notably modified images) as an active Tab with no public `input` resource.
+    const applyReviewDecorationUri = (next: vscode.Uri | undefined) => {
         const prev = currentReviewUri;
-        currentReviewUri = currentReviewFileUri();
+        currentReviewUri = next;
         const changed: vscode.Uri[] = [];
         if (prev) {
             changed.push(prev);
@@ -1073,6 +1078,36 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (changed.length > 0) {
             reviewDecoEmitter.fire(changed);
         }
+    };
+
+    // Coalesce rapid tab/editor events without losing the last one. A second request received while an image
+    // path lookup is using the clipboard is resolved in a fresh loop iteration after that lookup finishes; it
+    // never reuses the previous tab's in-flight result. The tab identity check inside the async resolver is the
+    // final stale-result guard.
+    let reviewDecorationRefreshRequest = 0;
+    let reviewDecorationRefreshRunning = false;
+    let reviewDecorationRefreshPromise: Promise<void> = Promise.resolve();
+    const refreshReviewDecoration = (): Promise<void> => {
+        reviewDecorationRefreshRequest++;
+        if (reviewDecorationRefreshRunning) {
+            return reviewDecorationRefreshPromise;
+        }
+        reviewDecorationRefreshRunning = true;
+        reviewDecorationRefreshPromise = (async () => {
+            let handledRequest = -1;
+            while (handledRequest !== reviewDecorationRefreshRequest) {
+                handledRequest = reviewDecorationRefreshRequest;
+                const next = await currentReviewFileUriAsync();
+                // Only the latest request may move/clear the badge. If another event arrived during the await,
+                // loop once more and resolve that newer active tab instead.
+                if (handledRequest === reviewDecorationRefreshRequest) {
+                    applyReviewDecorationUri(next);
+                }
+            }
+        })().finally(() => {
+            reviewDecorationRefreshRunning = false;
+        });
+        return reviewDecorationRefreshPromise;
     };
 
     // CLICK TARGET for the status bar item: reopen the diff of the last file staged via the extension, so
@@ -1129,6 +1164,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 lastStagedStatusBarItem.hide();
             }
         }
+        if (e.affectsConfiguration("better-git-vscode.currentFileBadge") && currentReviewUri) {
+            // The provider reads the setting lazily; firing the active URI makes a changed badge/empty toggle
+            // repaint immediately rather than waiting for the next editor switch.
+            reviewDecoEmitter.fire([currentReviewUri]);
+        }
     });
 
     // Default/off activation resolves synchronously without touching Source Control. The only enabled startup
@@ -1150,18 +1190,38 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         reviewDecoEmitter,
         vscode.window.registerFileDecorationProvider(reviewDecorationProvider),
         vscode.window.tabGroups.onDidChangeTabs(() => refreshReviewDecoration()),
-        vscode.window.onDidChangeActiveTextEditor(() => refreshReviewDecoration())
+        vscode.window.tabGroups.onDidChangeTabGroups(() => refreshReviewDecoration()),
+        vscode.window.onDidChangeActiveTextEditor(() => refreshReviewDecoration()),
+        vscode.window.onDidChangeActiveNotebookEditor(() => refreshReviewDecoration())
     );
+
+    // Activation can occur after a review tab is already open, in which case no subsequent editor event is
+    // guaranteed. Seed the provider from the current active tab once instead of waiting for user movement.
+    void refreshReviewDecoration();
 
     return {
         whenScmTreeStateSettled,
         whenStageTransactionsSettled: () => stageTransactionObserver?.settled() ?? Promise.resolve(),
+        whenReviewDecorationSettled: () => reviewDecorationRefreshPromise,
+        getCurrentReviewUri: () => currentReviewUri?.toString(),
+        getReviewDecorationBadge: (uri: vscode.Uri) => {
+            const tokenSource = new vscode.CancellationTokenSource();
+            try {
+                const decoration = reviewDecorationProvider.provideFileDecoration(
+                    uri,
+                    tokenSource.token
+                ) as vscode.FileDecoration | undefined;
+                return decoration?.badge;
+            } finally {
+                tokenSource.dispose();
+            }
+        },
         getScmTreeCommandTrace: () => [...scmTreeCommandTrace],
     };
 }
 
-// Returns the on-disk file: URI of the diff currently open in the active tab (resolving a staged diff's
-// `git:` modified side back to the file path), or undefined when the active tab isn't a diff.
+// Returns the on-disk file: URI represented by every public active-tab review shape (resolving staged `git:`
+// sides back to the file path), or undefined when the public tab input cannot identify a current change.
 // True if the uri is a current change (staged, unstaged, or untracked) in its repo. Used to decide whether to
 // badge a PLAIN-file editor tab: untracked/new files open as a plain file (git.openChange resolves to
 // vscode.open, NOT vscode.diff, because an untracked file has no original side to diff against), so the badge
@@ -1366,6 +1426,12 @@ const currentReviewFileUri = (): vscode.Uri | undefined => {
         // instead of special-casing each git status. (Bug: the badge didn't follow deleted files.)
         return toFilePathUri(input.modified) ?? toFilePathUri(input.original);
     }
+    // Notebook diffs are a separate public tab shape. They still identify original/modified resources, so
+    // resolve them through the same side-agnostic path helper as text diffs. This also covers future notebook
+    // renderers without relying on an active TextEditor (notebook editors do not provide one).
+    if (input instanceof vscode.TabInputNotebookDiff) {
+        return toFilePathUri(input.modified) ?? toFilePathUri(input.original);
+    }
     // A 3-way MERGE editor (git conflict) — recognised via the shared isMergeEditorInput predicate. `result`
     // is the on-disk file being merged. The TabInputTextDiff check above already ran, so this is unambiguous.
     if (isMergeEditorInput(input)) {
@@ -1384,8 +1450,16 @@ const currentReviewFileUri = (): vscode.Uri | undefined => {
             return resolved;
         }
     }
-    // A BINARY / IMAGE change opens as a custom editor (TabInputCustom) — git.openChange renders it via a
-    // custom editor, NOT a text diff/editor (Codex review 2026-07-04, follow-up to the smart-mouse BUG 2).
+    // A newly-added notebook (or a notebook opened without its diff renderer) is a single Notebook tab. Match
+    // it only while its backing file is a real Git change, mirroring the plain-text/custom-editor safeguards.
+    if (input instanceof vscode.TabInputNotebook) {
+        const resolved = toFilePathUri(input.uri);
+        if (resolved && isChangeFileUri(resolved)) {
+            return resolved;
+        }
+    }
+    // Some BINARY / IMAGE changes open as a custom editor (TabInputCustom). Current VS Code also has an opaque
+    // image-comparison shape with no public input; currentReviewFileUriAsync handles that fallback below.
     // Without this branch the shared "which file is under review?" predicate missed binary/image review tabs,
     // so repo selection (getFileChanges) and the late-worktree-collapse protection could pick the wrong repo
     // or yank you off a binary/image diff. Resolve the custom tab's on-disk uri and accept it only when it's an
@@ -1565,7 +1639,7 @@ const getFileChanges = async (preferredUri?: vscode.Uri): Promise<FileChange[]> 
     // Fall back to the first workspace folder's repo, then the shared getPrimaryRepository() (the same
     // "pick the primary repo" predicate the worktree-collapse uses) instead of a raw git.repositories[0].
     // Null-check the result so a still-scanning window returns [] rather than throws.
-    const reviewUri = currentReviewFileUri();
+    const reviewUri = preferredUri ? undefined : await currentReviewFileUriAsync();
     const activeRepo =
         (preferredUri && git.getRepository(preferredUri)) ||
         (reviewUri && git.getRepository(reviewUri)) ||
@@ -1662,10 +1736,14 @@ const getActiveChange = async (): Promise<ActiveChange | null> => {
         }
     }
 
-    // Fallback for genuinely non-textual files (images etc.): path only, side unknown. This is now the ONLY
-    // path that yields staged=null, so the findCurrentIndex ambiguity guard below only ever gates images.
-    const path = await getActiveFilePath();
-    return path ? { path, staged: null } : null;
+    // Fallback for genuinely non-textual files (images/media/future custom diffs): path only, side unknown.
+    // The async shared resolver owns the workbench path fallback and rejects stale/non-change tabs.
+    const reviewUri = await currentReviewFileUriAsync();
+    if (reviewUri) {
+        return { path: reviewUri.path, staged: null };
+    }
+    const activePath = await getActiveFilePath();
+    return activePath ? { path: activePath, staged: null } : null;
 };
 
 // Index of the active change within the list. Matches by normalized path AND staged side when the side is
@@ -1747,15 +1825,15 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
         // live in the separate untracked group and git.openChange(uri) resolves nothing for them — and it
         // does NOT throw, so the catch above never fires and navigation would just... stay put. Verify the
         // active tab actually shows the requested file now; if not, open it directly.
-        // CODEX FIX 2026-07-04 (High): resolve the shown file via the SHARED currentReviewFileUri() predicate,
+        // CODEX FIX 2026-07-04 (High): resolve the shown file via the shared review-file predicate,
         // NOT a local diff/plain-text-only copy. git.openChange legitimately opens a merge conflict as a 3-way
         // merge editor and a binary/image change as a custom editor — neither is a TabInputTextDiff/TabInputText,
         // so the old local check saw "no match" and fell back to showTextDocument(entry.uri), which REPLACED the
         // correct merge/binary view with the raw file (defeating the very merge/binary handling this batch added).
-        // currentReviewFileUri now recognises diff + plain + merge + custom (binary/image) tabs, so the fallback
-        // fires ONLY when the target genuinely didn't open. The common modified-diff path is unchanged (its
-        // TabInputTextDiff branch returns the modified-side path exactly as the old local copy did).
-        const shownUri = currentReviewFileUri();
+        // The async resolver recognises diff + plain + merge + custom + notebook tabs and opaque file-backed
+        // non-text comparisons, so the fallback fires ONLY when the target genuinely didn't open. The common
+        // modified-diff path is unchanged (its TabInputTextDiff branch returns the modified-side file path).
+        const shownUri = await currentReviewFileUriAsync();
         if (!shownUri || shownUri.path.toLowerCase() !== entry.uri.path.toLowerCase()) {
             try {
                 await vscode.window.showTextDocument(entry.uri, { preview: true });
@@ -3477,57 +3555,84 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
 // BUG 13 FIX (v1.2.9): serialize getActiveFilePath so its clipboard save/blank/restore dance can't interleave.
 // The clipboard hack (below) is inherently racy: two concurrent calls (Ethan mashing alt+.) could have call B
 // read the ALREADY-BLANKED clipboard as its "original" and later restore "" — permanently losing his real
-// clipboard. A single in-flight promise makes concurrent callers share ONE dance instead of overlapping.
-let getActiveFilePathInFlight: Promise<string> | undefined;
-const getActiveFilePath = async (): Promise<string> => {
-    if (getActiveFilePathInFlight) {
-        return getActiveFilePathInFlight; // a dance is already running — reuse it rather than starting a racing one
+// VS Code's Tab API exposes no resource at all for some non-text diff editors. In VS Code 1.135, for example,
+// a modified PNG opens as an image comparison whose active Tab has `input === undefined`: it is neither the
+// documented TabInputCustom nor any of the text/notebook inputs. The workbench's Copy Path command still knows
+// the active resource, so this is the last-resort bridge used by image/media/future custom review views.
+//
+// The command writes through the clipboard. Keep that disturbance bounded and serialized, restore the prior
+// value even if the command throws, and never overwrite a clipboard value that changed after the command wrote
+// its result. (The old helper unconditionally restored and could clobber a simultaneous user copy.)
+let copyActiveFilePathInFlight: Promise<string> | undefined;
+const copyActiveFilePathFromWorkbench = async (): Promise<string> => {
+    if (copyActiveFilePathInFlight) {
+        return copyActiveFilePathInFlight;
     }
-    getActiveFilePathInFlight = (async (): Promise<string> => {
-        var activeEditor = vscode.window.activeTextEditor;
-        const currentFilename = activeEditor?.document.uri.path;
-        if (currentFilename) {
-            return currentFilename;
-        }
-
-        // Since there is no API to get details of non-textual files, the following workaround is performed:
-        // 1. Saving the original clipboard data to a local variable.
+    copyActiveFilePathInFlight = (async (): Promise<string> => {
         const originalClipboardData = await vscode.env.clipboard.readText();
-
-        // 2. Populating the clipboard with an empty string
-        await vscode.env.clipboard.writeText("");
-
-        // 3. Calling the copyPathOfActiveFile that populates the clipboard with the source path of the active file.
-        // If there is no active file - the clipboard will not be populated and it will stay with the empty string.
-        await vscode.commands.executeCommand("workbench.action.files.copyPathOfActiveFile");
-
-        // 4. Get the clipboard data after the API call
-        const postAPICallClipboardData = await vscode.env.clipboard.readText();
-
-        // 5. Return the saved original clipboard data to the clipboard so this method
-        // will not interfere with the clipboard's content.
-        await vscode.env.clipboard.writeText(originalClipboardData);
-
-        // 6. Return the clipboard data from the API call (which could be an empty string if it failed).
-        return postAPICallClipboardData;
+        const marker = `__BETTER_GIT_COPY_PATH_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
+        let commandClipboardData = marker;
+        await vscode.env.clipboard.writeText(marker);
+        try {
+            await vscode.commands.executeCommand("workbench.action.files.copyPathOfActiveFile");
+            commandClipboardData = await vscode.env.clipboard.readText();
+            return commandClipboardData === marker ? "" : commandClipboardData;
+        } finally {
+            // Restore only while the clipboard still contains our marker/the command's result. If Ethan copied
+            // something during this tiny window, that newer value owns the clipboard and must survive.
+            const currentClipboardData = await vscode.env.clipboard.readText();
+            if (currentClipboardData === marker || currentClipboardData === commandClipboardData) {
+                await vscode.env.clipboard.writeText(originalClipboardData);
+            }
+        }
     })();
     try {
-        return await getActiveFilePathInFlight;
+        return await copyActiveFilePathInFlight;
     } finally {
-        getActiveFilePathInFlight = undefined; // clear so the NEXT (non-overlapping) press runs a fresh lookup
+        copyActiveFilePathInFlight = undefined;
+    }
+};
+
+const getActiveFilePath = async (): Promise<string> => {
+    const currentFilename = vscode.window.activeTextEditor?.document.uri.path;
+    return currentFilename ?? copyActiveFilePathFromWorkbench();
+};
+
+// Async superset of currentReviewFileUri(). Known text/custom/notebook shapes resolve synchronously. When a
+// host exposes an active file-backed review tab as `unknown`/undefined (the modified-image regression), ask the
+// workbench for its path and accept it only when vscode.git says that exact file is currently changed. The tab
+// identity check prevents a slow clipboard lookup from applying the previous tab's path after a rapid switch.
+const currentReviewFileUriAsync = async (): Promise<vscode.Uri | undefined> => {
+    const direct = currentReviewFileUri();
+    if (direct) {
+        return direct;
+    }
+    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (!activeTab) {
+        return undefined;
+    }
+    try {
+        const activePath = await copyActiveFilePathFromWorkbench();
+        if (!activePath || vscode.window.tabGroups.activeTabGroup.activeTab !== activeTab) {
+            return undefined;
+        }
+        const resolved = vscode.Uri.file(activePath);
+        return isChangeFileUri(resolved) ? resolved : undefined;
+    } catch {
+        return undefined;
     }
 };
 
 // BUG 13 FIX (v1.2.9): the four navigation entry-guards used to call getActiveFilePath() just to ask "is there
 // a file under review?" — but when focus was in the SCM panel (activeTextEditor undefined, common in Ethan's
 // flow) that fired the clipboard save/blank/restore hack on EVERY press, transiently blanking his clipboard.
-// This resolves the active file focus-INDEPENDENTLY from the active TAB first (currentReviewFileUri — the same
-// shared "which file is under review" predicate the nav + badge use), then the focused editor's uri, and only
-// falls back to the clipboard-based getActiveFilePath for genuinely non-textual active files (images — which
-// have neither a diff-tab input nor a text editor). So the common review path never touches the clipboard.
+// This resolves the active file focus-INDEPENDENTLY from the active TAB first (currentReviewFileUriAsync — the
+// same shared "which file is under review" predicate the nav + badge use), then the focused editor's uri, and
+// only falls back to getActiveFilePath when no current Git review shape matched. Public text/custom/notebook
+// inputs never touch the clipboard; opaque image/media comparisons use the bounded workbench-path fallback.
 // Returns undefined only when there is truly nothing open to act on.
 const activeNavFilePath = async (): Promise<string | undefined> => {
-    const fromTab = currentReviewFileUri() ?? vscode.window.activeTextEditor?.document.uri;
+    const fromTab = await currentReviewFileUriAsync() ?? vscode.window.activeTextEditor?.document.uri;
     if (fromTab) {
         return fromTab.path;
     }
@@ -3549,7 +3654,7 @@ const getActiveFileUri = async (): Promise<vscode.Uri | null> => {
     // because getActiveFileUri read activeTextEditor, so the clicked file wasn't found in the list (-1 ->
     // workingTreeChanges[0] top fallback). currentReviewFileUri already resolves a staged git: side to its
     // on-disk file: path, so this also handles a clicked staged row.
-    const fromTab = currentReviewFileUri();
+    const fromTab = await currentReviewFileUriAsync();
     if (fromTab) {
         return fromTab;
     }
@@ -3644,16 +3749,17 @@ async function smartNavigate(direction: "forward" | "back") {
         //      it silently does browser back/forward on a conflict while the keyboard navigates the changeset.
         //      Detected via the SAME shared isMergeEditorInput predicate currentReviewFileUri/getActiveChange use.
         const isMergeView = !isDiff && !isNewFileView && !isDeletedFileView && isMergeEditorInput(input);
-        //   5. BINARY / IMAGE change  -> a TabInputCustom (custom editor) tab (BUG 2, 2026-07-04). git.openChange
-        //      shows an image/binary diff as a custom editor, not TabInputTextDiff/TabInputText, so none of the
-        //      cases above match and the mouse fell through to browser nav — strictly weaker than the keyboard
-        //      (getActiveChange can still resolve the path for it). Resolve the custom tab's on-disk uri and
-        //      require it to be an ACTUAL change (toFilePathUri + isChangeFileUri — the SAME shared predicates)
-        //      so we only treat a real binary CHANGE view as review, never an arbitrary custom-editor tab.
-        let isBinaryChangeView = false;
-        if (!isDiff && !isNewFileView && !isDeletedFileView && !isMergeView && input instanceof vscode.TabInputCustom) {
-            const resolved = toFilePathUri(input.uri);
-            isBinaryChangeView = resolved ? isChangeFileUri(resolved) : false;
+        //   5. NON-TEXT change (image/media/notebook/future custom diff). Older hosts exposed images as
+        //      TabInputCustom, but VS Code 1.135 exposes a modified-image comparison with `tab.input` undefined.
+        //      The async shared resolver handles both public inputs and that workbench-path fallback, then
+        //      requires the exact file to be a live Git change. Deliberately exclude TabInputText here: a normal
+        //      modified file opened for editing is not a review view and must keep browser-history mouse behavior.
+        let isNonTextChangeView = false;
+        if (
+            !isDiff && !isNewFileView && !isDeletedFileView && !isMergeView &&
+            !(input instanceof vscode.TabInputText)
+        ) {
+            isNonTextChangeView = (await currentReviewFileUriAsync()) !== undefined;
         }
         //   6. PLAIN MERGE-CONFLICT file (Codex review 2026-07-04, plain-merge follow-up). Case 4 only catches the
         //      3-way TabInputTextMerge editor, which VS Code opens only when git.mergeEditor=true. With the DEFAULT
@@ -3663,9 +3769,9 @@ async function smartNavigate(direction: "forward" | "back") {
         //      mergeChanges (isMergeConflictFileUri, NOT the general isChangeFileUri) so an ordinary modified file
         //      opened in a plain editor is still deliberately excluded from mouse change-nav (same intent as case 3).
         const isPlainMergeFileView =
-            !isDiff && !isNewFileView && !isDeletedFileView && !isMergeView && !isBinaryChangeView &&
+            !isDiff && !isNewFileView && !isDeletedFileView && !isMergeView && !isNonTextChangeView &&
             plainMergeConflictEditor() !== undefined;
-        inReview = isDiff || isNewFileView || isDeletedFileView || isMergeView || isBinaryChangeView || isPlainMergeFileView;
+        inReview = isDiff || isNewFileView || isDeletedFileView || isMergeView || isNonTextChangeView || isPlainMergeFileView;
     } catch {
         // Defensive fallback: on a very old host where TabInputTextDiff doesn't exist (or newFileScrollEditor
         // throws) the lines above could throw. Fall back to the legacy heuristic — treat it as review only if

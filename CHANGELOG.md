@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.57] — fire badge follows image and non-text review tabs
+
+- **Fixed modified images showing Git's `M` without Better Git's 🔥🔥 current-review badge.** VS Code 1.135 opens a PNG comparison with an active tab whose public `input` is absent, so the old `TabInputCustom`-only image handling could not identify the file.
+- **Unified review-file detection across every editor shape Better Git supports.** Text diffs, plain added/deleted files, merge editors, custom/binary editors, notebook diffs, and opaque file-backed image/media comparisons now feed the same async resolver used by the badge, navigation, staging, repository selection, and open verification.
+- **Made async badge movement race-safe and clipboard-safe.** Rapid tab switches coalesce to the final active file, and the opaque-tab path fallback restores the prior clipboard without overwriting a newer user copy.
+- **Added a real VS Code status matrix.** Modified, staged-modified, untracked, staged-new, deleted, staged-deleted, and renamed images; modified notebooks; clipboard preservation; and rapid image-to-text switching are now required to show the correct 🔥🔥 badge.
+
 ## [1.2.56] — immediate Cmd-Z waits for the latest stage receipt
 
 - **Removed the race between staging and Undo.** Cmd-Z now reads its receipt through the index observer's serialized queue, so every already-notified Git-index transition finishes saving before Undo decides what to restore.

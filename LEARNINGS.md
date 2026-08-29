@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-08-29T21:48:41Z
+**Trigger:** Ethan reported that an image row could show Git's `M` while missing Better Git's 🔥🔥 current-review badge and asked for the same class of omission to be fixed across similar cases.
+**Symptom:** Modified PNG comparisons received no Better Git decoration even though the Source Control row correctly reported the file as modified. Earlier image handling and its tests assumed the active tab would expose `TabInputCustom`.
+**Root cause:** In VS Code 1.135, the active modified-image comparison tab is labelled `image.png ↔ image.png` but its public `tab.input` is literally `undefined`; there is no URI or input constructor for the extension to inspect. Review-file ownership was synchronous and partially duplicated, so a new host tab shape could also diverge across the badge, navigation, staging, repository selection, and open verification.
+**Fix:** v1.2.57 keeps synchronous resolution for text, merge, custom, and notebook inputs, then uses one serialized `workbench.action.files.copyPathOfActiveFile` fallback for opaque file-backed tabs and accepts the result only when vscode.git reports that exact path as a current change. The clipboard operation uses a unique marker, restores on success or failure, and refuses to overwrite a newer user copy. Badge refreshes are async, coalesced, stale-tab guarded, seeded at activation, and shared with every review-file consumer.
+**Commit:** pending.
+**Guard:** A real VS Code 1.135 Extension Development Host requires 🔥🔥 for modified, staged-modified, untracked, staged-new, deleted, staged-deleted, and renamed PNGs plus a modified notebook; it verifies the rename's new path, clipboard preservation, and a rapid image-to-text switch where only the final tab remains decorated. The complete isolated host suite passes 65/65.
+---
+
+---
 **Date:** 2026-08-18T17:33:08Z
 **Trigger:** Ethan reported that Source Control `Cmd+Z` worked but was not reliable, then asked for a simple non-guessy fix and release.
 **Symptom:** A rapid Undo after a stage observed through vscode.git could load global storage before the observer finished reading and saving the new index transition. It could therefore report no receipt or inspect the previous global receipt instead of the transition the user had just made.
