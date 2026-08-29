@@ -112,7 +112,12 @@ const readFakeAiCapture = (capturePath: string): { args: string[]; cwd: string; 
 suite('SCM change navigation E2E', () => {
 	let ws: string; // fixture workspace root (a real git repo, see runTest.ts)
 	let repo: any; // vscode.git API Repository for the fixture
-	let extensionApi: { whenStageTransactionsSettled(): Promise<void> };
+	let extensionApi: {
+		whenStageTransactionsSettled(): Promise<void>;
+		whenReviewDecorationSettled(): Promise<void>;
+		getCurrentReviewUri(): string | undefined;
+		getReviewDecorationBadge(uri: vscode.Uri): string | vscode.ThemeIcon | undefined;
+	};
 	let baseSha: string; // the base commit every test resets to
 
 	// Run a git command inside the fixture. All command strings are hardcoded test constants.
@@ -989,6 +994,159 @@ suite('SCM change navigation E2E', () => {
 		} finally {
 			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 			execFileSync('git', ['reset', '--hard', baseSha], { cwd: worktreePath, stdio: 'pipe' });
+		}
+	});
+
+	test('current-review fire badge covers every image Git state and rapid tab switches', async () => {
+		const imageB = Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==',
+			'base64'
+		);
+		const trackedRel = 'committed/image.png';
+		const trackedUri = wsUri(trackedRel);
+		const expectFireBadge = async (uri: vscode.Uri, label: string) => {
+			await poll(
+				() => extensionApi.getCurrentReviewUri() === uri.toString(),
+				`${label} to become the current review decoration URI (was ${extensionApi.getCurrentReviewUri()})`
+			);
+			await extensionApi.whenReviewDecorationSettled();
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '🔥🔥', `${label} must render the fire badge`);
+			// The media-preview/notebook extensions finish rendering after their open command resolves. Let that
+			// renderer settle before the next matrix case closes/replaces its editor; otherwise VS Code 1.135 can
+			// emit an unrelated rejected "Webview is disposed" promise that contaminates later shared-host tests.
+			if (['.png', '.ipynb'].includes(path.extname(uri.fsPath).toLowerCase())) {
+				await sleep(300);
+			}
+		};
+		const resetImageFixture = async () => {
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			git(`reset --hard ${baseSha}`);
+			git('clean -fdq');
+			await refreshUntil(
+				() =>
+					(repo.state.workingTreeChanges ?? []).length === 0 &&
+					(repo.state.indexChanges ?? []).length === 0 &&
+					(repo.state.untrackedChanges ?? []).length === 0,
+				'clean image fixture state'
+			);
+		};
+
+		const clipboardBefore = await vscode.env.clipboard.readText();
+		try {
+			// Modified tracked image: VS Code 1.135 exposes this comparison with no public Tab input/resource.
+			// The workbench-path fallback must resolve it without changing Ethan's clipboard.
+			await vscode.env.clipboard.writeText('BETTER_GIT_IMAGE_BADGE_CLIPBOARD_GUARD');
+			fs.writeFileSync(trackedUri.fsPath, imageB);
+			await refreshUntil(() => inWorkingTree(trackedRel, 5), 'modified image to appear in working tree');
+			await vscode.commands.executeCommand('git.openChange', trackedUri);
+			await expectFireBadge(trackedUri, 'modified image');
+			assert.strictEqual(await vscode.env.clipboard.readText(), 'BETTER_GIT_IMAGE_BADGE_CLIPBOARD_GUARD');
+
+			// Staged modification.
+			git(`add ${trackedRel}`);
+			await refreshUntil(() => inIndex(trackedRel, 0), 'staged modified image to appear in index');
+			await vscode.commands.executeCommand(
+				'vscode.diff',
+				toGitUri(trackedUri, 'HEAD'),
+				toGitUri(trackedUri, ''),
+				'image.png (Index)'
+			);
+			await expectFireBadge(trackedUri, 'staged modified image');
+
+			// Notebook diffs are another non-TextEditor review surface with their own public tab input type.
+			await resetImageFixture();
+			const notebookRel = 'committed/notebook.ipynb';
+			const notebookUri = wsUri(notebookRel);
+			fs.writeFileSync(
+				notebookUri.fsPath,
+				JSON.stringify({
+					cells: [{ cell_type: 'code', execution_count: null, metadata: {}, outputs: [], source: ["print('changed')\n"] }],
+					metadata: {},
+					nbformat: 4,
+					nbformat_minor: 2,
+				})
+			);
+			await refreshUntil(() => inWorkingTree(notebookRel, 5), 'modified notebook to appear in working tree');
+			await vscode.commands.executeCommand('git.openChange', notebookUri);
+			await expectFireBadge(notebookUri, 'modified notebook');
+
+			// Untracked and staged-new images.
+			await resetImageFixture();
+			const addedRel = 'committed/added-image.png';
+			const addedUri = wsUri(addedRel);
+			fs.writeFileSync(addedUri.fsPath, imageB);
+			await refreshUntil(() => isUntracked(addedRel), 'untracked image to appear');
+			await vscode.commands.executeCommand('git.openChange', addedUri);
+			await expectFireBadge(addedUri, 'untracked image');
+			git(`add ${addedRel}`);
+			await refreshUntil(() => inIndex(addedRel, 1), 'staged-new image to appear in index');
+			await vscode.commands.executeCommand(
+				'vscode.diff',
+				toGitUri(addedUri, EMPTY_TREE),
+				toGitUri(addedUri, ''),
+				'added-image.png (Index)'
+			);
+			await expectFireBadge(addedUri, 'staged-new image');
+
+			// Unstaged and staged deletion images.
+			await resetImageFixture();
+			fs.rmSync(trackedUri.fsPath);
+			await refreshUntil(() => inWorkingTree(trackedRel, 6), 'deleted image to appear in working tree');
+			await vscode.commands.executeCommand('git.openChange', trackedUri);
+			await expectFireBadge(trackedUri, 'deleted image');
+			git(`add ${trackedRel}`);
+			await refreshUntil(() => inIndex(trackedRel, 2), 'staged-deleted image to appear in index');
+			await vscode.commands.executeCommand(
+				'vscode.diff',
+				toGitUri(trackedUri, 'HEAD'),
+				toGitUri(trackedUri, EMPTY_TREE),
+				'image.png (Index)'
+			);
+			await expectFireBadge(trackedUri, 'staged-deleted image');
+
+			// Staged rename: decorate the new/current path, not the old HEAD path.
+			await resetImageFixture();
+			const renamedRel = 'committed/renamed-image.png';
+			const renamedUri = wsUri(renamedRel);
+			git(`mv ${trackedRel} ${renamedRel}`);
+			await refreshUntil(() => inIndex(renamedRel, 3), 'renamed image to appear in index');
+			await vscode.commands.executeCommand(
+				'vscode.diff',
+				toGitUri(trackedUri, 'HEAD'),
+				toGitUri(renamedUri, ''),
+				'renamed-image.png (Index)'
+			);
+			await expectFireBadge(renamedUri, 'renamed image');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(trackedUri), undefined);
+
+			// A rapid image -> text switch must leave the badge on the final active tab. This guards the async
+			// clipboard fallback from applying a stale image result after a newer text-editor event.
+			await resetImageFixture();
+			fs.writeFileSync(trackedUri.fsPath, imageB);
+			const textRel = 'committed/mod_a.txt';
+			const textUri = wsUri(textRel);
+			const textLines = lines(40, 'mod_a').split('\n');
+			textLines[4] = 'modified text after image';
+			write(textRel, textLines.join('\n'));
+			await refreshUntil(
+				() => inWorkingTree(trackedRel, 5) && inWorkingTree(textRel, 5),
+				'image and text changes to appear'
+			);
+			// Pre-render and pin both editors so the race exercise switches active tabs without disposing an
+			// in-flight media webview. The final pair remains intentionally back-to-back: the image's async path
+			// lookup must not win after the text diff becomes active.
+			await vscode.commands.executeCommand('git.openChange', trackedUri);
+			await expectFireBadge(trackedUri, 'pre-rendered image before rapid switch');
+			await vscode.commands.executeCommand('workbench.action.keepEditor');
+			await vscode.commands.executeCommand('git.openChange', textUri);
+			await expectFireBadge(textUri, 'pre-rendered text before rapid switch');
+			await vscode.commands.executeCommand('workbench.action.keepEditor');
+			await vscode.commands.executeCommand('git.openChange', trackedUri);
+			await vscode.commands.executeCommand('git.openChange', textUri);
+			await expectFireBadge(textUri, 'text diff after rapid image switch');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(trackedUri), undefined);
+		} finally {
+			await vscode.env.clipboard.writeText(clipboardBefore);
 		}
 	});
 

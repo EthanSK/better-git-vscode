@@ -84,6 +84,22 @@ async function main() {
 		fs.copyFileSync(profilePicFixtureBeforePath, path.join(fixturePath, 'committed', 'profile-pic.service.ts')); // exact live large-replacement regression
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'del_b.txt'), lines(20, 'del_b')); // deleted-file tests
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'ren_c.txt'), lines(20, 'ren_c')); // rename test
+		fs.writeFileSync(
+			path.join(fixturePath, 'committed', 'image.png'),
+			Buffer.from(
+				'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlqB9sAAAAASUVORK5CYII=',
+				'base64'
+			)
+		); // tracked image fixture for custom-editor review/decorations
+		fs.writeFileSync(
+			path.join(fixturePath, 'committed', 'notebook.ipynb'),
+			JSON.stringify({
+				cells: [{ cell_type: 'code', execution_count: null, metadata: {}, outputs: [], source: ["print('base')\n"] }],
+				metadata: {},
+				nbformat: 4,
+				nbformat_minor: 2,
+			})
+		); // notebook-diff tab shape is distinct from text/custom editors
 		run('git add -A');
 		run('git commit -m "base"');
 

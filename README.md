@@ -304,7 +304,7 @@ A few behaviours are configurable under **Settings → Better Git VS Code**:
 - **Tall-hunk staging** — present or step through any hunk whose complete rendered range is not on-screen, instead of letting unread lines run off the bottom (`better-git-vscode.hunkStagingEnabled`, default on — see *Step through tall hunks in stages* above). Tune the engage threshold (`hunkStagingThreshold`, 0 = auto/rendered visibility), the exact per-step move (`hunkStagingLineStep`, default 10; any positive custom value; 0 = viewport-minus-overlap auto mode), and the overlap used by auto mode (`hunkStagingOverlap`, default 4).
 - **List vs Tree view** in Source Control (`better-git-vscode.treeView`).
 - Whether the Source Control panel opens on navigation (`shouldOpenScmView`).
-- The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥).
+- The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥), including modified/staged/new/deleted/renamed image and binary views plus notebook diffs.
 - Experimental staged-file highlighting (`revealStagedInSourceControl`).
 
 ## Credits
