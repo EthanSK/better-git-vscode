@@ -32,6 +32,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-09-04T13:55:55Z
+**Trigger:** Ethan reported that one Better Git undo worked but a second said there was no recent stage, and asked for a proper buffer of up to 100 entries.
+**Symptom:** Better Git could exactly reverse only the most recent observed stage/index transition. After one successful `Cmd+Z`, the next press always reported that no receipt existed even when several files had just been staged.
+**Root cause:** `StageTransactionStore` persisted one schema-2 receipt, every new index transition overwrote it, and successful Undo called `clear()`. There was no history to expose after the first restore, and concurrent async Undo invocations could also load the same top receipt before either removed it.
+**Fix:** v1.2.58 stores a persistent schema-3 LIFO history capped at 100 schema-2 transition receipts, migrates the previous single receipt, pops only the exact successfully restored entry, serializes rapid Undo commands, and retains the existing exact-`HEAD`/index-tree refusal. Repository invalidation removes only that repository's receipts. Atomic rename plus a bounded cross-window lock prevents lost read-modify-write updates, and identical multi-host observations are deduplicated without collapsing distinct transitions.
+**Commit:** pending on `codex/undo-history-stack`.
+**Guard:** Store/observer coverage pins single-receipt migration, the exact 100-entry cap, cross-store concurrent appends, duplicate-event coalescing, repository-scoped invalidation, preserved older receipts, and no redo receipt after a suppressed restore. A real VS Code Extension Development Host stages two files through Better Git and external Git routes, requires two sequential Undo commands to restore them in reverse order, and separately fires two Undo commands concurrently to require one entry per invocation. The clean full-host rerun passed 73/73 after an initial 71/73 run hit two unrelated renderer/navigation timeouts; TypeScript, webpack, ESLint, and `git diff --check` passed. Release packaging and Marketplace verification are pending.
+---
+
+---
 **Date:** 2026-08-29T21:48:41Z
 **Trigger:** Ethan reported that an image row could show Git's `M` while missing Better Git's 🔥🔥 current-review badge and asked for the same class of omission to be fixed across similar cases.
 **Symptom:** Modified PNG comparisons received no Better Git decoration even though the Source Control row correctly reported the file as modified. Earlier image handling and its tests assumed the active tab would expose `TabInputCustom`.

@@ -13,12 +13,13 @@ export interface StageTransactionDetails {
 /// Observes exact Git-index tree transitions instead of assuming that staging
 /// always passed through a Better Git command. VS Code's built-in Git actions,
 /// user keybindings, mouse shortcuts, and terminal `git add` all converge on
-/// the same index file, so one before/after tree receipt covers every route.
+/// the same index file, so exact before/after tree receipts cover every route.
 ///
 /// The observer serializes every repository through one queue because the
-/// receipt store intentionally holds only the latest transition globally.
+/// receipt store is one global, chronologically ordered undo history.
 /// `HEAD` must remain unchanged across a transition: commits, checkouts, and
-/// resets therefore invalidate rather than create an undo receipt.
+/// resets therefore invalidate that repository's history rather than create an
+/// undo receipt.
 export class StageTransactionObserver {
     private readonly baselines = new Map<string, IndexSnapshot>();
     private readonly suppressedRoots = new Set<string>();
@@ -62,9 +63,23 @@ export class StageTransactionObserver {
     async loadLatestReceipt(): Promise<StoredStageTransaction | undefined> {
         let receipt: StoredStageTransaction | undefined;
         await this.enqueue(async () => {
-            receipt = await this.store.load();
+            receipt = await this.store.loadLatest();
         });
         return receipt;
+    }
+
+    /// Mutate receipt history through the observer queue as well. This keeps
+    /// consumption/invalidation ordered behind already accepted Git events.
+    async removeReceipt(receipt: StoredStageTransaction): Promise<void> {
+        await this.enqueue(async () => {
+            await this.store.remove(receipt);
+        });
+    }
+
+    async discardRepositoryHistory(repoRoot: string): Promise<void> {
+        await this.enqueue(async () => {
+            await this.store.discardRepository(repoRoot);
+        });
     }
 
     /// Run an index mutation that must update the observer baseline without
@@ -106,39 +121,30 @@ export class StageTransactionObserver {
         // old receipt immediately rather than leaving it for the Undo command
         // to discover later.
         if (previous.headTree !== current.headTree) {
-            const existing = await this.store.load();
-            if (existing?.repoRoot === repoRoot) {
-                await this.store.clear();
-            }
+            await this.store.discardRepository(repoRoot);
             return;
         }
 
         if (previous.indexTree === current.indexTree) {
             // A vscode.git state event may have captured the transition before
             // the originating Better Git command resumes. Upgrade that generic
-            // receipt with its precise file identity instead of overwriting it.
+            // receipt with its precise file identity without changing its
+            // position in the global history.
             if (details?.kind === "betterGitStage") {
-                const existing = await this.store.load();
-                if (
-                    existing?.repoRoot === repoRoot &&
-                    existing.headTree === current.headTree &&
-                    existing.afterIndexTree === current.indexTree
-                ) {
-                    await this.store.save({
-                        ...existing,
-                        kind: details.kind,
-                        uri: details.uri ?? existing.uri,
-                    });
-                }
+                await this.store.enrichLatestForRepository(
+                    repoRoot,
+                    current.headTree,
+                    current.indexTree,
+                    details
+                );
             }
             return;
         }
 
         if (suppressed) {
-            const existing = await this.store.load();
-            if (existing?.repoRoot === repoRoot) {
-                await this.store.clear();
-            }
+            // Undo owns receipt removal after its exact restore succeeds. This
+            // observation only advances the baseline and must not erase older
+            // entries that are still valid.
             return;
         }
 
@@ -152,6 +158,6 @@ export class StageTransactionObserver {
             uri: details?.uri,
             recordedAt: new Date().toISOString(),
         };
-        await this.store.save(receipt);
+        await this.store.append(receipt);
     }
 }

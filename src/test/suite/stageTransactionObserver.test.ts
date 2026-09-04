@@ -36,7 +36,7 @@ suite("StageTransactionObserver", () => {
         snapshots.set(root, { headTree: "head", indexTree: "after" });
         await subject.observe(root);
 
-        const receipt = await store.load();
+        const receipt = await store.loadLatest();
         assert.strictEqual(receipt?.schema, 2);
         assert.strictEqual(receipt?.kind, "observedIndexChange");
         assert.strictEqual(receipt?.repoRoot, root);
@@ -97,7 +97,7 @@ suite("StageTransactionObserver", () => {
             uri: "file:///tmp/better-git-stage/file.ts",
         });
 
-        const receipt = await store.load();
+        const receipt = await store.loadLatest();
         assert.strictEqual(receipt?.kind, "betterGitStage");
         assert.strictEqual(receipt?.uri, "file:///tmp/better-git-stage/file.ts");
         assert.strictEqual(receipt?.beforeIndexTree, "before");
@@ -111,11 +111,11 @@ suite("StageTransactionObserver", () => {
         await subject.prepare(root);
         snapshots.set(root, { headTree: "head-1", indexTree: "after" });
         await subject.observe(root);
-        assert.ok(await store.load());
+        assert.ok(await store.loadLatest());
 
         snapshots.set(root, { headTree: "head-2", indexTree: "commit-index" });
         await subject.observe(root);
-        assert.strictEqual(await store.load(), undefined);
+        assert.strictEqual(await store.loadLatest(), undefined);
     });
 
     test("a HEAD-only move invalidates the receipt even when the index tree is unchanged", async () => {
@@ -125,29 +125,59 @@ suite("StageTransactionObserver", () => {
         await subject.prepare(root);
         snapshots.set(root, { headTree: "head-1", indexTree: "after" });
         await subject.observe(root);
-        assert.ok(await store.load());
+        assert.ok(await store.loadLatest());
 
         snapshots.set(root, { headTree: "head-2", indexTree: "after" });
         await subject.observe(root);
-        assert.strictEqual(await store.load(), undefined);
+        assert.strictEqual(await store.loadLatest(), undefined);
     });
 
-    test("a suppressed undo updates the baseline without creating a redo receipt", async () => {
+    test("a suppressed undo preserves earlier receipts without creating a redo receipt", async () => {
         const root = "/tmp/undo";
         snapshots.set(root, { headTree: "head", indexTree: "before" });
         const subject = observer();
         await subject.prepare(root);
+        snapshots.set(root, { headTree: "head", indexTree: "middle" });
+        await subject.observe(root);
         snapshots.set(root, { headTree: "head", indexTree: "after" });
         await subject.observe(root);
-        assert.ok(await store.load());
+        const latest = await store.loadLatest();
+        assert.ok(latest);
+        assert.strictEqual((await store.loadAll()).length, 2);
 
         await subject.runSuppressed(root, async () => {
-            snapshots.set(root, { headTree: "head", indexTree: "before" });
+            snapshots.set(root, { headTree: "head", indexTree: "middle" });
             subject.notify(root);
         });
-        assert.strictEqual(await store.load(), undefined);
+        assert.strictEqual((await store.loadAll()).length, 2);
+
+        await subject.removeReceipt(latest!);
+        const previous = await store.loadLatest();
+        assert.strictEqual(previous?.beforeIndexTree, "before");
+        assert.strictEqual(previous?.afterIndexTree, "middle");
 
         await subject.observe(root);
-        assert.strictEqual(await store.load(), undefined);
+        assert.deepStrictEqual(await store.loadAll(), [previous]);
+    });
+
+    test("a HEAD move invalidates only that repository's receipts", async () => {
+        const firstRoot = "/tmp/head-change-a";
+        const secondRoot = "/tmp/head-change-b";
+        snapshots.set(firstRoot, { headTree: "head-a-1", indexTree: "before-a" });
+        snapshots.set(secondRoot, { headTree: "head-b", indexTree: "before-b" });
+        const subject = observer();
+        await subject.prepare(firstRoot);
+        await subject.prepare(secondRoot);
+        snapshots.set(firstRoot, { headTree: "head-a-1", indexTree: "after-a" });
+        await subject.observe(firstRoot);
+        snapshots.set(secondRoot, { headTree: "head-b", indexTree: "after-b" });
+        await subject.observe(secondRoot);
+
+        snapshots.set(firstRoot, { headTree: "head-a-2", indexTree: "commit-a" });
+        await subject.observe(firstRoot);
+
+        const history = await store.loadAll();
+        assert.strictEqual(history.length, 1);
+        assert.strictEqual(history[0].repoRoot, secondRoot);
     });
 });

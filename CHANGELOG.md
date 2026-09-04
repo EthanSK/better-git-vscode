@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.58] — repeatable stage undo history
+
+- **Made repeated Source Control Undo work as a real LIFO history.** Each `Cmd+Z` / `Ctrl+Z` now restores and removes one exact stage/index transition, then exposes the previous entry instead of deleting all undo state after the first press.
+- **Kept up to 100 undo entries across windows and extension-host restarts.** The previous single receipt migrates into the new bounded history automatically. Atomic writes, a cross-window lock, and transition deduplication prevent concurrent VS Code windows from losing or duplicating entries.
+- **Preserved the existing fail-closed safety boundary.** Every entry still requires the exact recorded `HEAD` and post-stage index tree. A commit, checkout, reset, or unexpected index change discards only that repository's invalid history while leaving other worktrees' valid entries intact.
+- **Serialized rapid repeated Undo.** Fast key repeats and mouse presses consume one entry each instead of racing on the same latest receipt.
+
 ## [1.2.57] — fire badge follows image and non-text review tabs
 
 - **Fixed modified images showing Git's `M` without Better Git's 🔥🔥 current-review badge.** VS Code 1.135 opens a PNG comparison with an active tab whose public `input` is absent, so the old `TabInputCustom`-only image handling could not identify the file.
