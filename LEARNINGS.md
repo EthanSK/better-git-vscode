@@ -21,6 +21,7 @@ Each entry looks like:
 
 ## Release installation policy
 
+- Pass `--repo EthanSK/better-git-vscode` explicitly to GitHub CLI release/PR commands. This fork can resolve bare `gh` commands to the original upstream repository even when `git remote origin` correctly points to Ethan's fork; verify the exact repository before any mutation.
 - Every completed Better Git VS Code code change requested by Ethan—features, fixes, and maintenance—must be released to the Marketplace and have its exact version-specific gallery package downloaded and verified by default, unless he explicitly says not to release that change. "Done" never means stopping at local implementation, tests, a commit, a PR, or a locally packaged VSIX.
 - Release work must **not install, uninstall, update, reload, or restart** Better Git VS Code in Ethan's normal VS Code. Ethan will install Marketplace updates himself after they appear.
 - Test only in isolated Extension Development Hosts. A release is complete only when Marketplace publication succeeds, the exact version-specific gallery package is downloadable and valid, the authenticated publisher API marks that exact version `Validated`, and a public Gallery query with `ExcludeNonValidated` returns it as the latest version. The local installed version is not a release gate.
@@ -30,6 +31,18 @@ Each entry looks like:
 ## Entries
 
 (newest first)
+
+---
+**Date:** 2026-09-04T21:24:00Z
+**Trigger:** Ethan reported the scrollbar jumping up and then down while rapidly pressing Next in a wrapped working-tree diff.
+**Symptom:** After a tall-hunk page step, forward change navigation briefly moved the viewport backwards. The installed extension registry showed v1.2.57, but the same reversal reproduced on current v1.2.60 code, so an update to that version alone was not a fix.
+**Root cause:** VS Code's native `goToDiff` calls `revealRangeInCenter` even when the destination change is already visible. Better Git's caret-owned AtTop stepping followed by native centering produced a backward hand-off without visiting changes out of order. A private copy of the reported staged-new-plus-modified file reproduced nine reversing traces from ten starting positions; one 0-based sequence was `225 -> 215 -> 222 -> 232`. The source file and index in the user's real worktree were only read.
+**Fix:** v1.2.61 selects the next/previous fully visible added/replaced run without a reveal, before native navigation can recenter it. Keep the outer-hunk unread-content guard first, retain deleted-only native stops, omit trim-whitespace-only runs when the editor hides them, and defer unsaved documents to native navigation because Git geometry is disk-based. Off-screen targets, deletion boundaries, file rollover, and the staging-disabled path retain their existing behavior.
+**Validation:** All ten copied-diff starting positions became monotonic. The final production-bundle Extension Development Host run passed 103/103 with no pending tests; TypeScript, ESLint, and the production build passed. Public regressions use synthetic text, not the user's private file. They first prove native backward recentering, then verify rapid Next/Previous, deleted-only stops, both trim-whitespace settings, and unsaved changes. The original private-data diagnostic was removed from the public tests.
+**Release:** Product commit `81bc695a1045d8995af2feffca64943394365150`, PR #109. The required Marketplace verifier exited zero and printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` for v1.2.61 after authenticated publisher validation, public validated-only Gallery visibility, package download, and exact byte comparison. The nine-file VSIX passed archive and packaged-identity checks; its bundled JavaScript is byte-identical to the tested production build. VSIX SHA-256: `eee4b6a5f1ae377d01cae3d419b0a2bc42dac82ed5bf37b2d031ce977fc7cd65`. Normal VS Code remained on installed v1.2.57; no install or restart was performed.
+**Computer Use:** In an isolated host on Built-in Retina Display, real `ctrl+alt+super+F13` input three times moved the 0-based caret `219 -> 225 -> 229 -> 233`; two `ctrl+alt+super+F17` inputs moved it `233 -> 229 -> 225`. The viewport top stayed at 214 throughout, and the harness printed `BETTER_GIT_COMPUTER_USE_SCROLL_VERIFIED` before exit zero. This verifies the actual mouse-shortcut transport, not a physical hardware-button press. The first disposable attempt was discarded after a Computer Use key-name mismatch; the clean rerun passed. The normal VS Code window, installed extension, and personal bindings were not changed.
+**Guard:** `selectVisibleHunkWithoutScrolling` must run before the native command; recentering and restoring afterwards would preserve the visible flash. The optional `BGV_UI_SMOKE=1 BGV_UI_SCROLL=1` harness observes actual keyboard input and asserts both carets and viewport events. Deleted-only barriers and hidden-whitespace filtering must not be removed merely because the reported example is an added-line run.
+---
 
 ---
 **Date:** 2026-09-04T20:30:00Z

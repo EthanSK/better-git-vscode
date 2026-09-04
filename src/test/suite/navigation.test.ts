@@ -1538,6 +1538,98 @@ suite('SCM change navigation E2E', () => {
 		await expectActiveTab('committed/mod_d.txt');
 	});
 
+	test('MODIFIED mixed hunks: rapid Next never scrolls backward between a tall run and nearby native stops', async () => {
+		const config = vscode.workspace.getConfiguration('editor');
+		const oldWrap = config.inspect<string>('wordWrap')?.globalValue;
+		try {
+			await config.update('wordWrap', 'on', vscode.ConfigurationTarget.Global);
+			const content = lines(260, 'tall_e').split('\n');
+			for (let i = 10; i <= 219; i++) { content[i] = `changed row ${i} ${'wrapped text '.repeat(i % 4)}`; }
+			for (const line of [225, 229, 233]) { content[line] = `nearby short change ${line}`; }
+			write('committed/tall_e.txt', content.join('\n'));
+			await refreshUntil(() => inWorkingTree('committed/tall_e.txt', 5), 'mixed hunks to appear');
+			const editor = await openWorkingDiffAt('committed/tall_e.txt', 219);
+			await sleep(100);
+			await vscode.commands.executeCommand('workbench.view.scm');
+			// Prove the original native-centering reversal, then reset before exercising Better Git.
+			const nativeTops = await viewportTopsDuring(editor, () => vscode.commands.executeCommand('workbench.action.compareEditor.nextChange'));
+			assert.ok(nativeTops.some((top, index) => index > 0 && top < nativeTops[index - 1]),
+				`fixture must reproduce native recentering backwards: ${nativeTops.join(' -> ')}`);
+			await openWorkingDiffAt('committed/tall_e.txt', 219);
+			await sleep(100);
+			await vscode.commands.executeCommand('workbench.view.scm');
+			const tops = await viewportTopsDuring(editor, () => Promise.all(Array.from({ length: 3 }, () => nextChange())));
+			await expectCursorAt('committed/tall_e.txt', 233);
+			assertViewportMonotonic(tops, 'down', 'rapid mixed-hunk Next');
+			const reverseTops = await viewportTopsDuring(editor, () => Promise.all([previousChange(), previousChange()]));
+			await expectCursorAt('committed/tall_e.txt', 225);
+			assertViewportMonotonic(reverseTops, 'up', 'rapid nearby-hunk Previous');
+		} finally {
+			await config.update('wordWrap', oldWrap, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('visible-hunk handoff never skips a deleted-only native stop', async () => {
+		const rel = 'committed/tall_e.txt';
+		const content = lines(260, 'tall_e').split('\n');
+		content[119] = 'later replacement after the deletion';
+		content.splice(110, 2);
+		write(rel, content.join('\n'));
+		await refreshUntil(() => inWorkingTree(rel), 'deleted-only and replacement changes');
+		const editor = await openWorkingDiffAt(rel, 105);
+		await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
+		const nativeDeletionLine = editor.selection.active.line;
+		assert.ok(nativeDeletionLine < 117, 'native first stop must be the deletion, not the later replacement');
+		await openWorkingDiffAt(rel, 105);
+		await nextChange();
+		await expectCursorAt(rel, nativeDeletionLine);
+		await nextChange();
+		await expectCursorAt(rel, 117);
+	});
+
+	test('visible-hunk handoff preserves Ignore Trim Whitespace navigation', async () => {
+		const config = vscode.workspace.getConfiguration('diffEditor');
+		const previousWhitespace = config.inspect<boolean>('ignoreTrimWhitespace')?.globalValue;
+		try {
+			await config.update('ignoreTrimWhitespace', true, vscode.ConfigurationTarget.Global);
+			const rel = 'committed/tall_e.txt';
+			const content = lines(260, 'tall_e').split('\n');
+			content[110] = `  ${content[110]}  `;
+			content[119] = 'substantive replacement';
+			write(rel, content.join('\n'));
+			await refreshUntil(() => inWorkingTree(rel), 'whitespace and substantive changes');
+			await openWorkingDiffAt(rel, 105);
+			await nextChange();
+			await expectCursorAt(rel, 119);
+			await config.update('ignoreTrimWhitespace', false, vscode.ConfigurationTarget.Global);
+			await openWorkingDiffAt(rel, 105);
+			await nextChange();
+			await expectCursorAt(rel, 110);
+		} finally {
+			await config.update('ignoreTrimWhitespace', previousWhitespace, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('visible-hunk handoff defers to native navigation for unsaved changes', async () => {
+		const rel = 'committed/tall_e.txt';
+		const content = lines(260, 'tall_e').split('\n');
+		content[119] = 'saved replacement';
+		write(rel, content.join('\n'));
+		await refreshUntil(() => inWorkingTree(rel), 'saved replacement');
+		const editor = await openWorkingDiffAt(rel, 105);
+		try {
+			await editor.edit(edit => edit.insert(new vscode.Position(110, 0), 'unsaved change '));
+			assert.ok(editor.document.isDirty);
+			await sleep(300); // native diff must recompute the additional in-memory change
+			const position = new vscode.Position(105, 0);
+			editor.selection = new vscode.Selection(position, position);
+			await nextChange();
+			await expectCursorAt(rel, 110); // not Git's saved-only stop at 119
+		} finally {
+			await editor.document.save(); // only the disposable fixture; avoid a dirty-editor prompt in teardown
+		}
+	});
+
 	test('MODIFIED tall hunk: filenames with spaces and non-ASCII characters keep intermediate steps', async () => {
 		const rel = 'committed/tall é file.txt';
 		write(rel, lines(260, 'quoted'));
