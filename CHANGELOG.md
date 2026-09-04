@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.60] — late mouse staging keeps the original file
+
+- **Stage the file reviewed before navigation.** Agentic Mouse's one-second follow-up stages the captured origin, even when Next or Previous has already displayed another file.
+- **Avoid an extra jump.** If navigation already crossed files, keep that destination open. Within-file navigation still stages and advances normally.
+- **Keep each gesture exact.** Corsair and Razer origins are independent, consumed once, and expire after one second of input time. An unavailable origin never substitutes the current file. Existing keyboard shortcuts and held staging chords are unchanged.
+
 ## [1.2.59] — safer undo and review edge cases
 
 - **Keep undo history consistent across windows.** Shared repository baselines and atomic receipt consumption prevent delayed windows from duplicating stages or recording another window's Undo as a redo. The persistent 100-entry limit is unchanged.
