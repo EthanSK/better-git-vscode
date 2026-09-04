@@ -5,8 +5,8 @@ import Foundation
 
 let targetDisplayName = "Built-in Retina Display"
 
-guard CommandLine.arguments.count == 2, let targetPID = pid_t(CommandLine.arguments[1]) else {
-  fputs("usage: swift place-vscode-window-on-macbook.swift <pid>\n", stderr)
+guard (2...3).contains(CommandLine.arguments.count), let targetPID = pid_t(CommandLine.arguments[1]) else {
+  fputs("usage: swift place-vscode-window-on-macbook.swift <pid> [expected-window-title]\n", stderr)
   exit(2)
 }
 
@@ -72,10 +72,17 @@ func substantialCGWindows() -> [[String: Any]] {
 }
 
 let application = AXUIElementCreateApplication(targetPID)
+AXUIElementSetMessagingTimeout(application, 3)
+let expectedTitle = CommandLine.arguments.count == 3 ? CommandLine.arguments[2] : nil
 let deadline = Date().addingTimeInterval(12)
 var candidate: AXUIElement?
 while Date() < deadline {
-  candidate = copyAXWindows(application).first
+  candidate = copyAXWindows(application).first(where: { window in
+    guard let expectedTitle else { return true }
+    var title: CFTypeRef?
+    return AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success
+      && (title as? String)?.contains(expectedTitle) == true
+  })
   if candidate != nil { break }
   Thread.sleep(forTimeInterval: 0.1)
 }
@@ -93,8 +100,8 @@ let desiredFrame = CGRect(
   height: min(1100, targetDisplay.frame.height - margin * 2)
 )
 
-guard setAXPoint(testWindow, attribute: kAXPositionAttribute as CFString, point: desiredFrame.origin),
-      setAXSize(testWindow, size: desiredFrame.size) else {
+guard setAXSize(testWindow, size: desiredFrame.size),
+      setAXPoint(testWindow, attribute: kAXPositionAttribute as CFString, point: desiredFrame.origin) else {
   fputs("Could not move/resize the isolated VS Code window for PID \(targetPID).\n", stderr)
   exit(6)
 }

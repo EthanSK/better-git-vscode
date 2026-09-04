@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.59",
+  "version": "1.2.60",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -38,6 +38,11 @@
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "better-git-vscode.stage-before-mouse-navigation",
+        "category": "Better Git",
+        "title": "Stage file before mouse navigation"
+      },
       {
         "command": "better-git-vscode.next-scm-change",
         "category": "Better Git",
@@ -419,6 +424,66 @@
       "keybindings.json exactly like every other default (a `-runCommands` minus-entry on ctrl+shift+g)."
     ],
     "keybindings": [
+      {
+        "command": "better-git-vscode.next-scm-change",
+        "key": "ctrl+alt+cmd+f13",
+        "mac": "ctrl+alt+cmd+f13",
+        "args": "corsair"
+      },
+      {
+        "command": "better-git-vscode.stage-before-mouse-navigation",
+        "key": "ctrl+alt+cmd+f18",
+        "mac": "ctrl+alt+cmd+f18",
+        "args": {
+          "source": "corsair",
+          "direction": "next"
+        }
+      },
+      {
+        "command": "better-git-vscode.previous-scm-change",
+        "key": "ctrl+alt+cmd+f17",
+        "mac": "ctrl+alt+cmd+f17",
+        "args": "corsair"
+      },
+      {
+        "command": "better-git-vscode.stage-before-mouse-navigation",
+        "key": "ctrl+alt+cmd+f19",
+        "mac": "ctrl+alt+cmd+f19",
+        "args": {
+          "source": "corsair",
+          "direction": "previous"
+        }
+      },
+      {
+        "command": "better-git-vscode.next-scm-change",
+        "key": "ctrl+alt+cmd+shift+f13",
+        "mac": "ctrl+alt+cmd+shift+f13",
+        "args": "razer"
+      },
+      {
+        "command": "better-git-vscode.stage-before-mouse-navigation",
+        "key": "ctrl+alt+cmd+shift+f18",
+        "mac": "ctrl+alt+cmd+shift+f18",
+        "args": {
+          "source": "razer",
+          "direction": "next"
+        }
+      },
+      {
+        "command": "better-git-vscode.previous-scm-change",
+        "key": "ctrl+alt+cmd+shift+f17",
+        "mac": "ctrl+alt+cmd+shift+f17",
+        "args": "razer"
+      },
+      {
+        "command": "better-git-vscode.stage-before-mouse-navigation",
+        "key": "ctrl+alt+cmd+shift+f19",
+        "mac": "ctrl+alt+cmd+shift+f19",
+        "args": {
+          "source": "razer",
+          "direction": "previous"
+        }
+      },
       {
         "command": "better-git-vscode.next-scm-change",
         "key": "alt+.",

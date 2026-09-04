@@ -1938,6 +1938,111 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	for (const source of ['corsair', 'razer']) {
+		for (const direction of ['next', 'previous']) {
+			test(`late mouse stage pins the origin after ${source} ${direction} has crossed files`, async () => {
+				write('mouse_a.txt', 'first');
+				write('mouse_b.txt', 'second');
+				await refreshUntil(() => isUntracked('mouse_a.txt') && isUntracked('mouse_b.txt'), 'mouse review pair');
+				const origin = direction === 'next' ? 'mouse_a.txt' : 'mouse_b.txt';
+				const destination = direction === 'next' ? 'mouse_b.txt' : 'mouse_a.txt';
+				await openPlainAt(origin, 0);
+				const pressed = Date.now();
+				await vscode.commands.executeCommand(`better-git-vscode.${direction}-scm-change`, source);
+				await sleep(Math.max(0, 800 - (Date.now() - pressed))); // Exercise the slow end of the real one-second input window, after the editor changed.
+				assert.ok(Date.now() - pressed < 1000, 'test host could not navigate within the real gesture window');
+				assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri(destination).fsPath);
+				await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source, direction });
+				assert.strictEqual(git('diff --cached --name-only'), origin, 'late staging must never stage the destination');
+				assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri(destination).fsPath, 'late staging must not jump a second time');
+				await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source, direction });
+				assert.strictEqual(git('diff --cached --name-only'), origin, 'the captured gesture is single-use');
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'origin staging must retain exact Better Git undo support');
+			});
+		}
+	}
+
+	test('immediate mouse stage waits for origin capture and navigation in the same queue', async () => {
+		write('mouse_a.txt', 'first');
+		write('mouse_b.txt', 'second');
+		await refreshUntil(() => isUntracked('mouse_a.txt') && isUntracked('mouse_b.txt'), 'rapid mouse pair');
+		await openPlainAt('mouse_a.txt', 0);
+		await Promise.all([
+			vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'corsair'),
+			vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'corsair', direction: 'next' }),
+		]);
+		assert.strictEqual(git('diff --cached --name-only'), 'mouse_a.txt');
+		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('mouse_b.txt').fsPath);
+	});
+
+	test('rapid repeated mouse navigation stages the file before the latest step, not the first step', async () => {
+		for (const name of ['mouse_a.txt', 'mouse_b.txt', 'mouse_c.txt']) { write(name, name); }
+		await refreshUntil(() => ['mouse_a.txt', 'mouse_b.txt', 'mouse_c.txt'].every(isUntracked), 'three mouse review files');
+		await openPlainAt('mouse_a.txt', 0);
+		await Promise.all([
+			vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'corsair'),
+			vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'corsair'),
+			vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'corsair', direction: 'next' }),
+		]);
+		assert.strictEqual(git('diff --cached --name-only'), 'mouse_b.txt');
+		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('mouse_c.txt').fsPath);
+	});
+
+	test('each mouse retains its own origin when the other mouse navigates', async () => {
+		for (const name of ['mouse_a.txt', 'mouse_b.txt', 'mouse_c.txt']) { write(name, name); }
+		await refreshUntil(() => ['mouse_a.txt', 'mouse_b.txt', 'mouse_c.txt'].every(isUntracked), 'independent mouse review files');
+		await openPlainAt('mouse_a.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'corsair');
+		await vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'razer');
+		await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'corsair', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), 'mouse_a.txt');
+		await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'razer', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), 'mouse_a.txt\nmouse_b.txt');
+		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('mouse_c.txt').fsPath);
+	});
+
+	test('late stage after a within-file step still advances from the captured original', async () => {
+		write('mouse_a_tall.txt', lines(240, 'first'));
+		write('mouse_b.txt', 'second');
+		await refreshUntil(() => isUntracked('mouse_a_tall.txt') && isUntracked('mouse_b.txt'), 'within-file mouse pair');
+		const editor = await openPlainAt('mouse_a_tall.txt', 0);
+		await poll(() => (editor.visibleRanges[0]?.end.line ?? 240) < 239, 'tall file renderer to settle');
+		await vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'razer');
+		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('mouse_a_tall.txt').fsPath);
+		await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'razer', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), 'mouse_a_tall.txt');
+		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('mouse_b.txt').fsPath);
+	});
+
+	test('expired, opposite-source, and wrong-direction mouse receipts never stage the current file', async () => {
+		write('mouse_a.txt', 'first');
+		write('mouse_b.txt', 'second');
+		await refreshUntil(() => isUntracked('mouse_a.txt') && isUntracked('mouse_b.txt'), 'guarded mouse pair');
+		await vscode.commands.executeCommand('better-git-vscode.next-scm-change'); // Start a new ordinary review sequence, invalidating receipts from previous test gestures.
+		await openPlainAt('mouse_a.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'corsair');
+		await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'razer', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), '');
+		await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'corsair', direction: 'previous' });
+		assert.strictEqual(git('diff --cached --name-only'), '');
+		await openPlainAt('mouse_a.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'corsair');
+		await sleep(1050);
+		await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'corsair', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), '');
+	});
+
+	test('ordinary keyboard navigation does not arm mouse origin staging', async () => {
+		write('mouse_a.txt', 'first');
+		write('mouse_b.txt', 'second');
+		await refreshUntil(() => isUntracked('mouse_a.txt') && isUntracked('mouse_b.txt'), 'ordinary navigation pair');
+		await openPlainAt('mouse_a.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.next-scm-change');
+		await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation', { source: 'corsair', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), '');
+	});
+
 	test('undo latest Stage + Next restores the exact pre-stage index', async () => {
 		const partiallyStaged = lines(24, 'mod_a').split('\n');
 		partiallyStaged[2] = 'mod_a PREVIOUSLY STAGED line 3';

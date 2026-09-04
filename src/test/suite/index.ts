@@ -1,10 +1,21 @@
 import * as path from 'path';
+import { execFileSync } from 'child_process';
+import * as vscode from 'vscode';
 import Mocha from 'mocha';
 import { glob } from 'glob';
 
 export async function run(): Promise<void> {
 	if (process.env.BGV_TEST_START_DELAY_MS) {
 		await new Promise((resolve) => setTimeout(resolve, Number(process.env.BGV_TEST_START_DELAY_MS)));
+	}
+	if (process.env.BGV_PLACE_ON_MACBOOK === '1') {
+		const pid = process.env.VSCODE_PID;
+		const workspace = vscode.workspace.workspaceFile;
+		if (!pid || !/^\d+$/.test(pid) || !workspace) { throw new Error('Missing isolated test window identity'); }
+		console.log(execFileSync('swift', [
+			path.resolve(__dirname, '../../../scripts/place-vscode-window-on-macbook.swift'), pid,
+			path.basename(workspace.fsPath, '.code-workspace'),
+		], { encoding: 'utf8', timeout: 20000 })); // Move only this PID's exact fixture window before any test drives the UI.
 	}
 	// Create the mocha test
 	const mocha = new Mocha({

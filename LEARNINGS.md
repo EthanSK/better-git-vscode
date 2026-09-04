@@ -51,6 +51,18 @@ Each entry looks like:
 ---
 
 ---
+**Date:** 2026-09-04T20:24:58Z
+**Trigger:** Ethan reported that a fast late stage after mouse Next/Previous staged the intended file, but a slower press inside the same one-second window staged the newly displayed file.
+**Symptom:** Stage ownership depended on whether VS Code had finished navigating before the follow-up arrived.
+**Root cause:** Both held and post-release mouse gestures emitted ordinary Stage + Next/Previous F-keys, whose commands resolve the active file when they execute. Karabiner alone cannot identify VS Code's pre-navigation file.
+**Fix:** Source-tagged navigation records the exact unstaged `FileChange` before moving, inside the existing serialized navigation queue. A separate source/direction-tagged stage command consumes that origin once within one second of input arrival. It stages the saved URI through the normal Undo-aware path and avoids a second jump if navigation already crossed files. If navigation stayed within the origin, it uses normal stage-and-advance with the saved file. Missing, expired, ambiguous, staged-only, wrong-source, and no-longer-unstaged origins never fall back to the current file. Ordinary keyboard navigation and window focus loss clear saved origins. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
+**Guard:** A real isolated VS Code host passed all 84 tests, including both mice/directions at an 800 ms delay, exact Git-index origin checks, no second jump, immediate queued input, within-file navigation, one-shot consumption, Undo, expiry, wrong source/direction, consecutive same-source navigation, independent source origins, and ordinary-keyboard exclusion. TypeScript, webpack and ESLint passed. Earlier runs exposed cached fixture viewport geometry and an existing tall-hunk renderer timeout; the fixture now uses its own tall filename and waits for a bounded viewport before asserting within-file behavior. The production navigation logic was not weakened for tests.
+**Test routing:** Extension-test windows ignore VS Code's saved `windowsState`. System Events can also resolve a same-bundle isolated Code process back to normal Code despite a PID selector. Use the existing Swift helper's direct `AXUIElementCreateApplication(pid)` with the exact task workspace title, set size before position, and verify the actual `Built-in Retina Display` bounds before tests begin. `BGV_PLACE_ON_MACBOOK=1` enables that opt-in suite gate. Normal VS Code was not installed, updated, reloaded, restarted, or moved.
+**Deployment:** Both ends must ship together: the matching Better Git receiver must be loaded before Agentic Mouse's tagged Karabiner transports are enabled. These tests do not prove physical-mouse acceptance or normal-profile installation.
+**Integrated verification:** After rebasing onto v1.2.59's shared Undo/index-lock and review fixes, the v1.2.60 production-bundle host passed 99/99. Both test-runner gates and all prior behavior were preserved. TypeScript, ESLint and the production webpack build passed; the exact isolated host closed afterward.
+---
+
+---
 **Date:** 2026-09-04T13:55:55Z
 **Trigger:** Ethan reported that one Better Git undo worked but a second said there was no recent stage, and asked for a proper buffer of up to 100 entries.
 **Symptom:** Better Git could exactly reverse only the most recent observed stage/index transition. After one successful `Cmd+Z`, the next press always reported that no receipt existed even when several files had just been staged.
