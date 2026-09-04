@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.61] — keep nearby change navigation steady
+
+- **Stop the upward-then-downward scroll bounce during rapid Next.** After reviewing a tall change, selecting a nearby added/replaced change that is already fully visible now moves only the caret instead of letting VS Code recenter the viewport. Previous uses the same steady hand-off.
+- **Keep native navigation where it is needed.** Deleted-only stops are not skipped, Ignore Trim Whitespace is respected, and unsaved editor changes remain under VS Code's native navigation. Off-screen changes and file rollover keep their existing behavior.
+- **Cover the real input path.** New regression tests reproduce native backward recentering and guard the hand-off; the isolated Computer Use harness also checks rapid mouse-shortcut Next/Previous input.
+
 ## [1.2.60] — late mouse staging keeps the original file
 
 - **Stage the file reviewed before navigation.** Agentic Mouse's one-second follow-up stages the captured origin, even when Next or Previous has already displayed another file.

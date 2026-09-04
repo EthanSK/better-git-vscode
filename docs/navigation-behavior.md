@@ -18,7 +18,9 @@ For a brand-new file, Next and Previous move by the configured logical-line step
 
 Tall diff hunks follow the same rule at hunk boundaries, with an exact ten-line step by default. Any positive custom value is also exact; setting the step to zero selects viewport-minus-overlap auto mode. Engagement tests the exact first and final rendered positions rather than comparing logical line counts: a hunk stranded near the bottom is lifted into view even when its total line count is smaller than the viewport's, while a hunk whose complete rendered range is already visible remains normal hunk-to-hunk navigation. Its exact first or last line is presented before the following press can leave it.
 
-Git's unified diff and VS Code's editor diff can divide one large replacement differently. Better Git retains both the inner added-line runs and the broader `@@` group. A native inner stop no more than five lines away and within the configured step remains native; otherwise the broader group owns the press so VS Code cannot jump dozens of lines or roll into another file while that replacement still has an unread edge.
+Git's unified diff and VS Code's editor diff can divide one large replacement differently. Better Git retains both the inner added-line runs and the broader `@@` group. An inner stop no more than five lines away and within the configured step remains change-to-change navigation; otherwise the broader group owns the press so VS Code cannot jump dozens of lines or roll into another file while that replacement still has an unread edge.
+
+When the next or previous added/replaced run is already fully visible, Better Git selects its start without scrolling. VS Code's native command always centres its range, which can scroll backwards after a tall-hunk page step and then forwards on the following press. The visible-run hand-off avoids that round trip before it occurs. Deleted-only stops in between remain native, trim-whitespace-only replacements are excluded when the editor hides them, and unsaved documents defer to native navigation because Git's on-disk geometry is stale. Turning off tall-hunk staging also disables this hand-off.
 
 Reversing direction always continues from the current caret. Previous does not reset to the bottom of the file, and Next does not restart from the top. When Previous enters a different file, Better Git VS Code deliberately lands at that file's last reviewable position so upward review begins in the right place.
 
@@ -36,7 +38,7 @@ The stable implementation uses editor-scoped `TextEditor.revealRange` calls, kee
 
 ## Regression coverage
 
-The isolated real VS Code Extension Development Host suite covers 42 navigation scenarios, including:
+The isolated real VS Code Extension Development Host suite covers navigation scenarios including:
 
 - repeated Next and Previous in wrapped untracked and staged-new files;
 - a Source Control-opened plain merge-conflict file, including block traversal with SCM focus and cross-file landing in both directions;
@@ -50,5 +52,7 @@ The isolated real VS Code Extension Development Host suite covers 42 navigation 
 - backward and stage-and-Previous cross-file landing;
 - partially staged files whose working-tree and index diff geometry differs; and
 - monotonic visible-range events that fail if overshoot-and-return is reintroduced.
+
+The nearby-run regressions first prove native backward recentering, then require monotonic rapid Next and Previous. Separate cases preserve deleted-only stops, trim-whitespace settings, and unsaved changes. Run the optional real-keyboard acceptance harness with `BGV_UI_SMOKE=1 BGV_UI_SCROLL=1`: it waits for three Next and two Previous inputs and verifies both the exact caret sequence and viewport events without invoking the navigation commands itself.
 
 The detailed incident evidence remains in [`LEARNINGS.md`](../LEARNINGS.md), and the user-facing release history is in [`CHANGELOG.md`](../CHANGELOG.md).

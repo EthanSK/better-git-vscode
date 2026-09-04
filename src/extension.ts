@@ -2490,13 +2490,13 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
 // range per `@@` header, spanning its first through last '+' line. Git and VS Code do not always group a large
 // replacement identically: VS Code can render/navigate it as one change while Git's unified body contains several
 // short '+' runs. The outer range therefore guards against an oversized built-in jump as well as a no-movement
-// cross-file rollover, while nearby inner stops remain native. Deleted-only regions produce no modified-side lines
+// cross-file rollover, while nearby inner stops remain change-to-change. Deleted-only regions produce no modified-side lines
 // and remain ordinary built-in navigation.
 //
 // ── COMPOSITION (must not break anything) ──
-// This layer is an INTERPOSER: it runs only for side-by-side text diffs (TabInputTextDiff) and only when it
-// decides the caret is inside a genuinely-tall hunk and has not already consumed the requested far edge. In every other case
-// it returns "not consumed" and the EXISTING navigation runs byte-for-byte as before — so the new-file
+// This layer is an INTERPOSER: it runs only for side-by-side text diffs (TabInputTextDiff). It pages a tall hunk
+// until its edge is consumed, or selects a wholly visible nearby run without native recentering. In other cases
+// it returns "not consumed" and the existing native navigation runs — so the new-file
 // line-scroll (plain-editor added files), modified-file hunk nav, deleted files, cross-file rollover, the
 // smart mouse commands (which just executeCommand these same scm-change commands), and the dvorak/qwerty
 // key gating are all untouched. Everything is defensive (try/catch, empty-diff -> defer) so a parse failure
@@ -2507,6 +2507,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
 interface ModifiedHunk {
     start: number; // first changed line (0-based)
     end: number; // last changed line (0-based, inclusive)
+    whitespaceOnly?: boolean; // native navigation may hide a trim-whitespace-only replacement
 }
 
 // Reads the live config for the whole feature in one place so every helper agrees on the numbers. All the
@@ -2570,9 +2571,10 @@ const hunkStagingConfig = (visLines: number) => {
 interface ModifiedHunkGeometry {
     hunks: ModifiedHunk[]; // maximal '+' runs: preserve VS Code's ordinary inner navigation stops
     outerHunks: ModifiedHunk[]; // first..last '+' line per @@ header: guard oversized jumps/rollover
+    deletionStops: number[]; // preserve native deleted-only stops between visible added-line runs
 }
 
-const emptyModifiedHunkGeometry = (): ModifiedHunkGeometry => ({ hunks: [], outerHunks: [] });
+const emptyModifiedHunkGeometry = (): ModifiedHunkGeometry => ({ hunks: [], outerHunks: [], deletionStops: [] });
 
 const getModifiedSideHunkGeometry = async (
     fileUri: vscode.Uri,
@@ -2602,6 +2604,7 @@ const getModifiedSideHunkGeometry = async (
         }
         const hunks: ModifiedHunk[] = [];
         const outerHunks: ModifiedHunk[] = [];
+        const deletionStops: number[] = [];
         const lines = diffText.split("\n");
         // Matches a unified-diff hunk header and captures the modified-side (+) start line and count.
         const headerRe = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
@@ -2611,12 +2614,23 @@ const getModifiedSideHunkGeometry = async (
         let runEnd = -1; // last line of the current '+' run (1-based)
         let outerStart = -1; // first '+' line in the current @@ body (1-based)
         let outerEnd = -1; // last '+' line in the current @@ body (1-based)
+        let removedLines: string[] = [];
+        let addedLines: string[] = [];
         const closeRun = () => {
             if (runStart !== -1) {
-                hunks.push({ start: runStart - 1, end: runEnd - 1 }); // convert to 0-based inclusive
+                hunks.push({
+                    start: runStart - 1,
+                    end: runEnd - 1,
+                    whitespaceOnly: removedLines.length === addedLines.length &&
+                        addedLines.every((line, index) => line.trim() === removedLines[index].trim()),
+                }); // convert to 0-based inclusive
                 runStart = -1;
                 runEnd = -1;
+            } else if (removedLines.length > 0) {
+                deletionStops.push(Math.max(0, modLine - 1));
             }
+            removedLines = [];
+            addedLines = [];
         };
         const closeOuterHunk = () => {
             if (outerStart !== -1) {
@@ -2639,6 +2653,7 @@ const getModifiedSideHunkGeometry = async (
             }
             const c = line[0];
             if (c === "+") {
+                addedLines.push(line.slice(1));
                 if (runStart === -1) {
                     runStart = modLine; // begin a new run of added lines
                 }
@@ -2652,6 +2667,7 @@ const getModifiedSideHunkGeometry = async (
                 closeRun(); // context line ends a run and occupies a modified-side line
                 modLine++;
             } else if (c === "-") {
+                removedLines.push(line.slice(1));
                 // Removed line: exists only on the OLD side. Don't advance the modified counter, and don't
                 // break the run — the following '+' lines (if any) remain contiguous in modified numbering.
             } else {
@@ -2661,7 +2677,7 @@ const getModifiedSideHunkGeometry = async (
         }
         closeRun(); // flush the last run at end of diff
         closeOuterHunk(); // flush the broader range from the final @@ body
-        return { hunks, outerHunks };
+        return { hunks, outerHunks, deletionStops };
     } catch {
         return emptyModifiedHunkGeometry(); // git API shape changed / diff failed -> defer to plain navigation
     }
@@ -2683,6 +2699,7 @@ interface HunkStageContext {
     editor: vscode.TextEditor; // the visible editor rendering the modified side (the thing we scroll)
     hunks: ModifiedHunk[]; // inner '+' runs used before built-in navigation
     outerHunks: ModifiedHunk[]; // broader @@ groups guarding oversized built-in jumps and rollover
+    deletionStops: number[];
 }
 
 const getHunkStageContext = async (): Promise<HunkStageContext | undefined> => {
@@ -2708,11 +2725,11 @@ const getHunkStageContext = async (): Promise<HunkStageContext | undefined> => {
     // blob. That selects diffIndexWithHEAD vs diffWithHEAD so the parsed line numbers match the shown doc.
     const active = await getActiveChange();
     const staged = active?.staged === true;
-    const { hunks, outerHunks } = await getModifiedSideHunkGeometry(fileUri, staged);
+    const { hunks, outerHunks, deletionStops } = await getModifiedSideHunkGeometry(fileUri, staged);
     if (hunks.length === 0) {
         return undefined; // nothing parseable -> defer to plain navigation
     }
-    return { editor, hunks, outerHunks };
+    return { editor, hunks, outerHunks, deletionStops };
 };
 
 // Reads the current viewport of an editor as {top, bottom, visLines}. Uses the FIRST visible range's start
@@ -2767,6 +2784,37 @@ const bottomPresentationPosition = (editor: vscode.TextEditor, line: number): vs
 const hunkIsFullyPresented = (editor: vscode.TextEditor, hunk: ModifiedHunk): boolean =>
     positionIsVisible(editor, new vscode.Position(hunk.start, 0)) &&
     positionIsVisible(editor, bottomPresentationPosition(editor, hunk.end));
+
+// Native next/previousChange always CENTRES its target range, even when that range is already visible.
+// After an AtTop page step this can scroll backwards, followed by a forward scroll on the next press.
+// Keep an entirely visible added/replaced run in place and advance only the caret. Do this BEFORE the
+// native command: restoring the viewport afterwards would retain the visible out-and-back flash.
+// Off-screen changes, deleted-only stops and file boundaries still use native navigation. Git and the
+// editor may group replacements differently; the outer-hunk interposer runs first to retain unread content.
+const selectVisibleHunkWithoutScrolling = (ctx: HunkStageContext, direction: "down" | "up"): boolean => {
+    if (ctx.editor.document.isDirty) {
+        return false; // Git geometry is on-disk; native navigation owns unsaved editor changes.
+    }
+    const caret = ctx.editor.selection.active.line;
+    const ignoreWhitespace = vscode.workspace.getConfiguration("diffEditor", ctx.editor.document.uri)
+        .get<boolean>("ignoreTrimWhitespace", true);
+    const candidates = ctx.hunks.filter(hunk => !(ignoreWhitespace && hunk.whitespaceOnly));
+    const target = direction === "down"
+        ? candidates.find(hunk => hunk.start > caret)
+        : [...candidates].reverse().find(hunk => hunk.start < caret);
+    if (!target || !hunkIsFullyPresented(ctx.editor, target)) {
+        return false;
+    }
+    const low = Math.min(caret, target.start);
+    const high = Math.max(caret, target.start);
+    if (ctx.deletionStops.some(line => line >= low && line <= high)) {
+        return false; // never jump over a deleted-only native change to reach an added-line run
+    }
+    const position = new vscode.Position(target.start, 0);
+    ctx.editor.selection = new vscode.Selection(position, position);
+    debugLog("nav", `${direction}: select already-visible hunk L${target.start + 1} without recentering`);
+    return true;
+};
 
 // TextEditor.revealRange is editor-scoped (so it works while Source Control owns focus) but applies a SMOOTH
 // renderer scroll asynchronously. Resolve only after the exact editor's visible range has stopped changing for a
@@ -3275,6 +3323,9 @@ const goToNextDiffOnce = async () => {
     if (stageCtx && (await stepOuterHunk(stageCtx, "down", true))) {
         return; // press was a broader within-@@ step; avoid an oversized built-in jump
     }
+    if (stageCtx && selectVisibleHunkWithoutScrolling(stageCtx, "down")) {
+        return;
+    }
 
     // Hunk navigation. Read the cursor from the TAB's own editor (falling back to the focused editor) so
     // the moved/didn't-move detection below works even when keyboard focus is in the SCM panel —
@@ -3356,6 +3407,9 @@ const goToPreviousDiffOnce = async () => {
     }
     if (stageCtx && (await stepOuterHunk(stageCtx, "up", true))) {
         return; // press was a broader within-@@ upward step
+    }
+    if (stageCtx && selectVisibleHunkWithoutScrolling(stageCtx, "up")) {
+        return;
     }
 
     // Hunk navigation — tab-derived editor for the before/after compare, same rationale as goToNextDiff.
