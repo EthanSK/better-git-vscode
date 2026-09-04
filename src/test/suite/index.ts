@@ -3,9 +3,13 @@ import Mocha from 'mocha';
 import { glob } from 'glob';
 
 export async function run(): Promise<void> {
+	if (process.env.BGV_TEST_START_DELAY_MS) {
+		await new Promise((resolve) => setTimeout(resolve, Number(process.env.BGV_TEST_START_DELAY_MS)));
+	}
 	// Create the mocha test
 	const mocha = new Mocha({
 		ui: 'tdd',
+		grep: process.env.BGV_TEST_GREP,
 		color: true,
 		// E2E tests drive a real VS Code window + real git subprocesses + the git extension's async state
 		// refreshes — individual tests legitimately take multiple seconds. The default 2s mocha timeout

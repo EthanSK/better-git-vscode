@@ -32,6 +32,25 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-09-04T20:30:00Z
+**Trigger:** Ethan asked for a takeover review of the undo-history fix, a wider app bug review, fixes, and real Computer Use testing.
+**Symptom:** A second VS Code window could record Undo as a fresh stage transition; a delayed observer could combine older transitions. Undo could overwrite a stage that completed while it waited for Git's index lock, and equal-tree commits escaped HEAD invalidation. Staged notebook comparisons could stage later unseen working edits. Rapid AI-generation requests could run twice. Tall-hunk navigation failed for filenames containing spaces or non-ASCII characters.
+**Root cause:** v1.2.58 locked history writes but kept observer baselines and Undo suppression window-local, with receipt selection and consumption separated from restoration. Git index/HEAD checks happened before the retrying write. Notebook diffs were missing from staged-side detection. AI requests were reserved only after asynchronous setup. Diff section matching expected literal unquoted header paths and scanned added contents as headers.
+**Fix:** v1.2.59 persists shared repository baselines and holds the history lock through receipt selection, guarded Git restore, pop, and baseline update. Git restoration creates the real index lock first, checks a private index copy, and atomically installs only the verified restore; new receipts also capture HEAD commit identity. Notebook diffs share text-diff staged detection. AI generation reserves each repository before asynchronous setup and retains the reservation through replacement confirmation. Diff paths decode Git C/octal quoting and only inspect file headers before hunks. The 100-entry history and old-receipt migration remain intact.
+**Validation:** The final production-bundle Extension Development Host run passed 88/88 in 51 seconds, including linked-worktree isolation, split-index restoration, and unborn-branch empty-index restoration. TypeScript, ESLint, webpack production build, diff whitespace checks, nine-file VSIX archive validation, v1.2.59 packaged identity, and byte-identical bundled JavaScript passed. Earlier full-run clipboard interference and a renderer timeout were investigated and both focused reruns passed before the clean full run. AI tests use local CLI stubs; no paid model request or Windows/Linux physical UI run was performed.
+**Guard:** Regression-first probes failed for cross-window Undo (2 receipts instead of 1), staged notebook re-staging, duplicate AI setup (2 calls instead of 1), and real Git diff paths with spaces/non-ASCII names. Tests cover concurrent history consumers, delayed observers, index-lock retry races, equal-tree HEAD changes, existing-lock ownership, quoted/control-character names, and real-host tall-hunk steps for a spaced non-ASCII filename. Computer Use clicked the status-bar Stage & Next for one file and the editor-title stage button for a second, focused the SCM file row, and pressed Cmd+Z twice; the live Git assertions printed `BETTER_GIT_COMPUTER_USE_VERIFIED working-files-preserved=true`. Only the isolated host was controlled, on the display named Built-in Retina Display; the normal VS Code window remained untouched.
+---
+
+---
+**Date:** 2026-09-04T20:31:00Z
+**Trigger:** Running the full extension-host tests while Ethan was actively using the Mac.
+**Symptom:** The existing image-badge clipboard assertion failed with newer user-copied text, and its unconditional finally block could replace that newer clipboard value. Failed test runners could skip fixture cleanup through process.exit.
+**Root cause:** Test cleanup assumed the system clipboard was exclusively test-owned and terminated the launcher before its finally block could run.
+**Fix:** Restore the saved clipboard only while the test sentinel is still current, avoid echoing clipboard contents in assertion output, and set process.exitCode instead of exiting before fixture cleanup. A focused rerun passed both the image matrix and an unrelated tall-hunk navigation timeout without changing those product paths.
+**Guard:** Preserve concurrent user state during live-host tests. A shared clipboard change or renderer timeout is not product-defect proof; retain failed-run evidence and rerun the precise case before altering application behavior. BGV_UI_SMOKE selects the opt-in manual acceptance harness; BGV_TEST_GREP and BGV_TEST_START_DELAY_MS support focused runs and safe one-time window placement without changing the normal suite defaults.
+---
+
+---
 **Date:** 2026-09-04T13:55:55Z
 **Trigger:** Ethan reported that one Better Git undo worked but a second said there was no recent stage, and asked for a proper buffer of up to 100 entries.
 **Symptom:** Better Git could exactly reverse only the most recent observed stage/index transition. After one successful `Cmd+Z`, the next press always reported that no receipt existed even when several files had just been staged.

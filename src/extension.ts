@@ -4,12 +4,12 @@ import * as vscode from "vscode";
 // host — safe to import at top level.
 import * as fs from "fs";
 import * as path from "path";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 import { StageTransactionStore } from "./stageTransactionStore";
-import { IndexSnapshot, StageTransactionObserver } from "./stageTransactionObserver";
+import { StageTransactionObserver } from "./stageTransactionObserver";
+import { readIndexSnapshot, restoreStageTransaction } from "./gitStageUndo";
+import { extractFileDiffSection } from "./gitDiffSection";
 import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./gitIndexRetry";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
@@ -96,44 +96,6 @@ let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file 
 let stageTransactionStore: StageTransactionStore | undefined;
 let stageTransactionObserver: StageTransactionObserver | undefined;
 let stageUndoQueue: Promise<void> = Promise.resolve();
-const execFileAsync = promisify(execFile);
-
-const writeIndexTree = async (repoRoot: string): Promise<string> => {
-    const { stdout } = await runWithTransientGitIndexRetry(() => execFileAsync(
-        "git",
-        ["write-tree"],
-        { cwd: repoRoot, encoding: "utf8" }
-    ));
-    return stdout.trim();
-};
-
-const readHeadTree = async (repoRoot: string): Promise<string> => {
-    try {
-        const { stdout } = await execFileAsync(
-            "git",
-            ["rev-parse", "--verify", "--quiet", "HEAD^{tree}"],
-            { cwd: repoRoot, encoding: "utf8" }
-        );
-        return stdout.trim();
-    } catch (error) {
-        const code = (error as { code?: unknown }).code;
-        if (code === 1 || code === 128) {
-            // An unborn repository has no HEAD tree. The empty sentinel is
-            // stable until the first commit and still permits staging undo.
-            return "";
-        }
-        throw error;
-    }
-};
-
-const readIndexSnapshot = async (repoRoot: string): Promise<IndexSnapshot> => {
-    const [headTree, indexTree] = await Promise.all([
-        readHeadTree(repoRoot),
-        writeIndexTree(repoRoot),
-    ]);
-    return { headTree, indexTree };
-};
-
 const startIndexTransitionObservation = async (context: vscode.ExtensionContext): Promise<void> => {
     const gitExtension = vscode.extensions.getExtension<any>("vscode.git");
     if (!gitExtension || !stageTransactionObserver) {
@@ -263,68 +225,43 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
 // work. A successful restore removes only that receipt, exposing the previous
 // transaction for the next Cmd+Z / Ctrl+Z.
 const undoLastStageTransaction = async (): Promise<void> => {
-    const transaction = stageTransactionObserver
-        ? await stageTransactionObserver.loadLatestReceipt()
-        : await stageTransactionStore?.loadLatest();
-    if (!transaction) {
+    const result = stageTransactionObserver
+        ? await stageTransactionObserver.undoLatest(restoreStageTransaction)
+        : await stageTransactionStore?.consumeLatest(restoreStageTransaction);
+    const transaction = result?.transaction;
+    if (!result || result.status === "empty" || !transaction) {
         vscode.window.showInformationMessage("Better Git: There is no recent stage/index change to undo.");
         return;
     }
 
-    const current = await readIndexSnapshot(transaction.repoRoot);
-    if (current.headTree !== transaction.headTree) {
-        if (stageTransactionObserver) {
-            await stageTransactionObserver.discardRepositoryHistory(transaction.repoRoot);
-        } else {
-            await stageTransactionStore?.discardRepository(transaction.repoRoot);
-        }
+    if (result.status === "head-changed") {
         vscode.window.showWarningMessage(
             "Better Git: HEAD changed after the saved stage, so that repository's undo history was discarded without changing your index."
         );
         return;
     }
-    if (current.indexTree !== transaction.afterIndexTree) {
-        if (stageTransactionObserver) {
-            await stageTransactionObserver.discardRepositoryHistory(transaction.repoRoot);
-        } else {
-            await stageTransactionStore?.discardRepository(transaction.repoRoot);
-        }
+    if (result.status === "index-changed") {
         vscode.window.showWarningMessage(
             "Better Git: The Git index changed again after the saved stage, so that repository's undo history was discarded without changing your index. Undo it manually to preserve newer staged work."
         );
         return;
     }
 
-    const restore = async (): Promise<void> => {
-        await runWithTransientGitIndexRetry(() => execFileAsync(
-            "git",
-            ["read-tree", transaction.beforeIndexTree],
-            { cwd: transaction.repoRoot, encoding: "utf8" }
-        ));
-        try {
-            const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
-            const repo = git?.repositories?.find(
-                (candidate: any) => String(candidate.rootUri?.fsPath ?? "") === transaction.repoRoot
-            );
-            if (typeof repo?.status === "function") {
-                await repo.status();
-            }
-        } catch {
-            // The exact Git index restore already succeeded. Refresh is best effort.
+    // Refresh only after releasing the shared history lock. The resulting Git
+    // event sees the persisted restored baseline in every observing window.
+    try {
+        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+        const repo = git?.repositories?.find(
+            (candidate: any) => String(candidate.rootUri?.fsPath ?? "") === transaction.repoRoot
+        );
+        if (typeof repo?.status === "function") {
+            await repo.status();
         }
-    };
-    if (stageTransactionObserver) {
-        await stageTransactionObserver.runSuppressed(transaction.repoRoot, restore);
-    } else {
-        await restore();
-    }
-    if (stageTransactionObserver) {
-        await stageTransactionObserver.removeReceipt(transaction);
-    } else {
-        await stageTransactionStore?.remove(transaction);
+    } catch {
+        // The exact Git index restore already succeeded. Refresh is best effort.
     }
 
-    const remainingHistory = await stageTransactionStore?.loadAll() ?? [];
+    const remainingHistory = result.remaining;
     const previousTransaction = remainingHistory[remainingHistory.length - 1];
     lastStagedUri = undefined;
     lastStagedStatusBarItem?.hide();
@@ -1739,7 +1676,7 @@ const getActiveChange = async (): Promise<ActiveChange | null> => {
     // index/staged diff and the plain `file` uri for the working-tree diff (see getRightResource in
     // vscode/extensions/git/src/repository.ts), so the scheme tells us the side unambiguously.
     const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (input instanceof vscode.TabInputTextDiff) {
+    if (input instanceof vscode.TabInputTextDiff || input instanceof vscode.TabInputNotebookDiff) {
         return { path: input.modified.path, staged: input.modified.scheme === "git" };
     }
     // 3-way merge editor (conflict) — recognised via the shared isMergeEditorInput predicate. `result` is the
@@ -2612,56 +2549,6 @@ const hunkStagingConfig = (visLines: number) => {
 // the parser. Any failure (git API not ready, method missing, unreadable diff, file not in the diff) returns
 // [] so callers defer to plain navigation.
 
-// Extract the single-file section for `fileUri` out of a multi-file unified diff (as produced by git diff of
-// the whole repo). A unified diff is a concatenation of per-file sections, each starting with a
-// `diff --git a/<rel> b/<rel>` header. We locate the section whose modified-side header line (`+++ b/<rel>`)
-// matches this file's repo-relative path and return just that section's text; the existing @@-parser then
-// sees exactly one file's hunks. Returns "" when the file isn't present (e.g. it's fully staged so it has no
-// working-vs-index changes), which makes getModifiedSideHunkGeometry return empty geometry and defer to plain navigation.
-const extractFileDiffSection = (fullDiff: string, fileUri: vscode.Uri, repo: any): string => {
-    if (!fullDiff) {
-        return "";
-    }
-    // Repo-relative, forward-slashed, lowercased path — how it appears (case-insensitively) after `+++ b/`.
-    const rootPath: string | undefined = repo?.rootUri?.fsPath;
-    let rel = fileUri.fsPath;
-    if (rootPath && rel.toLowerCase().startsWith(rootPath.toLowerCase())) {
-        rel = rel.slice(rootPath.length);
-    }
-    rel = rel.replace(/^[\/\\]+/, "").replace(/\\/g, "/").toLowerCase();
-    const lines = fullDiff.split("\n");
-    // Walk sections: a new section begins at each "diff --git" line. Collect the current section; when we hit
-    // the next header (or end), decide whether the section we just closed is the one we want (its `+++ b/<rel>`
-    // — or, for a deletion, `--- a/<rel>` — matches). Return the first matching section.
-    let current: string[] = [];
-    let matched: string[] | undefined;
-    const targetMarkers = [`+++ b/${rel}`, `--- a/${rel}`];
-    const closeSection = () => {
-        if (current.length === 0) {
-            return;
-        }
-        const isMatch = current.some((l) => {
-            const low = l.toLowerCase();
-            return targetMarkers.some((m) => low === m);
-        });
-        if (isMatch && !matched) {
-            matched = current;
-        }
-        current = [];
-    };
-    for (const line of lines) {
-        if (line.startsWith("diff --git ")) {
-            closeSection(); // finish the previous section before starting a new one
-            current = [line];
-            continue;
-        }
-        if (current.length > 0) {
-            current.push(line);
-        }
-    }
-    closeSection(); // flush the final section
-    return matched ? matched.join("\n") : "";
-};
 
 interface ModifiedHunkGeometry {
     hunks: ModifiedHunk[]; // maximal '+' runs: preserve VS Code's ordinary inner navigation stops
@@ -2690,7 +2577,8 @@ const getModifiedSideHunkGeometry = async (
             diffText = await repo.diffIndexWithHEAD(fileUri.fsPath); // staged diff (index vs HEAD)
         } else {
             const fullWorkingVsIndex: string = await repo.diff(false); // `git diff` — working tree vs index, whole repo
-            diffText = extractFileDiffSection(fullWorkingVsIndex, fileUri, repo); // just this file's section
+            const relativePath = path.relative(repo.rootUri.fsPath, fileUri.fsPath).split(path.sep).join("/");
+            diffText = extractFileDiffSection(fullWorkingVsIndex, relativePath);
         }
         if (!diffText) {
             return emptyModifiedHunkGeometry();

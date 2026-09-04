@@ -46,7 +46,7 @@ async function main() {
 
 		// The path to test runner
 		// Passed to --extensionTestsPath
-		const extensionTestsPath = path.resolve(__dirname, './suite/index');
+		const extensionTestsPath = path.resolve(__dirname, process.env.BGV_UI_SMOKE ? './suite/uiSmoke' : './suite/index');
 
 		// ── Build the fixture repo ─────────────────────────────────────────────────────────────
 		fixturePath = fs.mkdtempSync(path.join(os.tmpdir(), 'better-git-vscode-e2e-'));
@@ -203,7 +203,7 @@ process.stdout.write(JSON.stringify({
 		});
 	} catch (err) {
 		console.error('Failed to run tests', err);
-		process.exit(1);
+		process.exitCode = 1; // run finally so failed tests also remove their isolated fixtures/profile
 	} finally {
 		delete process.env.BGV_REVEAL_WORKTREE_PATH;
 		delete process.env.BGV_DISABLED_REVEAL_WORKTREE_PATH;

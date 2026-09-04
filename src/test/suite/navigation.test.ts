@@ -476,6 +476,27 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('staging a staged notebook diff preserves its later unstaged edits', async () => {
+		const rel = 'committed/notebook.ipynb';
+		const uri = wsUri(rel);
+		const notebook = (text: string) => JSON.stringify({
+			cells: [{ cell_type: 'code', execution_count: null, metadata: {}, outputs: [], source: [text] }],
+			metadata: {}, nbformat: 4, nbformat_minor: 2,
+		});
+		write(rel, notebook("print('staged')\n"));
+		git(`add ${rel}`);
+		write(rel, notebook("print('later unstaged')\n"));
+		await refreshUntil(() => inIndex(rel, 0) && inWorkingTree(rel, 5), 'dual-state notebook');
+		const before = execFileSync('git', ['write-tree'], { cwd: ws, encoding: 'utf8' }).trim();
+		await vscode.commands.executeCommand('vscode.diff', toGitUri(uri, 'HEAD'), toGitUri(uri, ''), 'notebook.ipynb (Index)');
+		await poll(() => vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputNotebookDiff,
+			'staged notebook diff');
+		await sleep(250); // allow the notebook renderer to finish before changing tabs
+		await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+		assert.strictEqual(execFileSync('git', ['write-tree'], { cwd: ws, encoding: 'utf8' }).trim(), before,
+			'The staged notebook view must not stage unseen working-file edits');
+	});
+
 	test('Codex commit message uses only staged changes when the repository has a staged diff', async () => {
 		const fakeCodexPath = process.env.BGV_FAKE_CODEX_PATH;
 		const capturePath = process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
@@ -1032,15 +1053,17 @@ suite('SCM change navigation E2E', () => {
 		};
 
 		const clipboardBefore = await vscode.env.clipboard.readText();
+		const clipboardGuard = 'BETTER_GIT_IMAGE_BADGE_CLIPBOARD_GUARD';
 		try {
 			// Modified tracked image: VS Code 1.135 exposes this comparison with no public Tab input/resource.
 			// The workbench-path fallback must resolve it without changing Ethan's clipboard.
-			await vscode.env.clipboard.writeText('BETTER_GIT_IMAGE_BADGE_CLIPBOARD_GUARD');
+			await vscode.env.clipboard.writeText(clipboardGuard);
 			fs.writeFileSync(trackedUri.fsPath, imageB);
 			await refreshUntil(() => inWorkingTree(trackedRel, 5), 'modified image to appear in working tree');
 			await vscode.commands.executeCommand('git.openChange', trackedUri);
 			await expectFireBadge(trackedUri, 'modified image');
-			assert.strictEqual(await vscode.env.clipboard.readText(), 'BETTER_GIT_IMAGE_BADGE_CLIPBOARD_GUARD');
+			assert.ok(await vscode.env.clipboard.readText() === clipboardGuard,
+				'Clipboard changed during the image test; check for concurrent user input before attributing it to the extension');
 
 			// Staged modification.
 			git(`add ${trackedRel}`);
@@ -1146,7 +1169,11 @@ suite('SCM change navigation E2E', () => {
 			await expectFireBadge(textUri, 'text diff after rapid image switch');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(trackedUri), undefined);
 		} finally {
-			await vscode.env.clipboard.writeText(clipboardBefore);
+			// The host shares the system clipboard with Ethan. Never restore our
+			// older saved value over something he copied during this test.
+			if (await vscode.env.clipboard.readText() === clipboardGuard) {
+				await vscode.env.clipboard.writeText(clipboardBefore);
+			}
 		}
 	});
 
@@ -1509,6 +1536,22 @@ suite('SCM change navigation E2E', () => {
 		await expectCursorAt('committed/mod_a.txt', 24);
 		await nextChange(); // out of hunks
 		await expectActiveTab('committed/mod_d.txt');
+	});
+
+	test('MODIFIED tall hunk: filenames with spaces and non-ASCII characters keep intermediate steps', async () => {
+		const rel = 'committed/tall é file.txt';
+		write(rel, lines(260, 'quoted'));
+		git('add .');
+		git('commit -m "quoted filename fixture"');
+		const content = lines(260, 'quoted').split('\n');
+		for (let i = 10; i <= 229; i++) { content[i] = `quoted EDITED line ${i + 1}`; }
+		write(rel, content.join('\n'));
+		await refreshUntil(() => inWorkingTree(rel, 5), 'quoted file to appear as MODIFIED');
+		await openWorkingDiffAt(rel, 0);
+		await nextChange();
+		await expectCursorVisibleAt(rel, 10);
+		await nextChange();
+		await expectCursorVisibleAt(rel, 20);
 	});
 
 	test('MODIFIED tall hunk: repeated/rapid next scrolls down and previous scrolls back up', async () => {
