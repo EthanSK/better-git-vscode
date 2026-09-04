@@ -1946,7 +1946,7 @@ suite('SCM change navigation E2E', () => {
 		);
 	});
 
-	test('undo follows the latest external stage without removing earlier staged work', async () => {
+	test('repeated undo walks the stage history without removing earlier staged work prematurely', async () => {
 		const first = lines(24, 'mod_a').split('\n');
 		first[4] = 'mod_a STAGE-THEN-UNDO line 5';
 		write('committed/mod_a.txt', first.join('\n') + '\n');
@@ -1968,7 +1968,44 @@ suite('SCM change navigation E2E', () => {
 		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 		await refreshUntil(
 			() => inIndex('committed/mod_a.txt', 0) && !inIndex('committed/mod_d.txt') && inWorkingTree('committed/mod_d.txt', 5),
-			'undo to remove only the latest external stage'
+			'first undo to remove only the latest external stage'
+		);
+
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await refreshUntil(
+			() => !inIndex('committed/mod_a.txt') && inWorkingTree('committed/mod_a.txt', 5) &&
+				!inIndex('committed/mod_d.txt') && inWorkingTree('committed/mod_d.txt', 5),
+			'second undo to restore the earlier Better Git stage'
+		);
+	});
+
+	test('rapid repeated undo consumes one stage-history entry per invocation', async () => {
+		const first = lines(24, 'mod_a').split('\n');
+		first[5] = 'mod_a RAPID UNDO line 6';
+		write('committed/mod_a.txt', first.join('\n') + '\n');
+		const second = lines(10, 'mod_d').split('\n');
+		second[7] = 'mod_d RAPID UNDO line 8';
+		write('committed/mod_d.txt', second.join('\n') + '\n');
+		await refreshUntil(
+			() => inWorkingTree('committed/mod_a.txt', 5) && inWorkingTree('committed/mod_d.txt', 5),
+			'rapid undo fixtures to appear'
+		);
+
+		git('add committed/mod_a.txt');
+		await refreshUntil(() => inIndex('committed/mod_a.txt', 0), 'first rapid undo stage to appear');
+		await extensionApi.whenStageTransactionsSettled();
+		git('add committed/mod_d.txt');
+		await refreshUntil(() => inIndex('committed/mod_d.txt', 0), 'second rapid undo stage to appear');
+		await extensionApi.whenStageTransactionsSettled();
+
+		await Promise.all([
+			vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance'),
+			vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance'),
+		]);
+		await refreshUntil(
+			() => !inIndex('committed/mod_a.txt') && inWorkingTree('committed/mod_a.txt', 5) &&
+				!inIndex('committed/mod_d.txt') && inWorkingTree('committed/mod_d.txt', 5),
+			'rapid undos to restore both index transitions'
 		);
 	});
 

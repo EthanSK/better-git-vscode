@@ -95,6 +95,7 @@ let lastStagedStatusBarItem: vscode.StatusBarItem | undefined; // the bottom-bar
 let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file staged THROUGH this extension
 let stageTransactionStore: StageTransactionStore | undefined;
 let stageTransactionObserver: StageTransactionObserver | undefined;
+let stageUndoQueue: Promise<void> = Promise.resolve();
 const execFileAsync = promisify(execFile);
 
 const writeIndexTree = async (repoRoot: string): Promise<string> => {
@@ -254,15 +255,17 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
     recordLastStaged(uri); // success -> update the status bar with the file we just staged
 };
 
-// Undo only the latest observed stage/index transaction, and only while HEAD and
-// the index are still byte-for-byte the state produced by that transaction.
-// Restoring the captured pre-stage tree is an exact inverse even for a partially
-// staged file; refusing after any intervening change prevents this command from
-// silently removing newer staged work.
+// Undo the latest observed stage/index transaction from a bounded persistent
+// LIFO history, and only while HEAD and the index are still byte-for-byte the
+// state produced by that transaction. Restoring the captured pre-stage tree is
+// an exact inverse even for a partially staged file; refusing after any
+// intervening change prevents this command from silently removing newer staged
+// work. A successful restore removes only that receipt, exposing the previous
+// transaction for the next Cmd+Z / Ctrl+Z.
 const undoLastStageTransaction = async (): Promise<void> => {
     const transaction = stageTransactionObserver
         ? await stageTransactionObserver.loadLatestReceipt()
-        : await stageTransactionStore?.load();
+        : await stageTransactionStore?.loadLatest();
     if (!transaction) {
         vscode.window.showInformationMessage("Better Git: There is no recent stage/index change to undo.");
         return;
@@ -270,16 +273,24 @@ const undoLastStageTransaction = async (): Promise<void> => {
 
     const current = await readIndexSnapshot(transaction.repoRoot);
     if (current.headTree !== transaction.headTree) {
-        await stageTransactionStore?.clear();
+        if (stageTransactionObserver) {
+            await stageTransactionObserver.discardRepositoryHistory(transaction.repoRoot);
+        } else {
+            await stageTransactionStore?.discardRepository(transaction.repoRoot);
+        }
         vscode.window.showWarningMessage(
-            "Better Git: HEAD changed after the saved stage, so the undo was discarded without changing your index."
+            "Better Git: HEAD changed after the saved stage, so that repository's undo history was discarded without changing your index."
         );
         return;
     }
     if (current.indexTree !== transaction.afterIndexTree) {
-        await stageTransactionStore?.clear();
+        if (stageTransactionObserver) {
+            await stageTransactionObserver.discardRepositoryHistory(transaction.repoRoot);
+        } else {
+            await stageTransactionStore?.discardRepository(transaction.repoRoot);
+        }
         vscode.window.showWarningMessage(
-            "Better Git: The Git index changed again after the saved stage, so the undo was discarded without changing your index. Undo it manually to preserve newer staged work."
+            "Better Git: The Git index changed again after the saved stage, so that repository's undo history was discarded without changing your index. Undo it manually to preserve newer staged work."
         );
         return;
     }
@@ -307,16 +318,33 @@ const undoLastStageTransaction = async (): Promise<void> => {
     } else {
         await restore();
     }
-    await stageTransactionStore?.clear();
+    if (stageTransactionObserver) {
+        await stageTransactionObserver.removeReceipt(transaction);
+    } else {
+        await stageTransactionStore?.remove(transaction);
+    }
+
+    const remainingHistory = await stageTransactionStore?.loadAll() ?? [];
+    const previousTransaction = remainingHistory[remainingHistory.length - 1];
     lastStagedUri = undefined;
     lastStagedStatusBarItem?.hide();
+    if (previousTransaction?.kind === "betterGitStage" && previousTransaction.uri) {
+        try {
+            recordLastStaged(vscode.Uri.parse(previousTransaction.uri));
+        } catch {
+            // The exact undo has succeeded; stale presentation data is optional.
+        }
+    }
     const subject = transaction.uri
         ? ` for ${path.basename(vscode.Uri.parse(transaction.uri).fsPath)}`
         : "";
-    vscode.window.showInformationMessage(`Better Git: Undid the latest stage${subject}.`);
+    const remaining = remainingHistory.length === 0
+        ? ""
+        : ` ${remainingHistory.length} earlier ${remainingHistory.length === 1 ? "undo remains" : "undos remain"}.`;
+    vscode.window.showInformationMessage(`Better Git: Undid the latest stage${subject}.${remaining}`);
 };
 
-const runUndoCommand = async (): Promise<void> => {
+const executeUndoCommand = async (): Promise<void> => {
     try {
         await undoLastStageTransaction();
     } catch (error) {
@@ -329,6 +357,16 @@ const runUndoCommand = async (): Promise<void> => {
             : `Better Git: The saved stage could not be undone${detail ? ` — ${detail}` : "."}`;
         await vscode.window.showErrorMessage(message);
     }
+};
+
+// VS Code may invoke an async command again before the prior promise settles
+// (key repeat and rapid mouse double-presses both do this). Serialize consumers
+// so each invocation restores and removes one entry before the next loads the
+// new top of the LIFO history.
+const runUndoCommand = (): Promise<void> => {
+    const result = stageUndoQueue.then(executeUndoCommand, executeUndoCommand);
+    stageUndoQueue = result.catch(() => undefined);
+    return result;
 };
 
 // ──────────────────────────────────────────────────────────────────────────────────────────

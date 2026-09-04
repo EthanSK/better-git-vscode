@@ -135,8 +135,10 @@ All bindings ship as defaults and are fully overridable (see below).
 > binding if you want the original behaviour back.
 
 > **`Cmd+Z` / `Ctrl+Z` in the Source Control Changes list** exactly undoes the latest observed
-> stage/index transition. The binding applies only while that list owns focus and no text input
-> is active. Editors and the Source Control commit-message box keep their normal text Undo behavior.
+> stage/index transition. Repeated presses walk a persistent last-in, first-out history of up to
+> 100 exact transitions, including stages made through Better Git, VS Code's Git actions, or the
+> terminal. The binding applies only while that list owns focus and no text input is active.
+> Editors and the Source Control commit-message box keep their normal text Undo behavior.
 
 The **`+` button in the editor title bar** now **stages the current file _and_ advances** to the
 next change — in whatever direction you last navigated. Jump forward through changes (`>` / `Alt+.`)
@@ -162,7 +164,7 @@ setup the author uses.
 | **Forward** (thumb front) | `F17` | `better-git-vscode.smart-forward` | In a review view: **previous** change. Elsewhere: browser Forward. |
 | (extra button) | `F18` | `better-git-vscode.stage-and-next-changed-file` | Stage current file **+ next** change. |
 | (extra button) | `F19` | `better-git-vscode.stage-and-previous-changed-file` | Stage current file **+ previous** change. |
-| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo the latest stage/index transition, waiting for any already-notified index observation before reading its receipt. |
+| (rapid double press) | `F16` | `better-git-vscode.undo-last-stage-and-advance` | Exactly undo one stage/index transition from the persistent 100-entry history. |
 
 **Why the "smart" commands are dual-mode.** `smart-back` / `smart-forward` detect whether you're in a
 diff/review view (a diff, a brand-new/untracked file, a deleted file, a merge-conflict editor, or a
@@ -215,9 +217,10 @@ keyboard. Better Git observes the repository's exact index tree, so a stage made
 keyboard/UI, another mouse control, or `git add` gets the same undo receipt. A brief `index.lock`
 from another Git operation is retried for a bounded
 window; Better Git never deletes the lock and reports if staging still cannot proceed. The exact
-undo receipt persists across VS Code window/extension-host restarts. Every later index transition
-becomes the new exact undo target; the command still requires both `HEAD` and the current index to
-match its receipt before restoring the prior index tree. It never changes working files.
+undo history persists across VS Code window/extension-host restarts. Every later index transition
+becomes the new exact undo target without replacing the earlier entries; the command still requires
+both `HEAD` and the current index to match its receipt before restoring the prior index tree. It never
+changes working files.
 
 ## Left/right-hand navigation and Dvorak mode
 
