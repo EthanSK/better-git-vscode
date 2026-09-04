@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 // host — safe to import at top level.
 import * as fs from "fs";
 import * as path from "path";
+import { performance } from "perf_hooks";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 import { StageTransactionStore } from "./stageTransactionStore";
@@ -76,6 +77,14 @@ const debugLog = (tag: string, message: string): void => {
 // stage-current-file-and-advance command can read/write it. Defaults to "next" — a fresh session with no
 // nav yet advances forward (top-to-bottom), which is the overwhelmingly common review order.
 let lastNavDirection: "next" | "previous" = "next";
+
+type MouseReviewSource = "corsair" | "razer";
+const mouseNavigationOrigins = new Map<MouseReviewSource, {
+    change: FileChange;
+    direction: "next" | "previous";
+    requestedAt: number;
+}>(); // A late stage press belongs to the file left by this mouse, never the newly displayed file. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
+const isMouseReviewSource = (source: unknown): source is MouseReviewSource => source === "corsair" || source === "razer";
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
 // LAST-STAGED STATUS BAR (v1.1.0)
@@ -638,15 +647,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     lastStagedStatusBarItem.hide();
     // Every forward nav command records lastNavDirection = "next"; every backward one records "previous".
     // This is what the editor-title "+" button reads to decide which way to advance after staging (v1.2.7).
-    let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", async () => {
+    let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", async (source?: unknown) => {
         lastNavDirection = "next"; // he just jumped FORWARD through changes -> "+" should advance forward
-        await goToNextDiff();
+        await navigateWithMouseOrigin("next", source);
     });
 
-    let disposable2 = vscode.commands.registerCommand("better-git-vscode.previous-scm-change", async () => {
+    let disposable2 = vscode.commands.registerCommand("better-git-vscode.previous-scm-change", async (source?: unknown) => {
         lastNavDirection = "previous"; // he just jumped BACKWARD -> "+" should advance backward
-        await goToPreviousDiff();
+        await navigateWithMouseOrigin("previous", source);
     });
+
+    const stageBeforeMouseNavigation = vscode.commands.registerCommand(
+        "better-git-vscode.stage-before-mouse-navigation", stageMouseNavigationOrigin
+    );
 
     let disposable3 = vscode.commands.registerCommand("better-git-vscode.next-changed-file", async () => {
         lastNavDirection = "next";
@@ -1155,6 +1168,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         disposable9, disposable10, disposable11, disposable12, disposable13, disposable14, disposable15,
         disposable16, // add-current-worktree-to-workspace (v1.2.14)
         undoLastStageDisposable,
+        stageBeforeMouseNavigation,
+        vscode.window.onDidChangeWindowState(state => {
+            if (!state.focused) { mouseNavigationOrigins.clear(); }
+        }),
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,
         addWorktreeToWorkspaceCommand,
@@ -3160,6 +3177,55 @@ const serializeChangeNavigation = (operation: () => Promise<void>): Promise<void
     return run;
 };
 
+// Capture inside the existing navigation queue, before moving; a rapid late press queues behind capture,
+// while its deadline uses input arrival, not renderer/Git latency. Ordinary keyboard navigation clears it.
+const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unknown): Promise<void> => {
+    const requestedAt = performance.now();
+    return serializeChangeNavigation(async () => {
+        if (isMouseReviewSource(source)) {
+            mouseNavigationOrigins.delete(source);
+            const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+            const active = await getActiveChange();
+            const uri = await getActiveFileUri();
+            if (uri && active && active.staged !== true) {
+                const matches = (await getFileChanges(uri)).filter(change => change.uri.toString() === uri.toString());
+                const change = matches.find(candidate => !candidate.staged);
+                if (change && (active.staged === false || matches.length === 1) && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {
+                    mouseNavigationOrigins.set(source, { change, direction, requestedAt });
+                }
+            }
+        } else {
+            mouseNavigationOrigins.clear();
+        }
+        await (direction === "next" ? goToNextDiffOnce() : goToPreviousDiffOnce());
+    });
+};
+
+// Do not navigate back to discover the old file: that changes review state and stages the wrong file when
+// navigation settles before a slow press. Consume the exact source receipt once, or do nothing. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
+const stageMouseNavigationOrigin = (args: unknown): Promise<void> => {
+    const requestedAt = performance.now();
+    if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) { return Promise.resolve(); }
+    const { source, direction } = args;
+    if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) { return Promise.resolve(); }
+    return serializeChangeNavigation(() => runStageCommand(async () => {
+        const origin = mouseNavigationOrigins.get(source);
+        mouseNavigationOrigins.delete(source);
+        if (!origin || origin.direction !== direction || requestedAt < origin.requestedAt || requestedAt - origin.requestedAt >= 1000) { return; }
+        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+        const repo = git?.getRepository(origin.change.uri);
+        if (!repo) { return; } // A closed repository must not redirect the captured file to the first workspace repo.
+        const stillUnstaged = (await getFileChanges(origin.change.uri)).some(change => !change.staged && change.uri.toString() === origin.change.uri.toString());
+        if (!stillUnstaged) { return; }
+        const shown = await getActiveFileUri();
+        if (shown?.toString() === origin.change.uri.toString()) {
+            await stageCurrentFileAndAdvance(direction, origin.change);
+        } else {
+            await stageThroughExtension(repo, origin.change.uri); // Navigation already crossed files: stage the origin without a second jump.
+        }
+    }));
+};
+
 const goToNextDiffOnce = async () => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath — avoids the clipboard
@@ -3372,18 +3438,18 @@ const stageCurrentFile = async () => {
 // stage-and-advance commands: "next" advances down the list (top-to-bottom review, shift + next), "previous"
 // moves up (bottom-to-top review, shift + previous). Only the landing-target differs; everything else (the
 // staged-side no-op, the safety guard, the untracked-aware list, the editor handling) is identical.
-const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
+const stageCurrentFileAndAdvance = async (direction: "next" | "previous", capturedChange?: FileChange) => {
     const gitExtension = vscode.extensions.getExtension<any>("vscode.git")!.exports;
     const git = gitExtension.getAPI(1);
 
-    const currentUri = await getActiveFileUri();
+    const currentUri = capturedChange?.uri ?? await getActiveFileUri();
     if (!currentUri) {
         return;
     }
 
     // If the active diff is the STAGED side of a file, there's nothing to stage — do nothing (don't jump
     // to an unstaged file). This command is for working through UNSTAGED files; on a staged file it no-ops.
-    const activeSide = await getActiveChange();
+    const activeSide = capturedChange ?? await getActiveChange();
     if (activeSide?.staged === true) {
         return;
     }
@@ -3409,7 +3475,7 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous") => {
     // includes merge conflicts (as staged:false entries) in the correct SCM order, so deriving both from it
     // fixes both parts with no divergent merge-only branch. Read it BEFORE staging: getFileChanges snapshots
     // activeRepo.state at call time, so the target is computed against the pre-stage state (deterministic).
-    const allChanges = await getFileChanges();
+    const allChanges = await getFileChanges(currentUri);
 
     // SAFETY GUARD: only act if the active file is actually a change (staged, unstaged, untracked, OR a merge
     // conflict). Without this, an accidental stage-and-advance while editing a clean/unrelated file would run

@@ -38,6 +38,22 @@ suite('Extension Test Suite', () => {
 		assert.ok(settingIds.every(id => id.startsWith('better-git-vscode.')), 'every contributed setting must use better-git-vscode.*');
 	});
 
+	test('mouse origin gestures have distinct source-tagged navigation and late-stage transports', () => {
+		const manifest = vscode.extensions.getExtension('EthanSK.better-git-vscode')!.packageJSON;
+		const bindings: Array<{ command: string; mac?: string; args?: unknown }> = manifest.contributes.keybindings;
+		for (const source of ['corsair', 'razer']) {
+			const modifiers = `ctrl+alt+cmd+${source === 'razer' ? 'shift+' : ''}`;
+			for (const [direction, navigate, stage] of [['next', 'f13', 'f18'], ['previous', 'f17', 'f19']]) {
+				const navigation = bindings.find(binding => binding.mac === modifiers + navigate);
+				assert.strictEqual(navigation?.command, `better-git-vscode.${direction}-scm-change`);
+				assert.strictEqual(navigation?.args, source);
+				const late = bindings.find(binding => binding.mac === modifiers + stage);
+				assert.strictEqual(late?.command, 'better-git-vscode.stage-before-mouse-navigation');
+				assert.deepStrictEqual(late?.args, { source, direction });
+			}
+		}
+	});
+
 	test('stage-and-advance editor-title button stays pinned to the far right', () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');
@@ -105,8 +121,9 @@ suite('Extension Test Suite', () => {
 			key: string;
 			mac?: string;
 			when?: string;
+			args?: unknown;
 		}>)
-			.filter(binding => handAwareCommandIds.has(binding.command))
+			.filter(binding => handAwareCommandIds.has(binding.command) && binding.args === undefined)
 			.map(binding => [binding.command, binding.key, binding.when]);
 
 		assert.deepStrictEqual(actual, expected);

@@ -22,6 +22,12 @@ Git's unified diff and VS Code's editor diff can divide one large replacement di
 
 Reversing direction always continues from the current caret. Previous does not reset to the bottom of the file, and Next does not restart from the top. When Previous enters a different file, Better Git VS Code deliberately lands at that file's last reviewable position so upward review begins in the right place.
 
+## Late mouse staging
+
+For Agentic Mouse's one-second follow-up gesture, capture the exact unstaged file inside the navigation queue before moving. Measure the deadline from command arrival, not from asynchronous Git or renderer completion. A rapid follow-up enters that same queue, so it cannot overtake capture. A new navigation replaces only the same mouse's origin; ordinary keyboard navigation and window focus loss clear it. Consume the origin once, and refuse expired, absent, ambiguous, staged-only, or no-longer-unstaged files without substituting the current selection.
+
+When navigation already crossed files, stage the captured URI through the normal staging/Undo path and leave the destination open. When it stayed within the origin, use the normal Stage + Next/Previous operation with that captured file. Never navigate backwards to rediscover the origin.
+
 ## Why the old behavior became jumpy
 
 Earlier implementations let viewport geometry and caret position compete as two sources of truth. Word wrap, sticky scroll, and `editor.cursorSurroundingLines` mean VS Code can legitimately keep a viewport top unchanged after a reveal request, or report a logical top that differs from the requested line. Treating that reported top as the next movement anchor caused repeated presses to drift, stop, overshoot and return, or roll into another file before the final lines had been read.
