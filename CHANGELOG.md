@@ -1,5 +1,13 @@
 # Change Log
 
+## [1.2.59] — safer undo and review edge cases
+
+- **Keep undo history consistent across windows.** Shared repository baselines and atomic receipt consumption prevent delayed windows from duplicating stages or recording another window's Undo as a redo. The persistent 100-entry limit is unchanged.
+- **Protect newer staged work during Undo.** Undo now owns Git's index lock before rechecking and atomically restoring the index; a competing writer cannot be overwritten after a retry. New receipts also detect HEAD commit changes even when the committed files are identical.
+- **Do not stage unseen notebook edits.** Stage & Next recognizes an already-staged notebook comparison and leaves later working-copy edits unstaged.
+- **Prevent duplicate AI commit-message generation.** A repository is reserved before diff collection or provider selection, including while a replacement confirmation is open.
+- **Keep tall-hunk navigation working for spaces and non-ASCII filenames.** Git's quoted paths are decoded correctly, and added file contents cannot be mistaken for diff headers.
+
 ## [1.2.58] — repeatable stage undo history
 
 - **Made repeated Source Control Undo work as a real LIFO history.** Each `Cmd+Z` / `Ctrl+Z` now restores and removes one exact stage/index transition, then exposes the previous entry instead of deleting all undo state after the first press.

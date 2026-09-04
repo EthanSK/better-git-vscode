@@ -101,6 +101,7 @@ export class CommitMessageGenerator implements vscode.Disposable {
     private async execute(targets: readonly unknown[]): Promise<void> {
         let repository: GitRepository | undefined;
         let providerExecution: ProviderExecution | undefined;
+        let reservedRepositoryPath: string | undefined;
         try {
             repository = await this.resolveRepository(targets);
             if (!repository) {
@@ -114,11 +115,17 @@ export class CommitMessageGenerator implements vscode.Disposable {
             const repositoryPath = repository.rootUri.fsPath;
             const normalizedRepositoryPath = this.normalizePath(repositoryPath);
             if (this.runningRepositoryPaths.has(normalizedRepositoryPath)) {
-                await vscode.window.showInformationMessage(
+                void vscode.window.showInformationMessage(
                     `Better Git: An AI commit message is already being generated for ${path.basename(repositoryPath)}.`
                 );
                 return;
             }
+
+            // Reserve before any diff/provider await. A second command can
+            // arrive while context collection or the provider picker is open.
+            this.runningRepositoryPaths.add(normalizedRepositoryPath);
+            reservedRepositoryPath = normalizedRepositoryPath;
+            const originalInput = repository.inputBox.value;
 
             const changeContext = await this.buildChangeContext(repository);
             if (!changeContext) {
@@ -133,21 +140,14 @@ export class CommitMessageGenerator implements vscode.Disposable {
                 return;
             }
             providerExecution = execution;
-            const originalInput = repository.inputBox.value;
-            this.runningRepositoryPaths.add(normalizedRepositoryPath);
-            let commitMessage: string | undefined;
-            try {
-                commitMessage = await vscode.window.withProgress(
-                    {
-                        location: vscode.ProgressLocation.Notification,
-                        title: `Generating a commit message for ${path.basename(repositoryPath)} with ${execution.displayName}...`,
-                        cancellable: true,
-                    },
-                    async (_progress, token) => this.generate(execution, changeContext, token)
-                );
-            } finally {
-                this.runningRepositoryPaths.delete(normalizedRepositoryPath);
-            }
+            const commitMessage = await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: `Generating a commit message for ${path.basename(repositoryPath)} with ${execution.displayName}...`,
+                    cancellable: true,
+                },
+                async (_progress, token) => this.generate(execution, changeContext, token)
+            );
 
             if (!commitMessage) {
                 return;
@@ -173,6 +173,10 @@ export class CommitMessageGenerator implements vscode.Disposable {
                 return;
             }
             await vscode.window.showErrorMessage(this.userFacingError(error, providerExecution));
+        } finally {
+            if (reservedRepositoryPath) {
+                this.runningRepositoryPaths.delete(reservedRepositoryPath);
+            }
         }
     }
 

@@ -162,4 +162,25 @@ suite("StageTransactionStore", () => {
         );
         assert.strictEqual(await new StageTransactionStore(receiptPath).loadLatest(), undefined);
     });
+
+    test("concurrent windows consume distinct entries and a restarted observer does not record redo", async () => {
+        const first = new StageTransactionStore(receiptPath);
+        const second = new StageTransactionStore(receiptPath);
+        await first.append(receipt(0));
+        await first.append(receipt(1));
+        let indexTree = "tree-2";
+        const restore = async (entry: StoredStageTransaction): Promise<"undone"> => {
+            assert.strictEqual(indexTree, entry.afterIndexTree);
+            await new Promise((resolve) => setImmediate(resolve));
+            indexTree = entry.beforeIndexTree;
+            return "undone";
+        };
+        await Promise.all([first.consumeLatest(restore), second.consumeLatest(restore)]);
+        assert.strictEqual(indexTree, "tree-0");
+        const restarted = new StageTransactionStore(receiptPath);
+        await restarted.observeSnapshot("/tmp/example-worktree",
+            async () => ({ headTree: "head-tree", indexTree }),
+            { headTree: "head-tree", indexTree: "tree-2" });
+        assert.deepStrictEqual(await restarted.loadAll(), []);
+    });
 });

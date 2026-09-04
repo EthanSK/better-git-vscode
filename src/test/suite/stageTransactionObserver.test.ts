@@ -180,4 +180,44 @@ suite("StageTransactionObserver", () => {
         assert.strictEqual(history.length, 1);
         assert.strictEqual(history[0].repoRoot, secondRoot);
     });
+
+    test("a second window must not record another window's undo as a new stage", async () => {
+        const root = "/tmp/two-windows";
+        snapshots.set(root, { headTree: "head", indexTree: "before" });
+        const first = observer();
+        const second = observer();
+        await first.prepare(root);
+        await second.prepare(root);
+        snapshots.set(root, { headTree: "head", indexTree: "middle" });
+        await first.observe(root);
+        await second.observe(root);
+        snapshots.set(root, { headTree: "head", indexTree: "after" });
+        await first.observe(root);
+        await second.observe(root);
+        await first.undoLatest(async () => {
+            snapshots.set(root, { headTree: "head", indexTree: "middle" });
+            return "undone";
+        });
+        await second.observe(root);
+        const history = await store.loadAll();
+        assert.strictEqual(history.length, 1, "Undo must not become a redo receipt in the second window");
+        assert.strictEqual(history[0].beforeIndexTree, "before");
+        assert.strictEqual(history[0].afterIndexTree, "middle");
+    });
+
+    test("a delayed window uses the shared baseline for its next observed transition", async () => {
+        const root = "/tmp/delayed-window";
+        snapshots.set(root, { headTree: "head", indexTree: "before" });
+        const first = observer();
+        const second = observer();
+        await first.prepare(root);
+        await second.prepare(root);
+        snapshots.set(root, { headTree: "head", indexTree: "middle" });
+        await first.observe(root);
+        snapshots.set(root, { headTree: "head", indexTree: "after" });
+        await second.observe(root);
+        const latest = (await store.loadLatest())!;
+        assert.strictEqual(latest.beforeIndexTree, "middle", "A stale local baseline must not combine two stages");
+        assert.strictEqual(latest.afterIndexTree, "after");
+    });
 });

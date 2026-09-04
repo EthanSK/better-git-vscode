@@ -1,9 +1,5 @@
-import { StageTransactionStore, StoredStageTransaction } from "./stageTransactionStore";
-
-export interface IndexSnapshot {
-    headTree: string;
-    indexTree: string;
-}
+import { StageTransactionStore, StoredStageTransaction, StageUndoResult } from "./stageTransactionStore";
+import { IndexSnapshot, RestoreResult } from "./gitStageUndo";
 
 export interface StageTransactionDetails {
     kind: "betterGitStage" | "observedIndexChange";
@@ -82,6 +78,21 @@ export class StageTransactionObserver {
         });
     }
 
+    async undoLatest(restore: (receipt: StoredStageTransaction) => Promise<RestoreResult>): Promise<StageUndoResult> {
+        let result!: StageUndoResult;
+        await this.enqueue(async () => {
+            result = await this.store.consumeLatest(restore);
+            if (result.status === "undone" && result.transaction) {
+                this.baselines.set(result.transaction.repoRoot, {
+                    headTree: result.transaction.headTree,
+                    headCommit: result.transaction.headCommit,
+                    indexTree: result.transaction.beforeIndexTree,
+                });
+            }
+        });
+        return result;
+    }
+
     /// Run an index mutation that must update the observer baseline without
     /// becoming a new undo receipt. This is used by the Undo command itself.
     async runSuppressed<T>(repoRoot: string, operation: () => Promise<T>): Promise<T> {
@@ -108,56 +119,9 @@ export class StageTransactionObserver {
         details: StageTransactionDetails | undefined,
         suppressed: boolean
     ): Promise<void> {
-        const current = await this.readSnapshot(repoRoot);
-        const previous = this.baselines.get(repoRoot);
+        const current = await this.store.observeSnapshot(
+            repoRoot, () => this.readSnapshot(repoRoot), this.baselines.get(repoRoot), details, suppressed
+        );
         this.baselines.set(repoRoot, current);
-
-        if (!previous) {
-            return;
-        }
-
-        // HEAD identity is the first safety boundary, even when the index tree
-        // itself did not move. A commit, checkout, or reset must invalidate the
-        // old receipt immediately rather than leaving it for the Undo command
-        // to discover later.
-        if (previous.headTree !== current.headTree) {
-            await this.store.discardRepository(repoRoot);
-            return;
-        }
-
-        if (previous.indexTree === current.indexTree) {
-            // A vscode.git state event may have captured the transition before
-            // the originating Better Git command resumes. Upgrade that generic
-            // receipt with its precise file identity without changing its
-            // position in the global history.
-            if (details?.kind === "betterGitStage") {
-                await this.store.enrichLatestForRepository(
-                    repoRoot,
-                    current.headTree,
-                    current.indexTree,
-                    details
-                );
-            }
-            return;
-        }
-
-        if (suppressed) {
-            // Undo owns receipt removal after its exact restore succeeds. This
-            // observation only advances the baseline and must not erase older
-            // entries that are still valid.
-            return;
-        }
-
-        const receipt: StoredStageTransaction = {
-            schema: 2,
-            kind: details?.kind ?? "observedIndexChange",
-            repoRoot,
-            headTree: current.headTree,
-            beforeIndexTree: previous.indexTree,
-            afterIndexTree: current.indexTree,
-            uri: details?.uri,
-            recordedAt: new Date().toISOString(),
-        };
-        await this.store.append(receipt);
     }
 }
