@@ -5,7 +5,7 @@ import Foundation
 
 let targetDisplayName = "Built-in Retina Display"
 
-guard (2...3).contains(CommandLine.arguments.count), let targetPID = pid_t(CommandLine.arguments[1]) else {
+guard (2...4).contains(CommandLine.arguments.count), let targetPID = pid_t(CommandLine.arguments[1]) else {
   fputs("usage: swift place-vscode-window-on-macbook.swift <pid> [expected-window-title]\n", stderr)
   exit(2)
 }
@@ -73,7 +73,7 @@ func substantialCGWindows() -> [[String: Any]] {
 
 let application = AXUIElementCreateApplication(targetPID)
 AXUIElementSetMessagingTimeout(application, 3)
-let expectedTitle = CommandLine.arguments.count == 3 ? CommandLine.arguments[2] : nil
+let expectedTitle = CommandLine.arguments.count >= 3 ? CommandLine.arguments[2] : nil
 let deadline = Date().addingTimeInterval(12)
 var candidate: AXUIElement?
 while Date() < deadline {
@@ -130,3 +130,7 @@ print(
     + "\(Int(bounds["Width"]!)),\(Int(bounds["Height"]!))"
 )
 print("title=\(title)")
+if CommandLine.arguments.count == 4 {
+  guard CommandLine.arguments[3] == "--focus" else { fatalError("Unknown focus option") }
+  NSRunningApplication(processIdentifier: targetPID)?.activate(options: [.activateIgnoringOtherApps]) // Readiness rejects background windows; focus only the already-verified disposable fixture for that explicit acceptance test.
+}

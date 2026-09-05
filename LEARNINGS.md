@@ -33,6 +33,14 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-09-05T00:52:00Z
+**Trigger:** Ethan held the mouse review button but the fire emojis never changed.
+**Symptom:** The proposed readiness feedback had not been implemented; updating Agentic Mouse alone also cannot change Better Git's file decorations.
+**Fix:** v1.2.62 accepts source-tagged feedback-only ready/clear commands and temporarily changes the current review badge from the configured value to `💥💥` with `Release to stage`. Agentic Mouse build 178 emits readiness at 300 ms; staging remains on release. Blur, editor changes, navigation, staging, Undo, and per-mouse release clear the temporary state. Invalid sources and stale/background editor signals are ignored.
+**Guard:** The real Extension Development Host test checks both source owners, clear/cancel paths and exact Git index preservation. A clean Computer Use run through the installed mouse's existing user-command socket showed visible explosion badges for Corsair and Razer, an unchanged index during each hold, release staging A and advancing to B, and the Undo chord consuming B's hold while unstaging A. This validates the installed-app transport, not a physical hardware-button press. Do not manufacture a passing isolated profile: reproduce only the five existing bare F-key user bindings before launch, and keep the exact fixture focused for the gesture; readiness intentionally ignores a background VS Code window. Never change the normal profile for a test.
+---
+
+---
 **Date:** 2026-09-04T21:24:00Z
 **Trigger:** Ethan reported the scrollbar jumping up and then down while rapidly pressing Next in a wrapped working-tree diff.
 **Symptom:** After a tall-hunk page step, forward change navigation briefly moved the viewport backwards. The installed extension registry showed v1.2.57, but the same reversal reproduced on current v1.2.60 code, so an update to that version alone was not a fix.

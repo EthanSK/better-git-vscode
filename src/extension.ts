@@ -648,11 +648,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // Every forward nav command records lastNavDirection = "next"; every backward one records "previous".
     // This is what the editor-title "+" button reads to decide which way to advance after staging (v1.2.7).
     let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", async (source?: unknown) => {
+        clearStageHoldFeedback();
         lastNavDirection = "next"; // he just jumped FORWARD through changes -> "+" should advance forward
         await navigateWithMouseOrigin("next", source);
     });
 
     let disposable2 = vscode.commands.registerCommand("better-git-vscode.previous-scm-change", async (source?: unknown) => {
+        clearStageHoldFeedback();
         lastNavDirection = "previous"; // he just jumped BACKWARD -> "+" should advance backward
         await navigateWithMouseOrigin("previous", source);
     });
@@ -679,6 +681,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // The keyboard stage-and-advance commands also count as a "jump" — pressing shift+alt+. means Ethan is
     // reviewing top-to-bottom, so the "+" button should keep advancing forward after this, and vice versa.
     let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async () => {
+        clearStageHoldFeedback();
         lastNavDirection = "next";
         await runStageCommand(() => stageCurrentFileAndAdvance("next"));
     });
@@ -686,13 +689,14 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
     // PREVIOUS unstaged file instead of the next. Bound to "shift + previous" so it parallels "shift + next".
     let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async () => {
+        clearStageHoldFeedback();
         lastNavDirection = "previous";
         await runStageCommand(() => stageCurrentFileAndAdvance("previous"));
     });
 
     let undoLastStageDisposable = vscode.commands.registerCommand(
         "better-git-vscode.undo-last-stage-and-advance",
-        runUndoCommand
+        () => { clearStageHoldFeedback(); return runUndoCommand(); }
     );
 
     // Legacy command: stage the current file WITHOUT navigating. Kept registered so anyone who bound it keeps
@@ -1021,6 +1025,22 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // file URI, so a partially-staged (dual-state) file gets the badge on BOTH its staged and unstaged rows.
     const reviewDecoEmitter = new vscode.EventEmitter<vscode.Uri[]>();
     let currentReviewUri: vscode.Uri | undefined; // file: URI of the file currently shown in a review view
+    let currentReviewTab: vscode.Tab | undefined;
+    const stageHoldReadySources = new Set<MouseReviewSource>();
+    const clearStageHoldFeedback = (source?: MouseReviewSource) => {
+        const wasReady = stageHoldReadySources.size > 0;
+        if (source) { stageHoldReadySources.delete(source); } else { stageHoldReadySources.clear(); }
+        if (wasReady !== (stageHoldReadySources.size > 0) && currentReviewUri) { reviewDecoEmitter.fire([currentReviewUri]); }
+    };
+    const stageHoldReadyCommand = vscode.commands.registerCommand("better-git-vscode.stage-hold-ready", (source: unknown) => {
+        if (!isMouseReviewSource(source) || !vscode.window.state.focused || !currentReviewUri
+            || currentReviewTab !== vscode.window.tabGroups.activeTabGroup.activeTab) { return; } // A queued signal after an editor switch must not mark the previous file ready. No async lookup or Git mutation belongs in this feedback-only command. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
+        stageHoldReadySources.add(source);
+        reviewDecoEmitter.fire([currentReviewUri]);
+    });
+    const stageHoldClearCommand = vscode.commands.registerCommand("better-git-vscode.stage-hold-clear", (source: unknown) => {
+        if (isMouseReviewSource(source)) { clearStageHoldFeedback(source); }
+    });
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
         onDidChangeFileDecorations: reviewDecoEmitter.event,
         provideFileDecoration(uri) {
@@ -1033,6 +1053,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 const badgeSetting = vscode.workspace.getConfiguration("better-git-vscode").get<string>("currentFileBadge", "🔥🔥");
                 if (!badgeSetting) {
                     return undefined; // empty setting => badge disabled
+                }
+                if (stageHoldReadySources.size > 0) {
+                    return { badge: "💥💥", tooltip: "Release to stage", color: new vscode.ThemeColor("charts.orange"), propagate: false }; // Readiness is temporary, not a staged-file marker; release, Undo, and focus/editor changes restore the configured badge. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
                 }
                 // VS Code caps the badge at 2 GRAPHEMES and drops the whole decoration if it's longer, so take
                 // the first two graphemes. Intl.Segmenter keeps multi-codepoint emoji intact — a naive
@@ -1055,7 +1078,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // exposes some non-text diffs (notably modified images) as an active Tab with no public `input` resource.
     const applyReviewDecorationUri = (next: vscode.Uri | undefined) => {
         const prev = currentReviewUri;
+        const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        if (currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) { clearStageHoldFeedback(); }
         currentReviewUri = next;
+        currentReviewTab = nextTab;
         const changed: vscode.Uri[] = [];
         if (prev) {
             changed.push(prev);
@@ -1169,8 +1195,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         disposable16, // add-current-worktree-to-workspace (v1.2.14)
         undoLastStageDisposable,
         stageBeforeMouseNavigation,
+        stageHoldReadyCommand, stageHoldClearCommand,
         vscode.window.onDidChangeWindowState(state => {
-            if (!state.focused) { mouseNavigationOrigins.clear(); }
+            if (!state.focused) { mouseNavigationOrigins.clear(); clearStageHoldFeedback(); }
         }),
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,
@@ -1183,8 +1210,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         vscode.window.registerFileDecorationProvider(reviewDecorationProvider),
         vscode.window.tabGroups.onDidChangeTabs(() => refreshReviewDecoration()),
         vscode.window.tabGroups.onDidChangeTabGroups(() => refreshReviewDecoration()),
-        vscode.window.onDidChangeActiveTextEditor(() => refreshReviewDecoration()),
-        vscode.window.onDidChangeActiveNotebookEditor(() => refreshReviewDecoration())
+        vscode.window.onDidChangeActiveTextEditor(() => { clearStageHoldFeedback(); void refreshReviewDecoration(); }),
+        vscode.window.onDidChangeActiveNotebookEditor(() => { clearStageHoldFeedback(); void refreshReviewDecoration(); })
     );
 
     // Activation can occur after a review tab is already open, in which case no subsequent editor event is

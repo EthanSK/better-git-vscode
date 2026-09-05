@@ -1018,6 +1018,47 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('stage-hold readiness changes only the badge, clears by source and cancels on review switch', async () => {
+		if (process.env.BGV_PLACE_ON_MACBOOK === '1') {
+			const pid = process.env.VSCODE_PID!;
+			const title = path.basename(vscode.workspace.workspaceFile!.fsPath, '.code-workspace');
+			execFileSync('swift', [path.resolve(__dirname, '../../../scripts/place-vscode-window-on-macbook.swift'), pid, title, '--focus'], { timeout: 20000 });
+		}
+		await poll(() => vscode.window.state.focused, 'isolated window focus required for readiness');
+		const a = write('committed/mod_a.txt', lines(40, 'ready A'));
+		const b = write('committed/mod_d.txt', lines(10, 'ready B'));
+		await refreshUntil(() => inWorkingTree('committed/mod_a.txt') && inWorkingTree('committed/mod_d.txt'), 'two ready-cue fixture changes');
+		await vscode.commands.executeCommand('git.openChange', a);
+		await poll(() => extensionApi.getCurrentReviewUri() === a.toString(), 'ready fixture decoration');
+		await extensionApi.whenReviewDecorationSettled();
+		const before = git('diff --cached --binary');
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(a), '🔥🔥');
+		await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'unknown');
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(a), '🔥🔥');
+		for (const source of ['corsair', 'razer']) {
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(a), '💥💥');
+		}
+		await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', 'corsair');
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(a), '💥💥', 'the other held mouse still owns readiness');
+		await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', 'razer');
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(a), '🔥🔥');
+		await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+		await vscode.commands.executeCommand('git.openChange', b);
+		await poll(() => extensionApi.getCurrentReviewUri() === b.toString(), 'review switch cancels readiness');
+		await extensionApi.whenReviewDecorationSettled();
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(b), '🔥🔥');
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(a), undefined);
+		assert.strictEqual(git('diff --cached --binary'), before, 'readiness never stages or unstages');
+		await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'razer');
+		await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+		assert.ok(inIndex('committed/mod_d.txt'));
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await extensionApi.whenReviewDecorationSettled();
+		assert.strictEqual(git('diff --cached --binary'), before);
+		assert.notStrictEqual(extensionApi.getReviewDecorationBadge(b), '💥💥');
+	});
+
 	test('current-review fire badge covers every image Git state and rapid tab switches', async () => {
 		const imageB = Buffer.from(
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==',

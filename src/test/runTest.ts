@@ -61,6 +61,16 @@ async function main() {
 		// development path remains this checkout, so the production code under test is unchanged.
 		testUserDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bgv-user-'));
 		testExtensionsPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bgv-ext-'));
+		if (process.env.BGV_UI_STAGE_READY === '1') {
+			fs.mkdirSync(path.join(testUserDataPath, 'User'), { recursive: true });
+			fs.writeFileSync(path.join(testUserDataPath, 'User/keybindings.json'), JSON.stringify([
+				{ key: 'f13', command: 'better-git-vscode.next-scm-change' },
+				{ key: 'f16', command: 'better-git-vscode.undo-last-stage-and-advance' },
+				{ key: 'f17', command: 'better-git-vscode.previous-scm-change' },
+				{ key: 'f18', command: 'better-git-vscode.stage-and-next-changed-file' },
+				{ key: 'f19', command: 'better-git-vscode.stage-and-previous-changed-file' },
+			])); // The installed mouse uses these user bindings; reproduce only this allow-list in the disposable profile, never copy or modify the normal profile.
+		}
 		fs.writeFileSync(
 			workspaceFilePath,
 			JSON.stringify({ folders: [{ path: fixturePath }, { path: auxiliaryPath }] })

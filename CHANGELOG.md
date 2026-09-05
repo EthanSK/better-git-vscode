@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.62] — show when a mouse hold is ready to stage
+
+- Change the current-file fire badge to 💥💥 when Agentic Mouse reports a ready hold. The tooltip says “Release to stage”; no file is staged until release.
+- Restore the configured badge on release, Undo, or a review/focus change. Corsair and Razer hold signals are independent, and an empty badge setting stays disabled.
+
 ## [1.2.61] — keep nearby change navigation steady
 
 - **Stop the upward-then-downward scroll bounce during rapid Next.** After reviewing a tall change, selecting a nearby added/replaced change that is already fully visible now moves only the caret instead of letting VS Code recenter the viewport. Previous uses the same steady hand-off.
