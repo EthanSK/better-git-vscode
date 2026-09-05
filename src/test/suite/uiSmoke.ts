@@ -125,8 +125,15 @@ export async function run(): Promise<void> {
     await waitFor(() => staged().includes(a), "stage file A through the UI");
     await waitFor(() => staged().includes(b), "stage file B through the UI");
     await waitFor(() => staged().includes(a) && !staged().includes(b), "first SCM Cmd+Z unstages only B");
+    const showsRestoredDiff = (relativePath: string): boolean => {
+        const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+        return input instanceof vscode.TabInputTextDiff && input.modified.scheme === "file"
+            && input.modified.fsPath === path.join(root, relativePath);
+    };
+    await waitFor(() => showsRestoredDiff(b), "first Undo selects restored file B");
     await waitFor(() => staged().length === 0, "second SCM Cmd+Z unstages A");
+    await waitFor(() => showsRestoredDiff(a), "second Undo selects restored file A");
     assert.ok(fs.readFileSync(path.join(root, a), "utf8").includes("Computer Use change A"));
     assert.ok(fs.readFileSync(path.join(root, b), "utf8").includes("Computer Use change B"));
-    console.log("BETTER_GIT_COMPUTER_USE_VERIFIED working-files-preserved=true");
+    console.log("BETTER_GIT_COMPUTER_USE_VERIFIED working-files-preserved=true undo-selected-files=B,A");
 }

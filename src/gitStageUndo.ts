@@ -44,6 +44,17 @@ export const readIndexSnapshot = async (root: string): Promise<IndexSnapshot> =>
     return { ...head, indexTree };
 };
 
+// External stages have no saved editor URI. Read the immutable receipt trees,
+// not today's working tree/index, and retain both paths of a staged rename.
+export const readStageTransactionPaths = async (receipt: StoredStageTransaction): Promise<string[]> => {
+    const { stdout } = await exec("git", [
+        "diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z",
+        receipt.beforeIndexTree, receipt.afterIndexTree, "--",
+    ], { cwd: receipt.repoRoot, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    // Do not trim: spaces, tabs and newlines are valid parts of Git filenames.
+    return stdout.split("\0").filter(Boolean);
+};
+
 // Own Git's actual index.lock before checking or replacing the index. Work on a
 // private copy because git write-tree/read-tree would otherwise contend with our
 // lock. The final rename is the normal atomic Git index installation protocol.

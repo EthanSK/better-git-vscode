@@ -2202,6 +2202,10 @@ suite('SCM change navigation E2E', () => {
 			() => inIndex('committed/mod_a.txt', 0) && inWorkingTree('committed/mod_a.txt', 5),
 			'undo to restore the exact partially staged index'
 		);
+		await expectActiveTab('committed/mod_a.txt');
+		const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+		assert.ok(input instanceof vscode.TabInputTextDiff && input.modified.scheme === 'file',
+			'Undo must select the restored working-tree diff, not the remaining staged copy');
 	});
 
 	test('undo waits for a stage performed by VS Code built-in Git rather than Better Git', async () => {
@@ -2219,12 +2223,14 @@ suite('SCM change navigation E2E', () => {
 			'committed/mod_a.txt',
 			'VS Code built-in stage did not reach Git before immediate Undo'
 		);
+		await vscode.window.showTextDocument(wsUri('committed/mod_d.txt'), { preview: true });
 
 		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 		await refreshUntil(
 			() => !inIndex('committed/mod_a.txt') && inWorkingTree('committed/mod_a.txt', 5),
 			'undo to restore a VS Code built-in stage'
 		);
+		await expectActiveTab('committed/mod_a.txt');
 	});
 
 	test('repeated undo walks the stage history without removing earlier staged work prematurely', async () => {
@@ -2246,11 +2252,13 @@ suite('SCM change navigation E2E', () => {
 		await refreshUntil(() => inIndex('committed/mod_d.txt', 0), 'later independent index change to appear');
 		await extensionApi.whenStageTransactionsSettled();
 
+		await vscode.window.showTextDocument(wsUri('committed/del_b.txt'), { preview: true });
 		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 		await refreshUntil(
 			() => inIndex('committed/mod_a.txt', 0) && !inIndex('committed/mod_d.txt') && inWorkingTree('committed/mod_d.txt', 5),
 			'first undo to remove only the latest external stage'
 		);
+		await expectActiveTab('committed/mod_d.txt');
 
 		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 		await refreshUntil(
@@ -2258,6 +2266,7 @@ suite('SCM change navigation E2E', () => {
 				!inIndex('committed/mod_d.txt') && inWorkingTree('committed/mod_d.txt', 5),
 			'second undo to restore the earlier Better Git stage'
 		);
+		await expectActiveTab('committed/mod_a.txt');
 	});
 
 	test('rapid repeated undo consumes one stage-history entry per invocation', async () => {
@@ -2288,6 +2297,78 @@ suite('SCM change navigation E2E', () => {
 				!inIndex('committed/mod_d.txt') && inWorkingTree('committed/mod_d.txt', 5),
 			'rapid undos to restore both index transitions'
 		);
+		await expectActiveTab('committed/mod_a.txt');
+	});
+
+	test('undo selects a new file restored to the separate untracked group', async () => {
+		const config = vscode.workspace.getConfiguration('git');
+		const previous = config.inspect<string>('untrackedChanges')?.globalValue;
+		try {
+			await config.update('untrackedChanges', 'separate', vscode.ConfigurationTarget.Global);
+			const rel = 'new file "quoted".txt';
+			write(rel, 'preserve this new file\n');
+			await refreshUntil(() => isUntracked(rel), 'new undo fixture');
+			await repo.add([wsUri(rel).fsPath]);
+			await repo.status();
+			await extensionApi.whenStageTransactionsSettled();
+			await openPlainAt('committed/mod_d.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			await expectActiveTab(rel);
+			assert.ok(isUntracked(rel) && !inIndex(rel));
+			assert.strictEqual(fs.readFileSync(wsUri(rel).fsPath, 'utf8'), 'preserve this new file\n');
+		} finally {
+			await config.update('untrackedChanges', previous, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('undo selects a restored deletion without recreating the deleted working file', async () => {
+		const rel = 'committed/del_b.txt';
+		fs.unlinkSync(wsUri(rel).fsPath);
+		await refreshUntil(() => inWorkingTree(rel, 6), 'deleted undo fixture');
+		await repo.add([wsUri(rel).fsPath]);
+		await repo.status();
+		await extensionApi.whenStageTransactionsSettled();
+		await openPlainAt('committed/mod_d.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await expectActiveTab(rel);
+		assert.ok(inWorkingTree(rel, 6) && !inIndex(rel));
+		assert.strictEqual(fs.existsSync(wsUri(rel).fsPath), false);
+	});
+
+	for (const keepCurrent of [true, false]) {
+		test(`undo selects ${keepCurrent ? 'the current affected file' : 'the first SCM file'} after an external multi-file stage`, async () => {
+			for (const rel of ['committed/mod_a.txt', 'committed/mod_d.txt']) {
+				fs.appendFileSync(wsUri(rel).fsPath, 'multi-file undo change\n');
+			}
+			await repo.status();
+			await repo.add([wsUri('committed/mod_a.txt').fsPath, wsUri('committed/mod_d.txt').fsPath]);
+			await repo.status();
+			await extensionApi.whenStageTransactionsSettled();
+			await openPlainAt(keepCurrent ? 'committed/mod_d.txt' : 'committed/del_b.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			await expectActiveTab(keepCurrent ? 'committed/mod_d.txt' : 'committed/mod_a.txt');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+		});
+	}
+
+	test('undo opens restored index content for a deleted file that was never committed', async () => {
+		const rel = 'new-then-deleted.txt';
+		write(rel, 'exists only in the restored index\n');
+		await repo.add([wsUri(rel).fsPath]);
+		await repo.status();
+		await extensionApi.whenStageTransactionsSettled();
+		fs.unlinkSync(wsUri(rel).fsPath);
+		await repo.add([wsUri(rel).fsPath]);
+		await repo.status();
+		await extensionApi.whenStageTransactionsSettled();
+		await openPlainAt('committed/mod_d.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await expectActiveTab(rel);
+		const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+		assert.ok(input instanceof vscode.TabInputText);
+		assert.strictEqual((await vscode.workspace.openTextDocument(input.uri)).getText(), 'exists only in the restored index\n');
+		assert.ok(inIndex(rel, 1) && inWorkingTree(rel, 6));
+		assert.strictEqual(fs.existsSync(wsUri(rel).fsPath), false);
 	});
 
 	test('undo refuses after HEAD changes even when the index tree still matches', async () => {

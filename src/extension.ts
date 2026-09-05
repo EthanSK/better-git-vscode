@@ -7,9 +7,9 @@ import * as path from "path";
 import { performance } from "perf_hooks";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
-import { StageTransactionStore } from "./stageTransactionStore";
+import { StageTransactionStore, StoredStageTransaction } from "./stageTransactionStore";
 import { StageTransactionObserver } from "./stageTransactionObserver";
-import { readIndexSnapshot, restoreStageTransaction } from "./gitStageUndo";
+import { readIndexSnapshot, readStageTransactionPaths, restoreStageTransaction } from "./gitStageUndo";
 import { extractFileDiffSection } from "./gitDiffSection";
 import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./gitIndexRetry";
 
@@ -280,6 +280,14 @@ const undoLastStageTransaction = async (): Promise<void> => {
         } catch {
             // The exact undo has succeeded; stale presentation data is optional.
         }
+    }
+    // Presentation happens after the restore and outside the shared history
+    // lock. An editor failure must not turn a successful index Undo into a
+    // reported restore failure, or prevent the next queued Undo.
+    try {
+        await revealUndoneStageTransaction(transaction);
+    } catch (error) {
+        console.warn("Better Git: Could not reveal the restored stage transaction", error);
     }
     const subject = transaction.uri
         ? ` for ${path.basename(vscode.Uri.parse(transaction.uri).fsPath)}`
@@ -1607,16 +1615,47 @@ const orderFilesForTreeView = (a: any, b: any) => {
 // One navigable entry in the changes list. `staged` distinguishes the index (Staged Changes) copy from
 // the working-tree (Changes) copy of the same file. They are SEPARATE diffs, and a partially-staged file
 // legitimately appears as BOTH — exactly like the Source Control view shows it.
-// `status` is the raw git status (vscode.git Status enum value) of the underlying change. For an UNSTAGED
-// entry it's undefined (git.openChange handles those). For a STAGED entry it tells openChangeEntry which
-// sides of the HEAD↔index diff actually have content, so we don't hand vscode.diff a git: URI for a blob
-// that doesn't exist (the "file not found" bug — staged-add has no HEAD side, staged-delete has no index side).
+// `status` is the raw git status (vscode.git Status enum value). It selects existing diff resources for
+// staged entries and focus-preserving Undo opens, including additions/deletions with only one content side.
 interface FileChange {
     uri: vscode.Uri;
     staged: boolean;
     status?: number;
     originalUri?: vscode.Uri; // staged RENAME/COPY: the HEAD-side blob lives at this old path, not `uri`
 }
+
+const revealUndoneStageTransaction = async (transaction: StoredStageTransaction): Promise<void> => {
+    const changedPaths = new Set((await readStageTransactionPaths(transaction))
+        .map(relativePath => vscode.Uri.file(path.join(transaction.repoRoot, relativePath)).toString()));
+    if (vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true)) {
+        // repo.status() updates the Git API immediately, but VS Code batches
+        // SCM resource splices with ExtHostSCM's 100 ms debounce. Opening the
+        // editor before that batch makes autoReveal select the old staged row
+        // (then lose it). Allow the batch to leave the host before opening.
+        // This is presentation-only; the index/history restore already finished.
+        await new Promise(resolve => setTimeout(resolve, 150));
+    }
+    const entries = (await getFileChanges(vscode.Uri.file(transaction.repoRoot)))
+        .filter(entry => changedPaths.has(entry.uri.toString()));
+    // A partially staged file has two rows. Undoing a stage must select its
+    // restored working-tree row; undoing an unstage can leave only a staged row.
+    const unstaged = entries.filter(entry => !entry.staged);
+    const candidates = unstaged.length > 0 ? unstaged : entries;
+    const currentUri = candidates.length > 1 ? await currentReviewFileUriAsync() : undefined;
+    const target = candidates.find(entry => entry.uri.toString() === transaction.uri)
+        ?? candidates.find(entry => entry.uri.toString() === currentUri?.toString())
+        ?? candidates[0]; // A multi-file external transaction follows the SCM sort order.
+    if (target) {
+        const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+        if (!target.staged && input instanceof vscode.TabInputTextDiff && input.modified.toString() === target.uri.toString()) {
+            // Native staging can leave this very working diff open. Reopening
+            // the identical input emits no editor-change event for autoReveal;
+            // change inputs without closing a tab or moving keyboard focus.
+            await vscode.commands.executeCommand("vscode.open", target.uri, { preview: true, preserveFocus: true });
+        }
+        await openChangeEntry(target, true);
+    }
+};
 
 // Unstaged file uris for a repo = tracked working-tree changes PLUS untracked (new) files, deduped by path
 // and sorted to match the Source Control "Changes" group (VS Code's default "mixed" mode shows untracked
@@ -1681,7 +1720,12 @@ const getFileChanges = async (preferredUri?: vscode.Uri): Promise<FileChange[]> 
 
     // Unstaged group = tracked working-tree changes PLUS untracked (new) files (see getUnstagedUris), tagged
     // unstaged. Untracked files used to be filtered out here, so they were skipped by navigation entirely.
-    const workingTreeChanges: FileChange[] = getUnstagedUris(activeRepo, !!isTreeView).map((uri) => ({ uri, staged: false }));
+    const unstagedResources: any[] = [...(activeRepo.state.workingTreeChanges ?? []), ...(activeRepo.state.untrackedChanges ?? [])];
+    const unstagedStatuses = new Map<string, number>(unstagedResources.map(resource => [resource.uri.toString(), resource.status]));
+    const workingTreeChanges: FileChange[] = getUnstagedUris(activeRepo, !!isTreeView).map((uri) => ({
+        uri, staged: false,
+        status: unstagedStatuses.get(uri.toString()),
+    }));
 
     // Merge-conflict files (state.mergeChanges) — "both modified", "added by us/them", etc. VS Code lists
     // these in a "Merge Changes" group ABOVE staged/unstaged. Included so conflicts are navigable too; they're
@@ -1830,15 +1874,31 @@ const getEmptyTreeRef = async (uri: vscode.Uri): Promise<string | undefined> => 
 };
 
 // Opens the diff for a single list entry on the correct (staged vs unstaged) side.
-const openChangeEntry = async (entry: FileChange): Promise<void> => {
+const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promise<void> => {
     if (!entry.staged) {
+        // git.openChange does not accept editor options and takes keyboard
+        // focus. Undo must keep SCM focus so the next Cmd+Z remains a stage
+        // Undo. Mirror Git's ordinary working-tree resources with explicit
+        // open options. Deleted files use the restored index: a staged new
+        // file can be deleted on disk without ever having existed in HEAD.
+        if (preserveFocus && entry.status !== undefined && entry.status < GitStatus.ADDED_BY_US) {
+            const options = { preview: true, preserveFocus: true };
+            if (entry.status === GitStatus.MODIFIED || entry.status === GitStatus.TYPE_CHANGED) {
+                const ref = entry.status === GitStatus.MODIFIED ? "~" : "HEAD";
+                await vscode.commands.executeCommand("vscode.diff", toGitUri(entry.uri, ref), entry.uri, undefined, options);
+            } else {
+                const resource = entry.status === GitStatus.DELETED ? toGitUri(entry.uri, "~") : entry.uri;
+                await vscode.commands.executeCommand("vscode.open", resource, options);
+            }
+            return;
+        }
         // Working-tree (unstaged) diff — git.openChange opens this side correctly, including untracked/new
         // files (it shows them as a plain editor, the same as clicking the row). Defensive fallback: if a
         // view genuinely can't be produced, open the file itself so the command never no-ops.
         try {
             await vscode.commands.executeCommand("git.openChange", entry.uri);
         } catch {
-            await vscode.window.showTextDocument(entry.uri, { preview: true });
+            await vscode.window.showTextDocument(entry.uri, { preview: true, preserveFocus });
         }
         // SILENT-NO-OP GUARD (Codex review, v1.2.1): with git.untrackedChanges="separate", untracked files
         // live in the separate untracked group and git.openChange(uri) resolves nothing for them — and it
@@ -1855,7 +1915,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
         const shownUri = await currentReviewFileUriAsync();
         if (!shownUri || shownUri.path.toLowerCase() !== entry.uri.path.toLowerCase()) {
             try {
-                await vscode.window.showTextDocument(entry.uri, { preview: true });
+                await vscode.window.showTextDocument(entry.uri, { preview: true, preserveFocus });
             } catch {
                 // file unreadable (e.g. binary/permission edge) — nothing more we can do, but we tried both paths
             }
@@ -1874,7 +1934,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
     const revealStaged = vscode.workspace.getConfiguration("better-git-vscode").get("revealStagedInSourceControl");
     if (revealStaged) {
         try {
-            await vscode.window.showTextDocument(entry.uri, { preview: true }); // fires autoReveal -> selects the staged row
+            await vscode.window.showTextDocument(entry.uri, { preview: true, preserveFocus }); // fires autoReveal -> selects the staged row
         } catch {
             // File can't be opened (e.g. a staged deletion) — skip the reveal, still show the diff below.
         }
@@ -1923,7 +1983,7 @@ const openChangeEntry = async (entry: FileChange): Promise<void> => {
         right = toGitUri(entry.uri, ""); // index content at the (new) path
     }
     const title = `${entry.uri.path.split("/").pop()} (Index)`;
-    await vscode.commands.executeCommand("vscode.diff", left, right, title, { preview: true });
+    await vscode.commands.executeCommand("vscode.diff", left, right, title, { preview: true, preserveFocus });
 };
 
 type PlainMergeConflictBlock = {

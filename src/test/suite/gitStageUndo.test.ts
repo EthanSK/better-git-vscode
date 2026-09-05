@@ -3,7 +3,7 @@ import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { readIndexSnapshot, restoreStageTransaction } from "../../gitStageUndo";
+import { readIndexSnapshot, readStageTransactionPaths, restoreStageTransaction } from "../../gitStageUndo";
 import { StoredStageTransaction } from "../../stageTransactionStore";
 
 suite("Git stage undo safety", () => {
@@ -40,6 +40,34 @@ suite("Git stage undo safety", () => {
         assert.strictEqual(git("write-tree"), receipt.beforeIndexTree);
         assert.strictEqual(fs.readFileSync(path.join(root, "a.txt"), "utf8"), "later unsaved-on-disk work\n");
         assert.strictEqual(fs.existsSync(path.join(root, ".git/index.lock")), false);
+    });
+
+    test("finds receipt paths after Undo without including newer index changes", async () => {
+        const receipt = await stage();
+        await restoreStageTransaction(receipt);
+        write("b.txt", "newer stage\n");
+        git("add", "b.txt");
+        assert.deepStrictEqual(await readStageTransactionPaths(receipt), ["a.txt"]);
+    });
+
+    test("preserves whitespace and newlines in restored filenames", async () => {
+        const before = await readIndexSnapshot(root);
+        const name = " leading \tname\n.txt ";
+        write(name, "new file\n");
+        git("add", "--", name);
+        const after = await readIndexSnapshot(root);
+        const receipt: StoredStageTransaction = { schema: 2, kind: "observedIndexChange", repoRoot: root,
+            ...after, beforeIndexTree: before.indexTree, afterIndexTree: after.indexTree, recordedAt: new Date().toISOString() };
+        assert.deepStrictEqual(await readStageTransactionPaths(receipt), [name]);
+    });
+
+    test("keeps both rename paths available for the restored change list", async () => {
+        const before = await readIndexSnapshot(root);
+        git("mv", "a.txt", "renamed.txt");
+        const after = await readIndexSnapshot(root);
+        const receipt: StoredStageTransaction = { schema: 2, kind: "observedIndexChange", repoRoot: root,
+            ...after, beforeIndexTree: before.indexTree, afterIndexTree: after.indexTree, recordedAt: new Date().toISOString() };
+        assert.deepStrictEqual(await readStageTransactionPaths(receipt), ["a.txt", "renamed.txt"]);
     });
 
     test("rechecks the index after a lock retry and preserves newer staged work", async () => {
