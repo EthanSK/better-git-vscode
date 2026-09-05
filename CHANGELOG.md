@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.2.63] — select the file restored by Undo
+
+- Open the restored working-tree file after Undo, including stages made with VS Code's own stage button. Partially staged files reopen their unstaged diff, and repeated Undo follows the history back through the correct files.
+- Keep keyboard focus in Source Control so consecutive Cmd+Z presses continue undoing stages. Allow VS Code's batched sidebar update to arrive before opening the restored file so automatic selection can find its new row.
+- Resolve external multi-file stages from the saved index trees. Keep the current affected file when possible; otherwise select the first restored change in the Source Control sort order.
+- Read restored deletions from the index, including newly added files that never existed in a commit. Undo never recreates the deleted working file.
+
 ## [1.2.62] — show when a mouse hold is ready to stage
 
 - Change the current-file fire badge to 💥💥 when Agentic Mouse reports a ready hold. The tooltip says “Release to stage”; no file is staged until release.
