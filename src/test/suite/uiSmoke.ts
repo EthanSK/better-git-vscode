@@ -18,6 +18,7 @@ export async function run(): Promise<void> {
         console.log(execFileSync("swift", [
             path.resolve(__dirname, "../../../scripts/place-vscode-window-on-macbook.swift"), pid,
             path.basename(workspace.fsPath, ".code-workspace"),
+            ...(process.env.BGV_UI_STAGE_READY === "1" ? ["--focus"] : []),
         ], { encoding: "utf8", timeout: 20000 }));
     }
     const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
@@ -107,6 +108,20 @@ export async function run(): Promise<void> {
         }
         console.log(`COMPUTER_USE_VERIFIED ${label}`);
     };
+    if (process.env.BGV_UI_STAGE_READY === "1") {
+        const aUri = vscode.Uri.file(path.join(root, a));
+        const bUri = vscode.Uri.file(path.join(root, b));
+        await api.whenReviewDecorationSettled();
+        await waitFor(() => api.getReviewDecorationBadge(aUri) === "💥💥", "hold A until explosion badge is visible");
+        assert.deepStrictEqual(staged(), [], "holding must not stage before release");
+        await waitFor(() => staged().includes(a), "release A to stage and advance");
+        await waitFor(() => api.getReviewDecorationBadge(bUri) === "💥💥", "hold B until explosion badge is visible");
+        assert.deepStrictEqual(staged(), [a], "holding B must not stage it before release");
+        await waitFor(() => staged().length === 0, "Undo chord cancels B hold and unstages A");
+        assert.ok(!staged().includes(b));
+        console.log("BETTER_GIT_STAGE_READY_COMPUTER_USE_VERIFIED readiness-no-index-write=true release-stages=true undo-consumes-hold=true");
+        return;
+    }
     await waitFor(() => staged().includes(a), "stage file A through the UI");
     await waitFor(() => staged().includes(b), "stage file B through the UI");
     await waitFor(() => staged().includes(a) && !staged().includes(b), "first SCM Cmd+Z unstages only B");
