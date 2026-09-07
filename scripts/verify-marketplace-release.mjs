@@ -155,7 +155,9 @@ const queryPublisherVersion = async () => {
     url.searchParams.set("version", expectedVersion);
     url.searchParams.set("flags", String(PUBLISHER_QUERY_FLAGS));
     url.searchParams.set("api-version", "7.2-preview.2");
-    const authorization = Buffer.from(`OAuth:${publisherPat}`, "utf8").toString("base64");
+    // Use an empty Basic username for PAT authentication. Gallery has previously
+    // rejected username-bearing credentials despite the same token remaining valid.
+    const authorization = Buffer.from(`:${publisherPat}`, "utf8").toString("base64");
     const extension = await requestJson(
         url,
         {
