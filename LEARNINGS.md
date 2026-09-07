@@ -33,6 +33,14 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-09-07T22:30:00Z
+**Trigger:** Complete the Mini-verified v1.2.64 release after local E2Es were stopped at Ethan's request.
+**Release:** PR #113 merged as `d46da1a821407b296887e94837f50545224127ad`. The required verifier exited zero and printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED identity=EthanSK.better-git-vscode version=1.2.64 sha256=d2e16ac63c8e983d310de4f4cb3b48d7b7170d1ac46e065de5bc251e5e0168c4` after authenticated publisher validation, public validated-only Gallery visibility and exact downloaded-byte comparison. The uploaded nine-file VSIX was built on the Mini with vsce 3.9.2; its embedded JavaScript matched the focused-E2E bundle at `9d6c2e7802bb235aa62fd4f690b0af4dc68ca47178d95cd1973afad17158d48f`. Normal VS Code remained gallery-installed at 1.2.63 and was not installed, reloaded or restarted. No local E2E host remained.
+**Publication incident:** The initial VSCE request timed out during authenticated Gallery discovery, before upload. Public queries worked while authenticated OAuth-username requests timed out. The same Keychain token with an empty Basic username returned publisher HTTP 200 and confirmed the exact version absent; VSCE's own Gallery SDK then uploaded the unchanged VSIX with that empty-username credential. The original OAuth route also recovered later, so this does not prove that the username format caused the transient timeout. No token was exposed, replaced or transferred.
+**Guard:** The verifier now uses empty-username PAT authentication, consistent with the earlier independently verified Gallery authentication-shape issue. All release checks remain intact, including authenticated validation, public update visibility and the exact archive/hash/byte checks. Always inspect exact publisher state before retrying a timed-out upload; a public old version alone does not prove that no upload occurred. Verification/receipt-only follow-up changes are excluded from the VSIX and do not require rebuilding the tested app bundle or rerunning GUI tests.
+---
+
+---
 **Date:** 2026-09-07T22:12:00Z
 **Trigger:** Ethan reported that repeated E2Es made his working VS Code laggy and required all future E2Es to run on the Mini through Agent Bridge, without slowing mouse navigation.
 **Symptom:** The old default test command rebuilt the bundle and launched a full GUI suite after routine edits. The first Mini run also found that Mocha 10.2.0's CLI failed before any unit test on Node 26.5.0, while the same suites passed through its programmatic API.
