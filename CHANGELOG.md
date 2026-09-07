@@ -1,5 +1,13 @@
 # Change Log
 
+## [1.2.64] — abandon stale navigation after a review change
+
+- Make the default developer test command non-GUI, with a short E2E smoke set and opt-in exhaustive coverage. Route macOS E2Es to the Mini and refuse MacBook launches before builds or fixture creation.
+- Cancel queued change-navigation presses when the selected tab/group changes, the user moves the caret, or the displayed document changes. Delayed Git reads cannot resume an old burst after switching away and back.
+- Keep normal rapid presses serialized, including intentional file rollover. Check ownership again before delayed caret placement and backward landing.
+- Resolve duplicated plain-file editors by the active editor group, so Next and Previous do not move another visible copy of the same file. Preserve diff editors that omit their public group number when the editor is unambiguous.
+- Add heavy-burst, interrupted-diff, and split-editor regression tests, plus a 50-shortcut Computer Use stress mode.
+
 ## [1.2.63] — select the file restored by Undo
 
 - Open the restored working-tree file after Undo, including stages made with VS Code's own stage button. Partially staged files reopen their unstaged diff, and repeated Undo follows the history back through the correct files.

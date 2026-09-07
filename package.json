@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.63",
+  "version": "1.2.64",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -651,9 +651,11 @@
     "package": "webpack --mode production --devtool hidden-source-map",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "pretest": "npm run compile-tests",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js",
+    "test": "node scripts/run-unit-tests.mjs",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "test:e2e:all": "node scripts/run-e2e.mjs --all",
     "test:index-context-menu": "node scripts/test-index-context-menu.mjs",
     "test:scm-state": "npm run test:scm-state:disabled && npm run test:scm-state:enabled-inert && npm run test:scm-state:collapse",
     "test:scm-state:disabled": "node scripts/test-scm-state-persistence.mjs --expect-disabled",

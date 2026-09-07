@@ -1216,8 +1216,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         configListener,
         reviewDecoEmitter,
         vscode.window.registerFileDecorationProvider(reviewDecorationProvider),
-        vscode.window.tabGroups.onDidChangeTabs(() => refreshReviewDecoration()),
-        vscode.window.tabGroups.onDidChangeTabGroups(() => refreshReviewDecoration()),
+        vscode.window.tabGroups.onDidChangeTabs(() => { observeNavigationTab(); void refreshReviewDecoration(); }),
+        vscode.window.tabGroups.onDidChangeTabGroups(() => { observeNavigationTab(); void refreshReviewDecoration(); }),
+        vscode.window.onDidChangeTextEditorSelection(event => {
+            if (event.textEditor === visibleEditorForActiveTab() &&
+                (event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)) {
+                invalidateChangeNavigation();
+            }
+        }),
+        vscode.workspace.onDidChangeTextDocument(event => {
+            if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
+                invalidateChangeNavigation(); // Git hunk coordinates no longer describe the displayed revision.
+            }
+        }),
         vscode.window.onDidChangeActiveTextEditor(() => { clearStageHoldFeedback(); void refreshReviewDecoration(); }),
         vscode.window.onDidChangeActiveNotebookEditor(() => { clearStageHoldFeedback(); void refreshReviewDecoration(); })
     );
@@ -2032,8 +2043,7 @@ const plainMergeConflictEditor = (): vscode.TextEditor | undefined => {
     if (!isMergeConflictFileUri(tab.input.uri)) {
         return undefined;
     }
-    const key = tab.input.uri.toString();
-    return vscode.window.visibleTextEditors.find((editor) => editor.document.uri.toString() === key);
+    return visibleEditorForActiveTab();
 };
 
 // Treat every complete marker group as one normal review change. There is intentionally no within-file wrap:
@@ -2060,11 +2070,13 @@ const stepPlainMergeConflict = (editor: vscode.TextEditor, direction: "down" | "
 const landPlainMergeConflictTarget = async (
     entry: FileChange,
     direction: "down" | "up",
+    check = noNavigationCheckpoint,
 ): Promise<boolean> => {
     if (!isMergeConflictFileUri(entry.uri)) {
         return false;
     }
     for (let i = 0; i < 8; i++) {
+        check();
         const editor = plainMergeConflictEditor();
         if (editor && editor.document.uri.path.toLowerCase() === entry.uri.path.toLowerCase()) {
             const blocks = plainMergeConflictBlocks(editor.document);
@@ -2082,13 +2094,14 @@ const landPlainMergeConflictTarget = async (
     return false; // detailed merge editor or render failure: preserve the existing fallback behavior
 };
 
-const openFirstFile = async () => {
+const openFirstFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
     const shouldOpenScmView = vscode.workspace.getConfiguration("better-git-vscode").get("shouldOpenScmView");
     if (shouldOpenScmView) {
         await vscode.commands.executeCommand("workbench.view.scm");
     }
 
     const fileChanges = await getFileChanges();
+    check();
     if (fileChanges.length === 0) {
         // v1.2.17 no-context pick: a clean repo is a normal end state after stage-and-advance, not an error.
         // Keep the feedback quiet in the status bar (never a popup that interrupts the review flow), while
@@ -2109,17 +2122,18 @@ const openFirstFile = async () => {
             ? "next: no active file context -> picking first changed file (unstaged-first)"
             : "next: no active file context -> no unstaged changes; picking first staged file",
     );
-    await openChangeEntry(target);
-    await landPlainMergeConflictTarget(target, "down");
+    await openNavigationTarget(target, check);
+    await landPlainMergeConflictTarget(target, "down", check);
 };
 
-const openLastFile = async () => {
+const openLastFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
     const shouldOpenScmView = vscode.workspace.getConfiguration("better-git-vscode").get("shouldOpenScmView");
     if (shouldOpenScmView) {
         await vscode.commands.executeCommand("workbench.view.scm");
     }
 
     const fileChanges = await getFileChanges();
+    check();
     if (fileChanges.length === 0) {
         // Mirror openFirstFile: reaching a clean repo backward is expected after staging the final file, so use
         // the same quiet status-bar acknowledgement rather than an error/warning popup.
@@ -2140,13 +2154,13 @@ const openLastFile = async () => {
             ? "previous: no active file context -> picking last changed file (unstaged-first)"
             : "previous: no active file context -> no unstaged changes; picking last staged file",
     );
-    await openChangeEntry(target);
+    await openNavigationTarget(target, check);
     // Symmetric with openPreviousFile (v1.2.15): openLastFile is only ever reached via a BACKWARD entry
     // (pressing previous when nothing is under review wraps to the LAST file — see goToPreviousDiff /
     // goToLastOrPreviousFile). If that last file is a genuinely-new plain-editor file, land at its BOTTOM so the
     // NEXT 'previous' press steps UP through it instead of seeing top<=0 and skipping the whole file unseen (the
     // exact BUG 5 class of bug, previously only fixed for openPreviousFile — Codex xhigh flagged the asymmetry).
-    await landChangeForBackwardReview(target);
+    await landChangeForBackwardReview(target, check);
 };
 
 // Shared backward-rollover landing (v1.2.15): when a BACKWARD navigation opens a genuinely-new, UNSTAGED,
@@ -2170,7 +2184,7 @@ const openLastFile = async () => {
 //
 // Returns true if the target was recognised as a new-file (plain-editor) target — the caller must then NOT run
 // compareEditor.previousChange. Returns false for a non-new / staged target so the caller handles it normally.
-const landNewFileTargetAtBottom = async (entry: FileChange): Promise<boolean> => {
+const landNewFileTargetAtBottom = async (entry: FileChange, check = noNavigationCheckpoint): Promise<boolean> => {
     if (entry.staged || !isFullyAddedFile(entry.uri)) {
         return false; // modified / deleted / staged-new target -> caller takes the normal diff path
     }
@@ -2179,7 +2193,9 @@ const landNewFileTargetAtBottom = async (entry: FileChange): Promise<boolean> =>
     // editor) — the exact gate the in-file new-file stepping uses.
     let newFileEditor: vscode.TextEditor | undefined;
     for (let i = 0; i < 8 && !newFileEditor; i++) {
+        check();
         newFileEditor = newFileScrollEditor();
+        if (newFileEditor?.document.uri.toString() !== entry.uri.toString()) { newFileEditor = undefined; }
         if (!newFileEditor) {
             await new Promise((r) => setTimeout(r, 30)); // wait one short tick for the editor to become visible
         }
@@ -2188,7 +2204,7 @@ const landNewFileTargetAtBottom = async (entry: FileChange): Promise<boolean> =>
         // revealBottomAndPinCursor uses RevealType.Default, which brings an off-screen-below line into view at
         // the BOTTOM and is NEVER EOF-clamped (unlike InCenter on the last line), so the bottom shows reliably.
         const lastLine = Math.max(0, newFileEditor.document.lineCount - 1);
-        await revealBottomAndPinCursor(newFileEditor, lastLine);
+        await revealBottomAndPinCursor(newFileEditor, lastLine, check);
     }
     // If the editor never resolved (rare race) we still return true (it IS a new-file target) — the view stays
     // at the top, the same no-op the old unconditional compareEditor.previousChange produced on a plain new file.
@@ -2199,25 +2215,28 @@ const landNewFileTargetAtBottom = async (entry: FileChange): Promise<boolean> =>
 // navigator, so it starts at EOF; every other target asks the compare editor for its last change. Keeping this in
 // one helper prevents openPreviousFile, openLastFile, and stage-and-previous from drifting into three subtly
 // different behaviours again.
-const landChangeForBackwardReview = async (entry: FileChange): Promise<void> => {
-    if (await landPlainMergeConflictTarget(entry, "up")) {
+const landChangeForBackwardReview = async (entry: FileChange, check = noNavigationCheckpoint): Promise<void> => {
+    check();
+    if (await landPlainMergeConflictTarget(entry, "up", check)) {
         return;
     }
-    if (await landNewFileTargetAtBottom(entry)) {
+    if (await landNewFileTargetAtBottom(entry, check)) {
         return;
     }
-    await landPreviousDiffAtLastChange();
+    check();
+    await landPreviousDiffAtLastChange(check);
 };
 
-const openNextFile = async () => {
+const openNextFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
     const fileChanges = await getFileChanges();
 
     const active = await getActiveChange();
+    check();
     if (!active) {
         // v1.2.17 no-context pick: with no active file there is nothing to advance FROM, so choose the first
         // changed file instead. Crucially this returns before the normal isPreview/closeActiveEditor block:
         // starting a review must never close whatever non-review tab/editor the user currently has open.
-        await openFirstFile();
+        await openFirstFile(check);
         return;
     }
 
@@ -2225,7 +2244,7 @@ const openNextFile = async () => {
         // A clean/settings tab can still produce an ActiveChange-shaped path even though the repo has no
         // entries. Reuse the v1.2.17 first-entry path so this clean-repo case gets the same quiet status-bar
         // feedback and debug log instead of preserving the old silent return.
-        await openFirstFile();
+        await openFirstFile(check);
         return;
     }
     const currentIndex = findCurrentIndex(fileChanges, active);
@@ -2236,7 +2255,7 @@ const openNextFile = async () => {
             // v1.2.17 no-context pick: a clean/settings/other non-change tab is context for VS Code, but not
             // for change navigation. Pick the first change without closing that active editor (openFirstFile
             // intentionally only opens the target). This is the common post-stage-everything focus state.
-            await openFirstFile();
+            await openFirstFile(check);
             return;
         }
         // AMBIGUITY GUARD MUST KEEP BAILING: findCurrentIndex also returns -1 when a side-unknown file exists
@@ -2251,28 +2270,26 @@ const openNextFile = async () => {
     const nextIndex = (currentIndex + 1) % fileChanges.length;
 
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
-    if (!isPreview) {
-        await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
-    }
     const target = fileChanges[nextIndex];
-    await openChangeEntry(target);
-    await landPlainMergeConflictTarget(target, "down");
+    await openNavigationTarget(target, check, !isPreview);
+    await landPlainMergeConflictTarget(target, "down", check);
 };
 
-const openPreviousFile = async () => {
+const openPreviousFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
     const fileChanges = await getFileChanges();
     const active = await getActiveChange();
+    check();
     if (!active) {
         // v1.2.17 no-context pick: mirror forward entry by selecting the last change, and return before the
         // normal closeActiveEditor path so starting backward review never destroys the user's current tab.
-        await openLastFile();
+        await openLastFile(check);
         return;
     }
 
     if (fileChanges.length === 0) {
         // Mirror forward navigation: an active non-change tab in a clean repo is still "no review context".
         // Route through openLastFile for the shared status-bar acknowledgement rather than silently no-oping.
-        await openLastFile();
+        await openLastFile(check);
         return;
     }
     const currentIndex = findCurrentIndex(fileChanges, active);
@@ -2282,7 +2299,7 @@ const openPreviousFile = async () => {
         if (!activePathExists) {
             // A non-change active tab supplies no review position. Pick the last unstaged-first target via the
             // shared backward entry path, which also handles bottom/last-hunk landing and never closes this tab.
-            await openLastFile();
+            await openLastFile(check);
             return;
         }
         // BUG FIX (intermittent "previous jumps to the last staged change"): the old code did
@@ -2299,10 +2316,7 @@ const openPreviousFile = async () => {
     const prevIndex = currentIndex === 0 ? fileChanges.length - 1 : currentIndex - 1;
 
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
-    if (!isPreview) {
-        await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
-    }
-    await openChangeEntry(fileChanges[prevIndex]);
+    await openNavigationTarget(fileChanges[prevIndex], check, !isPreview);
 
     // BUG 5 FIX (v1.2.9 — backward rollover into a NEW file landed at its TOP and then skipped the whole file):
     // when navigating BACKWARD, a MODIFIED file lands at its LAST hunk (bottom) via compareEditor.previousChange,
@@ -2319,7 +2333,7 @@ const openPreviousFile = async () => {
     // v1.2.15: the retry + bottom-landing logic (and the !staged gate rationale) now lives in the shared
     // landNewFileTargetAtBottom helper so openLastFile can reuse it. If the target was a genuinely-new
     // plain-editor file, the helper landed it at the bottom and we're done — do NOT run compareEditor.previousChange.
-    await landChangeForBackwardReview(fileChanges[prevIndex]);
+    await landChangeForBackwardReview(fileChanges[prevIndex], check);
 };
 
 // NEW-FILE detection (Ethan 2026-07-03, HARDENED in v1.2.1): a file is "fully added" when its entire
@@ -2404,7 +2418,12 @@ const visibleEditorForActiveTab = (): vscode.TextEditor | undefined => {
     const key = target.toString();
     // uri.toString() compares scheme + path + query, so the two git:-scheme sides of a staged diff (same
     // path, different ref in the query) cannot be confused with each other or with the on-disk file.
-    return vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === key);
+    // The same document can be visible in multiple groups, each with its own caret and viewport.
+    // URI equality alone can move the background copy and feed its stale caret into diff rollover.
+    const column = vscode.window.tabGroups.activeTabGroup.viewColumn;
+    const candidates = vscode.window.visibleTextEditors.filter((e) => e.document.uri.toString() === key);
+    return candidates.find((e) => e.viewColumn === column)
+        ?? (candidates.length === 1 && candidates[0].viewColumn === undefined ? candidates[0] : undefined);
 };
 
 // THE STRUCTURAL GATE for new-file scroll mode (v1.2.1). Returns the editor to 5-line-step through, or
@@ -2432,8 +2451,7 @@ const newFileScrollEditor = (): vscode.TextEditor | undefined => {
     if (!isFullyAddedFile(uri)) {
         return undefined; // (c) not a genuinely brand-new file
     }
-    const key = uri.toString();
-    return vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === key); // (d)
+    return visibleEditorForActiveTab(); // (d), including the active editor group
 };
 
 // Shared step logic for new-file scroll mode: scroll `editor` `direction` by newFileNavLineJump lines within
@@ -2459,7 +2477,7 @@ const newFileScrollEditor = (): vscode.TextEditor | undefined => {
 // focus-independent reveal waiter below. The active-tab gate already hands us the TextEditor that is actually
 // rendering the tab, and editor-scoped revealRange works without keyboard/OS focus, so keep and operate on that
 // object. Selection still updates; VS Code draws the caret whenever the editor next receives focus.
-const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" | "up"): Promise<boolean> => {
+const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" | "up", check = noNavigationCheckpoint): Promise<boolean> => {
     const configured = vscode.workspace.getConfiguration("better-git-vscode").get<number>("newFileNavLineJump", 5);
     // Guard bad user values: 0 / negative / NaN would "step" in place forever — a permanent no-op. Floor
     // fractional values; anything non-usable falls back to the default 5.
@@ -2491,7 +2509,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
             // A stale/decoupled caret at EOF must not change files invisibly. Present EOF once, then let the next
             // press roll over. For a wrapped final line, its END—not merely its first visual segment—must be shown.
             if (!positionIsVisible(stepEditor, bottomPresentationPosition(stepEditor, last))) {
-                await revealBottomAndPinCursor(stepEditor, last);
+                await revealBottomAndPinCursor(stepEditor, last, check);
                 debugLog("new-file", `down: caret already at L${last + 1} but EOF off-screen (viewport L${top + 1}-L${bottom + 1}) -> reveal EOF before rollover`);
                 return true;
             }
@@ -2503,7 +2521,7 @@ const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" |
         if (target === last) {
             // Always consume a final partial step at EOF, even when EOF was already visible. Default reveal puts
             // the last line at the bottom without the near-EOF AtTop clamp, and parks the caret for next-press rollover.
-            await revealBottomAndPinCursor(stepEditor, last);
+            await revealBottomAndPinCursor(stepEditor, last, check);
         } else {
             await revealTopAndPinCursor(stepEditor, target);
         }
@@ -2783,13 +2801,14 @@ const hunkContainingLine = (hunks: ModifiedHunk[], line: number, tol = 1): Modif
 // no parsed hunks). Computing this once per press means we parse the diff a single time and reuse it for
 // both the step decision and the on-landing reveal.
 interface HunkStageContext {
+    check: NavigationCheckpoint;
     editor: vscode.TextEditor; // the visible editor rendering the modified side (the thing we scroll)
     hunks: ModifiedHunk[]; // inner '+' runs used before built-in navigation
     outerHunks: ModifiedHunk[]; // broader @@ groups guarding oversized built-in jumps and rollover
     deletionStops: number[];
 }
 
-const getHunkStageContext = async (): Promise<HunkStageContext | undefined> => {
+const getHunkStageContext = async (check = noNavigationCheckpoint): Promise<HunkStageContext | undefined> => {
     // A quick viewport-independent gate read first (visLines only affects the numeric knobs, not enablement).
     if (!vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("hunkStagingEnabled", true)) {
         return undefined;
@@ -2813,10 +2832,11 @@ const getHunkStageContext = async (): Promise<HunkStageContext | undefined> => {
     const active = await getActiveChange();
     const staged = active?.staged === true;
     const { hunks, outerHunks, deletionStops } = await getModifiedSideHunkGeometry(fileUri, staged);
+    check();
     if (hunks.length === 0) {
         return undefined; // nothing parseable -> defer to plain navigation
     }
-    return { editor, hunks, outerHunks, deletionStops };
+    return { editor, hunks, outerHunks, deletionStops, check };
 };
 
 // Reads the current viewport of an editor as {top, bottom, visLines}. Uses the FIRST visible range's start
@@ -3062,7 +3082,7 @@ const revealTopAndPinCursor = async (
 // into view) is NEVER EOF-clamped — the line exists, so it always becomes visible. That guarantees the hunk's
 // tail lines are shown. We pin the caret to `bottomLine` (the hunk's last line): on the NEXT press stepTallHunk
 // sees caret >= hunk.end and definitively advances — no dependence on exact viewport-bottom render slack.
-const revealBottomAndPinCursor = async (editor: vscode.TextEditor, bottomLine: number): Promise<void> => {
+const revealBottomAndPinCursor = async (editor: vscode.TextEditor, bottomLine: number, check = noNavigationCheckpoint): Promise<void> => {
     const clamped = Math.max(0, Math.min(bottomLine, Math.max(0, editor.document.lineCount - 1)));
     const caretPosition = new vscode.Position(clamped, 0);
     const presentationPosition = bottomPresentationPosition(editor, clamped);
@@ -3077,6 +3097,7 @@ const revealBottomAndPinCursor = async (editor: vscode.TextEditor, bottomLine: n
             vscode.TextEditorRevealType.Default,
         );
     }
+    check();
     editor.selection = new vscode.Selection(caretPosition, caretPosition); // pin only after the tail visibly settles
 };
 
@@ -3136,7 +3157,7 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
         if (!edgeIsVisible) {
             // Defensive decoupling guard: never change hunks/files while the authoritative edge caret is hidden.
             if (direction === "down") {
-                await revealBottomAndPinCursor(ctx.editor, edge);
+                await revealBottomAndPinCursor(ctx.editor, edge, ctx.check);
             } else {
                 await revealTopAndPinCursor(ctx.editor, edge, { forceWhenVisible: false });
             }
@@ -3152,7 +3173,7 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
         : Math.max(caret - step, hunk.start);
     if (direction === "down" && target === hunk.end) {
         // Default reveal presents the final tail at the bottom without AtTop's unavoidable EOF clamp.
-        await revealBottomAndPinCursor(ctx.editor, target);
+        await revealBottomAndPinCursor(ctx.editor, target, ctx.check);
     } else {
         await revealTopAndPinCursor(ctx.editor, target, { forceWhenVisible: direction === "down" });
     }
@@ -3268,7 +3289,7 @@ const revealHunkOnLanding = async (
         debugLog("tall-hunk", `landing(down): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed at its top`);
     } else {
         // Present/pin the exact far edge so caret-owned reverse stepping mirrors forward landing precisely.
-        await revealBottomAndPinCursor(ctx.editor, hunk.end);
+        await revealBottomAndPinCursor(ctx.editor, hunk.end, ctx.check);
         debugLog("tall-hunk", `landing(up): advanced to new tall hunk L${hunk.start + 1}-L${hunk.end + 1}, landed at its bottom`);
     }
 };
@@ -3277,10 +3298,11 @@ const revealHunkOnLanding = async (
 // tall-hunk landing rule used for an in-file Previous transition. Without this second phase, VS Code leaves the
 // caret at the last hunk's START: the very next Previous press can treat that hunk as already exhausted and skip
 // it instead of reviewing it bottom-up.
-async function landPreviousDiffAtLastChange(): Promise<void> {
+async function landPreviousDiffAtLastChange(check = noNavigationCheckpoint): Promise<void> {
+    check();
     await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
-
-    let ctx = await getHunkStageContext();
+    check();
+    let ctx = await getHunkStageContext(check);
     // openChangeEntry normally awaits a fully-created diff editor. Retry only for the narrow renderer race where
     // the active tab is already a diff but its modified TextEditor object is not visible yet. Do not delay plain
     // deleted files or ordinary short/no-added-line diffs, for which an absent staging context is expected.
@@ -3291,7 +3313,8 @@ async function landPreviousDiffAtLastChange(): Promise<void> {
     ) {
         for (let attempt = 0; attempt < 4 && !ctx; attempt++) {
             await new Promise((resolve) => setTimeout(resolve, 20));
-            ctx = await getHunkStageContext();
+            check();
+            ctx = await getHunkStageContext(check);
         }
     }
     if (!ctx) {
@@ -3303,9 +3326,72 @@ async function landPreviousDiffAtLastChange(): Promise<void> {
 // Serialize every change-navigation press across keyboard and smart-mouse entry points. The scroll renderer and
 // git.openChange both settle asynchronously; without one shared queue, key-repeat can start a second navigation
 // against the first press's old viewport/editor and either lose a step or touch a just-disposed TextEditor.
+type NavigationCheckpoint = () => void;
+const noNavigationCheckpoint: NavigationCheckpoint = () => undefined;
+class NavigationSuperseded extends Error {}
 let changeNavigationTail: Promise<void> = Promise.resolve();
-const serializeChangeNavigation = (operation: () => Promise<void>): Promise<void> => {
-    const run = changeNavigationTail.then(operation, operation);
+let changeNavigationGeneration = 0;
+let navigationTab: vscode.Tab | undefined;
+let navigationGroup: vscode.TabGroup | undefined;
+let navigationOwnTabChange = false;
+
+const invalidateChangeNavigation = (): void => {
+    changeNavigationGeneration++;
+    mouseNavigationOrigins.clear();
+};
+
+// Observe transitions, not just the final URI: switching away and back also abandons the old burst.
+// A move into SCM focus does not change the selected review tab and must not cancel navigation.
+const observeNavigationTab = (): void => {
+    const group = vscode.window.tabGroups.activeTabGroup;
+    const tab = group.activeTab;
+    if (tab !== navigationTab || group !== navigationGroup) {
+        navigationTab = tab;
+        navigationGroup = group;
+        if (!navigationOwnTabChange) { invalidateChangeNavigation(); }
+    }
+};
+
+// Only the actual close/open commands own a tab transition. Git reads and subsequent landing/scroll
+// waits remain cancellable; otherwise a slow diff could consume a manually chosen file as its target.
+const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoint, closeCurrent = false): Promise<void> => {
+    check();
+    // Explicit file commands are a new user intention, not part of a queued change burst.
+    if (check === noNavigationCheckpoint) {
+        invalidateChangeNavigation();
+    }
+    navigationOwnTabChange = true;
+    try {
+        if (closeCurrent) { await vscode.commands.executeCommand("workbench.action.closeActiveEditor"); }
+        await openChangeEntry(entry);
+    } finally {
+        observeNavigationTab();
+        navigationOwnTabChange = false;
+    }
+    if (currentReviewFileUri()?.toString() !== entry.uri.toString()) {
+        // Opaque image tabs need the existing async path resolver.
+        const shown = await currentReviewFileUriAsync();
+        if (shown?.toString() !== entry.uri.toString()) { invalidateChangeNavigation(); }
+    }
+    check();
+};
+
+const serializeChangeNavigation = (operation: (check: NavigationCheckpoint) => Promise<void>): Promise<void> => {
+    observeNavigationTab();
+    const generation = changeNavigationGeneration;
+    const check = () => {
+        observeNavigationTab();
+        if (generation !== changeNavigationGeneration) { throw new NavigationSuperseded(); }
+    };
+    const execute = async () => {
+        try {
+            check();
+            await operation(check);
+        } catch (error) {
+            if (!(error instanceof NavigationSuperseded)) { throw error; }
+        }
+    };
+    const run = changeNavigationTail.then(execute, execute);
     // Keep the tail fulfilled even if one best-effort navigation call fails, so later keypresses are never
     // permanently blocked behind a rejected promise. The caller still receives `run` and can observe its error.
     changeNavigationTail = run.catch(() => undefined);
@@ -3316,14 +3402,16 @@ const serializeChangeNavigation = (operation: () => Promise<void>): Promise<void
 // while its deadline uses input arrival, not renderer/Git latency. Ordinary keyboard navigation clears it.
 const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unknown): Promise<void> => {
     const requestedAt = performance.now();
-    return serializeChangeNavigation(async () => {
+    return serializeChangeNavigation(async (check) => {
         if (isMouseReviewSource(source)) {
             mouseNavigationOrigins.delete(source);
             const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
             const active = await getActiveChange();
             const uri = await getActiveFileUri();
+            check();
             if (uri && active && active.staged !== true) {
                 const matches = (await getFileChanges(uri)).filter(change => change.uri.toString() === uri.toString());
+                check();
                 const change = matches.find(candidate => !candidate.staged);
                 if (change && (active.staged === false || matches.length === 1) && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {
                     mouseNavigationOrigins.set(source, { change, direction, requestedAt });
@@ -3332,7 +3420,7 @@ const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unk
         } else {
             mouseNavigationOrigins.clear();
         }
-        await (direction === "next" ? goToNextDiffOnce() : goToPreviousDiffOnce());
+        await (direction === "next" ? goToNextDiffOnce(check) : goToPreviousDiffOnce(check));
     });
 };
 
@@ -3361,13 +3449,15 @@ const stageMouseNavigationOrigin = (args: unknown): Promise<void> => {
     }));
 };
 
-const goToNextDiffOnce = async () => {
+const goToNextDiffOnce = async (check: NavigationCheckpoint) => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath — avoids the clipboard
     // save/blank/restore hack in the hot path when focus is in the SCM panel. activeEditor is still kept for
     // the navEditor fallback below.
-    if (!(await activeNavFilePath())) {
-        await openFirstFile();
+    const activePath = await activeNavFilePath();
+    check();
+    if (!activePath) {
+        await openFirstFile(check);
         return;
     }
 
@@ -3378,7 +3468,7 @@ const goToNextDiffOnce = async () => {
         if (stepPlainMergeConflict(mergeConflictEditor, "down")) {
             return;
         }
-        await openNextFile();
+        await openNextFile(check);
         return;
     }
 
@@ -3391,10 +3481,10 @@ const goToNextDiffOnce = async () => {
     // silently no-op — see the comments on isFullyAddedFile / newFileScrollEditor for the full post-mortem.
     const newFileEditor = newFileScrollEditor();
     if (newFileEditor) {
-        if (await stepThroughNewFile(newFileEditor, "down")) {
+        if (await stepThroughNewFile(newFileEditor, "down", check)) {
             return;
         }
-        await openNextFile();
+        await openNextFile(check);
         return;
     }
 
@@ -3403,7 +3493,8 @@ const goToNextDiffOnce = async () => {
     // instead of jumping to the next hunk. When it returns false (short hunk, caret already at the presented
     // bottom, caret not in a hunk, or feature off) we fall through to the unchanged navigation below, so
     // nothing else is disturbed. See the big design note above getModifiedSideHunkGeometry.
-    const stageCtx = await getHunkStageContext();
+    const stageCtx = await getHunkStageContext(check);
+    check();
     if (stageCtx && (await stepTallHunk(stageCtx, "down"))) {
         return; // press was a within-hunk scroll step
     }
@@ -3425,6 +3516,7 @@ const goToNextDiffOnce = async () => {
     const hunkBefore =
         stageCtx && lineBefore !== undefined ? hunkContainingLine(stageCtx.hunks, lineBefore) : undefined;
     await vscode.commands.executeCommand("workbench.action.compareEditor.nextChange");
+    check();
     const lineAfter = navEditor?.selection.active.line; // TextEditor.selection is live — same object, post-command state
 
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter > lineBefore)) {
@@ -3441,7 +3533,7 @@ const goToNextDiffOnce = async () => {
         // "Jump to next file: ...?" modal would defeat that. (The old promptBeforeNextFile setting +
         // its modal confirmation path were removed entirely — see CHANGELOG v1.0.2.)
         debugLog("nav", `next: no forward change in file (before=L${(lineBefore ?? -1) + 1} after=L${(lineAfter ?? -1) + 1}) -> openNextFile()`);
-        await openNextFile();
+        await openNextFile(check);
         return;
     }
 
@@ -3453,11 +3545,13 @@ const goToNextDiffOnce = async () => {
     }
 };
 
-const goToPreviousDiffOnce = async () => {
+const goToPreviousDiffOnce = async (check: NavigationCheckpoint) => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath (see goToNextDiff).
-    if (!(await activeNavFilePath())) {
-        await openLastFile();
+    const activePath = await activeNavFilePath();
+    check();
+    if (!activePath) {
+        await openLastFile(check);
         return;
     }
 
@@ -3468,7 +3562,7 @@ const goToPreviousDiffOnce = async () => {
         if (stepPlainMergeConflict(mergeConflictEditor, "up")) {
             return;
         }
-        await openPreviousFile();
+        await openPreviousFile(check);
         return;
     }
 
@@ -3477,10 +3571,10 @@ const goToPreviousDiffOnce = async () => {
     // previous changed file.
     const newFileEditor = newFileScrollEditor();
     if (newFileEditor) {
-        if (await stepThroughNewFile(newFileEditor, "up")) {
+        if (await stepThroughNewFile(newFileEditor, "up", check)) {
             return;
         }
-        await openPreviousFile();
+        await openPreviousFile(check);
         return;
     }
 
@@ -3488,7 +3582,8 @@ const goToPreviousDiffOnce = async () => {
     // viewport and has not consumed its exact TOP edge yet, use this press as an UPWARD step (read the
     // previous screenful of the same hunk) instead of jumping to the previous hunk. Returns false -> fall
     // through to the unchanged navigation below.
-    const stageCtx = await getHunkStageContext();
+    const stageCtx = await getHunkStageContext(check);
+    check();
     if (stageCtx && (await stepTallHunk(stageCtx, "up"))) {
         return; // press was a within-hunk upward scroll step
     }
@@ -3507,6 +3602,7 @@ const goToPreviousDiffOnce = async () => {
     const hunkBefore =
         stageCtx && lineBefore !== undefined ? hunkContainingLine(stageCtx.hunks, lineBefore) : undefined;
     await vscode.commands.executeCommand("workbench.action.compareEditor.previousChange");
+    check();
     const lineAfter = navEditor?.selection.active.line; // live selection — post-command state
 
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter < lineBefore)) {
@@ -3519,7 +3615,7 @@ const goToPreviousDiffOnce = async () => {
         }
         // Out of changes in the current file -> jump straight to the previous changed file, NO prompt.
         // Same rationale as goToNextDiff: the confirmation modal was removed entirely (see CHANGELOG v1.0.2).
-        await openPreviousFile();
+        await openPreviousFile(check);
         return;
     }
 

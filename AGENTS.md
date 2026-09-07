@@ -2,6 +2,12 @@
 
 Read `LEARNINGS.md` before changing behavior, packaging, or release handling. Preserve new durable evidence there after a verified feature, fix, release, or investigation.
 
+## Test location and responsiveness
+
+- If you want to run Better Git VS Code E2Es, coordinate over Agent Bridge on the Mini and run them there. Do not run E2Es or Extension Development Hosts on Ethan's MacBook Pro; they make his working VS Code laggy.
+- Keep the default test command short and non-GUI. Run focused E2Es on the Mini for the changed behavior; the exhaustive suite is opt-in, not something to rerun after every edit.
+- Do not affect app responsiveness. Better Git must support rapid repeated mouse presses without an added debounce, arbitrary input delay, or dropping valid presses; preserve navigation order and exact staging/Undo safety.
+
 ## Marketplace release gate
 
 - Unless Ethan explicitly opts out, finish every Marketplace-bound feature, fix, or maintenance change through publication and verification.

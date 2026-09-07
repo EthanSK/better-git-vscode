@@ -11,25 +11,30 @@ npm ci
 npm run compile
 ```
 
-Use VS Code's **Run Extension** launch configuration or press `F5` to open an isolated Extension Development Host. Development and release checks must not install, uninstall, reload, or restart the extension in the developer's normal VS Code profile.
+Coordinate Extension Development Host and E2E work through Agent Bridge on the Mac Mini. Do not launch test windows on Ethan's MacBook Pro: they compete with his working VS Code for CPU/GPU resources. Development and release checks must not install, uninstall, reload, or restart the extension in the developer's normal VS Code profile.
 
 ## Validation
 
-Run the complete validation path before submitting a behavior change:
+The default command is a short, non-GUI set of Git/Undo tests:
 
 ```sh
 npm test
 ```
 
-`npm test` compiles the extension and tests, runs ESLint, then launches the real Extension Development Host suite. The suite builds temporary Git repositories and exercises the extension through VS Code's actual Git and editor APIs.
+`npm test` compiles TypeScript and runs the Git diff, index-lock, Undo, history-store, and observer tests in plain Node. It does not build webpack, download VS Code, launch a window, or start the E2E suite. Run `npm run lint` separately when needed.
 
-To reuse an existing VS Code executable instead of downloading another test build:
+On the Mini, use one short smoke run or select only the affected cases:
 
 ```sh
-BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm test
+BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm run test:e2e
+BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm run test:e2e -- --grep 'mouse spam'
 ```
 
-Changes that can affect Source Control repository/group expansion must also run the dedicated two-launch restart regression:
+The smoke set covers basic diff navigation, interrupted queues, duplicated editors, repeated Undo, and extension identity. It skips unrelated linked-worktree and fake-AI fixture setup. The wrapper compiles tests and the production bundle once before launching one isolated host. macOS E2E entry points refuse a non-Mini host before building or creating fixtures.
+
+The exhaustive suite remains available as `npm run test:e2e:all` on the Mini. Use it when cross-cutting risk warrants it, not after every edit. A focused regression plus existing relevant coverage is the routine check; retain the previous full-run evidence rather than automatically repeating it.
+
+The older native-menu and Source Control restart harnesses are separate opt-in diagnostics, not routine release requirements. They also refuse MacBook execution. Their display-specific capture/placement helpers must be adapted to the Mini's verified test display before using them there; never work around this by launching on the MacBook. The commands are:
 
 ```sh
 BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm run test:scm-state
@@ -37,7 +42,7 @@ BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/
 
 It creates eight repositories/worktrees with both staged and working-tree groups, then runs the same isolated profile across two Extension Development Host launches in three modes: experiment disabled, experiment enabled with startup collapse disabled, and double-opt-in collapse. The first two must keep an empty Better Git startup trace beyond the removed loop interval. Disabled mode then invokes the always-available manual command and requires exactly `workbench.view.scm` plus `workbench.scm.action.collapseAllRepositories`; collapse mode requires that same pair exactly once during startup. The harness identifies the spawned process and numeric window ID, verifies `Built-in Retina Display`, captures only that window, and closes only that isolated window. It never loads, reloads, installs, or updates the extension in the normal VS Code profile.
 
-Changes to the `index.html` browser action or its context-menu contributions must also run the native-menu regression on macOS:
+For the native `index.html` context menu:
 
 ```sh
 BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" \
