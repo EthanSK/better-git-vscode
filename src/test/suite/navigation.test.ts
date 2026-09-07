@@ -1579,6 +1579,113 @@ suite('SCM change navigation E2E', () => {
 		await expectActiveTab('committed/mod_d.txt');
 	});
 
+	test('mouse spam: 120 Next presses and 80 Previous presses stay exact in one new file', async function () {
+		this.timeout(120_000);
+		write('spam_new.txt', lines(3000, 'spam'));
+		await refreshUntil(() => isUntracked('spam_new.txt'), 'spam file');
+		const editor = await openPlainAt('spam_new.txt', 0);
+		const start = new vscode.Position(50, 0);
+		editor.selection = new vscode.Selection(start, start);
+		editor.revealRange(new vscode.Range(start, start), vscode.TextEditorRevealType.AtTop);
+		await poll(() => lineIsVisible(editor, 50), 'spam start presented');
+		await vscode.commands.executeCommand('workbench.view.scm');
+		const burst = (direction: string, count: number) => Promise.all(Array.from({ length: count }, () =>
+			vscode.commands.executeCommand(`better-git-vscode.${direction}-scm-change`, 'corsair')));
+		const down = await viewportTopsDuring(editor, () => burst('next', 120));
+		await expectCursorAt('spam_new.txt', 650);
+		assertViewportMonotonic(down, 'down', '120 mouse Next presses');
+		const up = await viewportTopsDuring(editor, () => burst('previous', 80));
+		await expectCursorAt('spam_new.txt', 250);
+		assertViewportMonotonic(up, 'up', '80 mouse Previous presses');
+	});
+
+	test('mouse spam: a duplicated file only moves in the active editor group', async () => {
+		write('spam_split.txt', lines(1000, 'split'));
+		await refreshUntil(() => isUntracked('spam_split.txt'), 'split spam file');
+		const left = await openPlainAt('spam_split.txt', 0);
+		const right = await vscode.window.showTextDocument(left.document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+		try {
+			const start = new vscode.Position(200, 0);
+			right.selection = new vscode.Selection(start, start);
+			right.revealRange(new vscode.Range(start, start), vscode.TextEditorRevealType.AtTop);
+			await poll(() => lineIsVisible(right, 200), 'right editor start');
+			await vscode.commands.executeCommand('workbench.view.scm');
+			await Promise.all(Array.from({ length: 10 }, () => nextChange()));
+			assert.strictEqual(right.selection.active.line, 250, 'Next must move the active group');
+			assert.strictEqual(left.selection.active.line, 0, 'Next must not move the other group');
+		} finally {
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			await vscode.commands.executeCommand('workbench.action.joinAllGroups');
+		}
+	});
+
+	test('mouse spam: 30 Next and 20 Previous presses stay directional in a working diff', async () => {
+		const rel = 'committed/tall_e.txt';
+		const content = lines(260, 'tall_e').split('\n');
+		content.splice(10, 240, ...Array.from({ length: 1000 }, (_, i) => `changed row ${i}`));
+		write(rel, content.join('\n'));
+		await refreshUntil(() => inWorkingTree(rel, 5), 'working diff spam fixture');
+		const editor = await openWorkingDiffAt(rel, 30);
+		await vscode.commands.executeCommand('workbench.view.scm');
+		const down = await viewportTopsDuring(editor, () => Promise.all(Array.from({ length: 30 }, () => nextChange())));
+		await expectCursorAt(rel, 330);
+		assertViewportMonotonic(down, 'down', '30 working-diff Next presses');
+		const up = await viewportTopsDuring(editor, () => Promise.all(Array.from({ length: 20 }, () => previousChange())));
+		await expectCursorAt(rel, 130);
+		assertViewportMonotonic(up, 'up', '20 working-diff Previous presses');
+	});
+
+	for (const interruption of ['switching away and back', 'editing the displayed document']) {
+	test(`mouse spam: queued diff navigation cannot resume after ${interruption}`, async () => {
+		const rel = 'committed/tall_e.txt';
+		const content = lines(260, 'tall_e').split('\n');
+		for (let i = 10; i <= 229; i++) { content[i] = `changed row ${i}`; }
+		write(rel, content.join('\n'));
+		write('spam_other.txt', lines(300, 'other'));
+		await refreshUntil(() => inWorkingTree(rel, 5) && isUntracked('spam_other.txt'), 'switch spam fixtures');
+		let editor = await openWorkingDiffAt(rel, 50);
+		const repositoryPrototype = Object.getPrototypeOf(repo);
+		const originalDiff = repositoryPrototype.diff;
+		let release!: () => void;
+		let started = false;
+		const gate = new Promise<void>(resolve => { release = resolve; });
+		repositoryPrototype.diff = async function (...args: unknown[]) {
+			started = true;
+			await gate;
+			return originalDiff.apply(this, args);
+		};
+		let burst: Promise<unknown> | undefined;
+		try {
+			burst = Promise.all(Array.from({ length: 20 }, () =>
+				vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'razer')));
+			await poll(() => started, 'in-flight diff read');
+			if (interruption === 'switching away and back') {
+				await openPlainAt('spam_other.txt', 0);
+				editor = await openWorkingDiffAt(rel, 100);
+			} else {
+				const edit = new vscode.WorkspaceEdit();
+				edit.insert(wsUri(rel), new vscode.Position(0, 0), 'new document revision\n');
+				assert.ok(await vscode.workspace.applyEdit(edit));
+				const reset = new vscode.Position(100, 0);
+				editor.selection = new vscode.Selection(reset, reset);
+			}
+			release();
+			await burst;
+			assert.strictEqual(activeTabPath(), wsUri(rel).path, 'old mouse burst changed the manually chosen file');
+			assert.strictEqual(editor.selection.active.line, 100, 'old mouse burst moved the manually reset caret');
+			if (interruption === 'switching away and back') {
+				await nextChange();
+				assert.ok(editor.selection.active.line > 100, 'fresh Next must work after cancelling stale presses');
+			}
+		} finally {
+			release();
+			await burst;
+			repositoryPrototype.diff = originalDiff;
+			if (editor.document.isDirty) { await editor.document.save(); }
+		}
+	});
+	}
+
 	test('MODIFIED mixed hunks: rapid Next never scrolls backward between a tall run and nearby native stops', async () => {
 		const config = vscode.workspace.getConfiguration('editor');
 		const oldWrap = config.inspect<string>('wordWrap')?.globalValue;

@@ -33,6 +33,16 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-09-07T21:55:00Z
+**Trigger:** Ethan reported the mouse review button moving upward while rapidly pressing Next, with switching away and back clearing the state.
+**Symptom:** A delayed Git read plus 20 queued Next commands kept navigating after a manual away/back switch, ultimately opening a different file. Separately, a duplicated plain file in two groups moved the first visible editor instead of the selected group: the selected caret stayed at 200 instead of reaching 250 after ten presses.
+**Root cause:** The shared promise queue ordered presses but did not retain review-session ownership across asynchronous reads. URI-only editor lookup treated separate visible instances of one document as interchangeable. The exact spontaneous physical-mouse reversal was not reproduced; these are independently reproduced defects in the reported path, not proof of that incident's cause.
+**Fix:** v1.2.64 invalidates queued navigation on active-tab/group changes, manual mouse/keyboard caret movement, and displayed-document edits. Each invocation carries its arrival generation; delayed Git reads, final caret pins, and backward landing recheck it. Intentional close/open rollover retains the current burst. Plain/new/conflict editor resolution prefers the active group's exact viewColumn; a unique editor whose viewColumn is undefined remains valid for native diff editors.
+**Guard:** Five new real-host cases cover 120 Next plus 80 Previous presses, 30 Next plus 20 Previous in a long working diff, duplicated plain editors, and delayed Git reads interrupted by an away/back switch or document edit. The first complete production run passed 117/117, including earlier Undo, rollover, mouse-origin and mixed-hunk scroll regressions. A reopened tab can have a new TextEditor object, so interruption assertions must use the reopened editor, not the disposed pre-switch instance. VS Code's ApiRepository wrapper is fresh on every lookup; deterministic delayed-diff probes intercept and finally restore its shared prototype method.
+**Computer Use:** The disposable v1.2.64 host on Built-in Retina Display accepted thirty bare F13 inputs and twenty bare F17 inputs through the existing five-binding isolated profile. Carets were exactly 30..330 by ten, then 330..130 by ten; every viewport event was monotonic in the requested direction. The harness printed BETTER_GIT_COMPUTER_USE_SCROLL_VERIFIED and exited zero, and the exact window disappeared. This proves synthesized shortcut delivery, not physical HID timing. Normal VS Code, personal bindings, and physical mouse configuration were untouched.
+---
+
+---
 **Date:** 2026-09-05T23:00:00Z
 **Trigger:** Ethan reported that Undo restores a stage but does not select the restored file.
 **Symptom:** Stage + Next could close/advance the editor; Undo restored the index but left that editor unchanged. A new real-host assertion failed on v1.2.62: the restored mod_a.txt never became the active tab.

@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { execFileSync, execSync } from 'child_process';
+import { pathToFileURL } from 'url';
 
 import { runTests } from '@vscode/test-electron';
 
@@ -14,6 +15,8 @@ import { runTests } from '@vscode/test-electron';
 // the BUILT-IN vscode.git extension (its API provides indexChanges/workingTreeChanges/untrackedChanges),
 // and --disable-extensions would disable built-ins too, silently breaking every git-state assertion.
 async function main() {
+	const guard = await import(pathToFileURL(path.resolve(__dirname, '../../scripts/e2e-host-guard.mjs')).href);
+	guard.assertE2EHost();
 	// Created before the try so the finally can clean it up whether the suite passed or failed.
 	let fixturePath: string | undefined;
 	let auxiliaryPath: string | undefined;
@@ -116,6 +119,8 @@ async function main() {
 		// Keep the reveal regression's linked worktree alive until the Extension Development Host exits.
 		// Removing a newly-discovered repo while VS Code's git extension still has delayed status checks queued
 		// produces noisy "Repository not initialized" rejections even though the behavior test passed.
+		const fullFixtures = process.env.BGV_TEST_ALL === '1' || Boolean(process.env.BGV_TEST_GREP);
+		if (fullFixtures) {
 		revealWorktreeParent = fs.mkdtempSync(path.join(os.tmpdir(), 'better-git-vscode-reveal-worktree-'));
 		revealWorktreePath = path.join(revealWorktreeParent, 'linked-worktree');
 		disabledRevealWorktreePath = path.join(revealWorktreeParent, 'disabled-linked-worktree');
@@ -191,6 +196,7 @@ process.stdout.write(JSON.stringify({
 		fs.chmodSync(fakeClaudePath, 0o755);
 		process.env.BGV_FAKE_CLAUDE_PATH = fakeClaudePath;
 		process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH = fakeClaudeCapturePath;
+		}
 
 		// Download VS Code, unzip it and run the integration tests against the fixture workspace.
 		// CI normally downloads the requested stable build. Local diagnosis can set BGV_VSCODE_EXECUTABLE_PATH

@@ -34,24 +34,29 @@ export async function run(): Promise<void> {
         repo = git.getRepository(vscode.Uri.file(root));
     }
     if (process.env.BGV_UI_SCROLL === "1") {
-        await vscode.workspace.getConfiguration("editor").update("wordWrap", "on", vscode.ConfigurationTarget.Global);
+        const spam = process.env.BGV_UI_SPAM === "1";
+        await vscode.workspace.getConfiguration("editor").update("wordWrap", spam ? "off" : "on", vscode.ConfigurationTarget.Global);
         const file = path.join(root, "committed/tall_e.txt");
         const content = fs.readFileSync(file, "utf8").split("\n");
-        for (let i = 10; i <= 219; i++) { content[i] = `changed row ${i} ${"wrapped text ".repeat(i % 4)}`; }
-        for (const line of [225, 229, 233]) { content[line] = `nearby short change ${line}`; }
+        if (spam) {
+            content.splice(10, 240, ...Array.from({ length: 1000 }, (_, i) => `changed row ${i}`));
+        } else {
+            for (let i = 10; i <= 219; i++) { content[i] = `changed row ${i} ${"wrapped text ".repeat(i % 4)}`; }
+            for (const line of [225, 229, 233]) { content[line] = `nearby short change ${line}`; }
+        }
         fs.writeFileSync(file, content.join("\n"));
         await repo.status();
         await vscode.commands.executeCommand("git.openChange", vscode.Uri.file(file));
         await new Promise(resolve => setTimeout(resolve, 500));
         const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.fsPath === file && e.document.uri.scheme === "file")!;
         assert.ok(editor, "Scroll fixture must have a visible modified editor");
-        const start = new vscode.Position(219, 0);
+        const start = new vscode.Position(spam ? 30 : 219, 0);
         editor.selection = new vscode.Selection(start, start);
         editor.revealRange(new vscode.Range(start, start), vscode.TextEditorRevealType.AtTop);
         await new Promise(resolve => setTimeout(resolve, 200));
         await vscode.commands.executeCommand("workbench.view.scm");
         let tops = [editor.visibleRanges[0].start.line];
-        let carets = [219];
+        let carets = [start.line];
         const visible = vscode.window.onDidChangeTextEditorVisibleRanges(event => {
             if (event.textEditor === editor) { tops.push(editor.visibleRanges[0].start.line); }
         });
@@ -70,16 +75,16 @@ export async function run(): Promise<void> {
             await new Promise(resolve => setTimeout(resolve, 100));
         };
         try {
-            console.log("COMPUTER_USE_WAIT press Next three times, then wait for forward verification");
-            await waitForCaret(233);
-            assert.deepStrictEqual([...new Set(carets)], [219, 225, 229, 233]);
+            console.log(`COMPUTER_USE_WAIT press Next ${spam ? '30' : 'three'} times, then wait for forward verification`);
+            await waitForCaret(spam ? 330 : 233);
+            assert.deepStrictEqual([...new Set(carets)], spam ? Array.from({ length: 31 }, (_, i) => 30 + i * 10) : [219, 225, 229, 233]);
             assert.ok(tops.every((top, index) => index === 0 || top >= tops[index - 1]), `Next reversed: ${tops}`);
             console.log(`COMPUTER_USE_VERIFIED Next carets=${carets} tops=${tops}`);
             tops = [editor.visibleRanges[0].start.line];
-            carets = [233];
-            console.log("COMPUTER_USE_WAIT press Previous twice");
-            await waitForCaret(225);
-            assert.deepStrictEqual([...new Set(carets)], [233, 229, 225]);
+            carets = [spam ? 330 : 233];
+            console.log(`COMPUTER_USE_WAIT press Previous ${spam ? '20 times' : 'twice'}`);
+            await waitForCaret(spam ? 130 : 225);
+            assert.deepStrictEqual([...new Set(carets)], spam ? Array.from({ length: 21 }, (_, i) => 330 - i * 10) : [233, 229, 225]);
             assert.ok(tops.every((top, index) => index === 0 || top <= tops[index - 1]), `Previous reversed: ${tops}`);
             console.log(`BETTER_GIT_COMPUTER_USE_SCROLL_VERIFIED Previous carets=${carets} tops=${tops}`);
         } finally {

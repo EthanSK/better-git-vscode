@@ -3,6 +3,9 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertE2EHost } from './e2e-host-guard.mjs';
+
+assertE2EHost();
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const extensionDevelopmentPath = path.resolve(scriptDirectory, '..');

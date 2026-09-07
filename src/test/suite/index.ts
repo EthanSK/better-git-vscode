@@ -20,7 +20,8 @@ export async function run(): Promise<void> {
 	// Create the mocha test
 	const mocha = new Mocha({
 		ui: 'tdd',
-		grep: process.env.BGV_TEST_GREP,
+		grep: process.env.BGV_TEST_GREP ?? (process.env.BGV_TEST_ALL === '1' ? undefined :
+			'^(SCM change navigation E2E (MODIFIED file: next/previous|mouse spam: queued diff|mouse spam: a duplicated|undo latest Stage \\+ Next|repeated undo walks)|Extension Test Suite ships and registers)'),
 		color: true,
 		// E2E tests drive a real VS Code window + real git subprocesses + the git extension's async state
 		// refreshes — individual tests legitimately take multiple seconds. The default 2s mocha timeout
