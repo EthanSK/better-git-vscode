@@ -11,6 +11,8 @@ if (args.length && !all && !grep) {
     throw new Error("Usage: npm run test:e2e -- [--all | --grep <pattern>]");
 }
 const env = { ...process.env, BGV_TEST_ALL: all ? "1" : "0" };
+// An explicit full-suite request must not inherit a stale focused filter.
+if (all) { delete env.BGV_TEST_GREP; }
 if (grep) { env.BGV_TEST_GREP = grep; }
 for (const command of [
     ["npm", ["run", "compile-tests"]],

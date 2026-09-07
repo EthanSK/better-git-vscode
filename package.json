@@ -653,7 +653,7 @@
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests",
     "lint": "eslint src --ext ts",
-    "test": "mocha --ui tdd --timeout 10000 out/test/suite/git*.test.js out/test/suite/stageTransaction*.test.js",
+    "test": "node scripts/run-unit-tests.mjs",
     "test:e2e": "node scripts/run-e2e.mjs",
     "test:e2e:all": "node scripts/run-e2e.mjs --all",
     "test:index-context-menu": "node scripts/test-index-context-menu.mjs",

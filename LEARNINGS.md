@@ -33,6 +33,14 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-09-07T22:12:00Z
+**Trigger:** Ethan reported that repeated E2Es made his working VS Code laggy and required all future E2Es to run on the Mini through Agent Bridge, without slowing mouse navigation.
+**Symptom:** The old default test command rebuilt the bundle and launched a full GUI suite after routine edits. The first Mini run also found that Mocha 10.2.0's CLI failed before any unit test on Node 26.5.0, while the same suites passed through its programmatic API.
+**Fix:** Plain `npm test` compiles and runs only the five non-GUI Git/history suites through Mocha's programmatic API. E2Es have a short default smoke set, explicit `--grep`, and opt-in `--all`; only focused/full fixture setups create auxiliary worktrees and fake AI tools. Every GUI launcher checks the actual Mac hardware model before building or creating fixtures and rejects non-Mini macOS hosts. This test-only restriction adds no debounce, input delay, or dropped valid navigation presses to the app.
+**Guard:** Agent Bridge delegated exact commit f4125f2e71474bbab05470ea8fb011bd0164afe7 to a fresh Mini checkout; the actual hardware model was `Mac mini`. Nine focused real-host tests passed in 16 seconds in-suite (57 seconds including compilation), covering all five new mouse regressions, modified-file navigation, two Undo paths and command registration. Lint passed; the 34 non-GUI tests passed through the programmatic API. The isolated host exited zero and no Code process remained. Its bundle SHA-256 was `9d6c2e7802bb235aa62fd4f690b0af4dc68ca47178d95cd1973afad17158d48f`. The launcher repair still requires verification through the checked-in `npm test` entry point. Normal VS Code profiles and pre-existing dirty Mini fixtures were untouched. No exhaustive rerun was needed on the Mini.
+---
+
+---
 **Date:** 2026-09-07T21:55:00Z
 **Trigger:** Ethan reported the mouse review button moving upward while rapidly pressing Next, with switching away and back clearing the state.
 **Symptom:** A delayed Git read plus 20 queued Next commands kept navigating after a manual away/back switch, ultimately opening a different file. Separately, a duplicated plain file in two groups moved the first visible editor instead of the selected group: the selected caret stayed at 200 instead of reaching 250 after ten presses.
