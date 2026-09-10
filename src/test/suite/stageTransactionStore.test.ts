@@ -64,28 +64,64 @@ suite("StageTransactionStore", () => {
         assert.strictEqual(persisted.entries.length, 2);
     });
 
-    test("caps the persistent LIFO history at exactly 100 entries", async () => {
+    test("caps the persistent LIFO history at exactly three entries across repositories", async () => {
         const store = new StageTransactionStore(receiptPath);
         for (let sequence = 0; sequence <= STAGE_TRANSACTION_HISTORY_LIMIT; sequence += 1) {
-            await store.append(receipt(sequence));
+            await store.append(receipt(sequence, `/tmp/repo-${sequence}`));
         }
 
         const history = await store.loadAll();
-        assert.strictEqual(history.length, STAGE_TRANSACTION_HISTORY_LIMIT);
+        assert.strictEqual(STAGE_TRANSACTION_HISTORY_LIMIT, 3);
+        assert.strictEqual(history.length, 3);
         assert.strictEqual(history[0].beforeIndexTree, "tree-1");
-        assert.strictEqual(history[history.length - 1].afterIndexTree, "tree-101");
+        assert.strictEqual(history[history.length - 1].afterIndexTree, "tree-4");
+    });
+
+    test("compacts an old 100-entry history on first read and does not rewrite unchanged state", async () => {
+        const entries = Array.from({ length: 100 }, (_, sequence) => receipt(sequence));
+        const baseline = { repoRoot: entries[0].repoRoot, snapshot: { headTree: "head-tree", indexTree: "tree-100" } };
+        await fs.promises.writeFile(receiptPath, JSON.stringify({ schema: 3, entries, baselines: [baseline] }));
+        const store = new StageTransactionStore(receiptPath);
+        assert.deepStrictEqual(await store.loadAll(), entries.slice(-3));
+        assert.deepStrictEqual(JSON.parse(await fs.promises.readFile(receiptPath, "utf8")).entries, entries.slice(-3));
+        const oldTime = new Date("2026-01-01T00:00:00Z");
+        await fs.promises.utimes(receiptPath, oldTime, oldTime);
+        await store.loadLatest();
+        await store.observeSnapshot(baseline.repoRoot, async () => baseline.snapshot, undefined);
+        assert.strictEqual((await fs.promises.stat(receiptPath)).mtimeMs, oldTime.getTime());
+        for (const expected of entries.slice(-3).reverse()) {
+            const result = await store.consumeLatest(async (entry) => {
+                assert.deepStrictEqual(entry, expected);
+                return "undone";
+            });
+            assert.strictEqual(result.status, "undone");
+        }
+        assert.strictEqual((await store.consumeLatest(async () => assert.fail("evicted receipt restored"))).status, "empty");
+    });
+
+    test("retains cross-window baselines after undo entries are evicted", async () => {
+        const store = new StageTransactionStore(receiptPath);
+        for (let index = 0; index < 5; index += 1) {
+            await store.append(receipt(0, `/tmp/repo-${index}`));
+        }
+        assert.strictEqual((await store.loadAll()).length, 3);
+        const before = await store.loadAll();
+        await new StageTransactionStore(receiptPath).observeSnapshot("/tmp/repo-0",
+            async () => ({ headTree: "head-tree", indexTree: "tree-1" }),
+            { headTree: "head-tree", indexTree: "tree-0" });
+        assert.deepStrictEqual(await store.loadAll(), before, "a delayed window must not revive an evicted transition");
     });
 
     test("serializes concurrent appends from separate extension-host stores", async () => {
         const stores = Array.from({ length: 12 }, () => new StageTransactionStore(receiptPath));
-        await Promise.all(stores.map((store, sequence) => store.append(receipt(sequence))));
+        const completed: StoredStageTransaction[] = [];
+        await Promise.all(stores.map(async (store, sequence) => {
+            completed.push(await store.append(receipt(sequence)));
+        }));
 
         const history = await new StageTransactionStore(receiptPath).loadAll();
-        assert.strictEqual(history.length, stores.length);
-        assert.deepStrictEqual(
-            new Set(history.map((entry) => entry.afterIndexTree)),
-            new Set(stores.map((_, sequence) => `tree-${sequence + 1}`))
-        );
+        assert.strictEqual(history.length, 3);
+        assert.deepStrictEqual(history, completed.slice(-3));
     });
 
     test("deduplicates the same index transition observed by separate extension hosts", async () => {

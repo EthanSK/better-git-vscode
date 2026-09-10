@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.65] — keep the latest three Undo entries
+
+- Limit the shared stage/index Undo history to the latest three transitions across repositories.
+- Compact saved histories from older versions on first access, preserving exact restore checks and cross-window safety metadata. Unchanged reads and Git notifications do not rewrite the history.
+
 ## [1.2.64] — abandon stale navigation after a review change
 
 - Make the default developer test command non-GUI, with a short E2E smoke set and opt-in exhaustive coverage. Route macOS E2Es to the Mini and refuse MacBook launches before builds or fixture creation.

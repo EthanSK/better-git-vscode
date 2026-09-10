@@ -2376,6 +2376,25 @@ suite('SCM change navigation E2E', () => {
 		await expectActiveTab('committed/mod_a.txt');
 	});
 
+	test('undo retains only the latest three of four real index transitions', async () => {
+		const rel = 'committed/mod_a.txt';
+		const trees: string[] = [];
+		for (let sequence = 0; sequence < 4; sequence += 1) {
+			write(rel, `three-entry undo stage ${sequence}\n`);
+			git(`add ${rel}`);
+			await repo.status();
+			await extensionApi.whenStageTransactionsSettled();
+			trees.push(git('write-tree').trim());
+		}
+		for (let index = 2; index >= 0; index -= 1) {
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('write-tree').trim(), trees[index]);
+		}
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		assert.strictEqual(git('write-tree').trim(), trees[0], 'the fourth Undo must preserve the evicted stage');
+		assert.strictEqual(fs.readFileSync(wsUri(rel).fsPath, 'utf8'), 'three-entry undo stage 3\n');
+	});
+
 	test('rapid repeated undo consumes one stage-history entry per invocation', async () => {
 		const first = lines(24, 'mod_a').split('\n');
 		first[5] = 'mod_a RAPID UNDO line 6';
