@@ -14,6 +14,10 @@ suite('Git worktree links', () => {
         assert.ok(!/[()']/.test(createWorktreeLink(root)));
         assert.strictEqual(parse(createWorktreeLink(root)), root);
         assert.strictEqual(parse(createWorktreeLink(root, 'vscode-insiders')), root);
+        // Microsoft's live redirect appends its original url query as metadata.
+        const redirect = new URL(decodeURIComponent(new URL(createWorktreeLink(root)).searchParams.get('url')!));
+        redirect.searchParams.set('url', new URL(createWorktreeLink(root)).searchParams.get('url')!);
+        assert.strictEqual(parse(redirect.href), root);
     });
     test('rejects missing, relative, duplicate, control-character and wrong-route targets', () => {
         for (const value of [
