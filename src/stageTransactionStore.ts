@@ -3,7 +3,11 @@ import * as fs from "fs";
 import * as path from "path";
 import { IndexSnapshot, RestoreResult, sameHead } from "./gitStageUndo";
 
-export const STAGE_TRANSACTION_HISTORY_LIMIT = 100;
+// One global undo stack: keep only the three most recent index transitions.
+export const STAGE_TRANSACTION_HISTORY_LIMIT = 3;
+// Shared observer baselines are safety metadata, not undo entries. Keep their
+// existing bound so visiting a fourth repository cannot revive a stale baseline.
+const REPOSITORY_BASELINE_LIMIT = 100;
 
 export interface StoredStageTransaction {
     schema: 2;
@@ -261,7 +265,7 @@ export class StageTransactionStore {
     private setBaseline(state: StoredStageTransactionHistory, repoRoot: string, snapshot: IndexSnapshot): void {
         state.baselines = state.baselines.filter((entry) => entry.repoRoot !== repoRoot);
         state.baselines.push({ repoRoot, snapshot });
-        state.baselines = state.baselines.slice(-STAGE_TRANSACTION_HISTORY_LIMIT);
+        state.baselines = state.baselines.slice(-REPOSITORY_BASELINE_LIMIT);
     }
 
     private update<T>(operation: (state: StoredStageTransactionHistory) => Promise<T>): Promise<T> {
@@ -334,38 +338,44 @@ export class StageTransactionStore {
 
     private async readHistory(): Promise<StoredStageTransactionHistory> {
         const empty = (): StoredStageTransactionHistory => ({ schema: 3, entries: [], baselines: [] });
+        let stored: unknown;
         try {
-            const raw = await fs.promises.readFile(this.receiptPath, "utf8");
-            const stored = JSON.parse(raw) as unknown;
-            // v1.2.52-v1.2.57 stored one schema-2 receipt directly. Preserve it
-            // as the oldest entry and migrate on the next successful mutation.
-            if (isStoredStageTransaction(stored)) {
-                return { schema: 3, entries: [stored], baselines: [] };
-            }
-            if (typeof stored !== "object" || stored === null) {
-                return empty();
-            }
-            const history = stored as Partial<StoredStageTransactionHistory>;
-            if (
-                history.schema !== 3 ||
-                !Array.isArray(history.entries) ||
-                !history.entries.every(isStoredStageTransaction)
-            ) {
-                return empty();
-            }
-            const baselines = (Array.isArray(history.baselines) ? history.baselines : []).filter((entry) =>
-                entry && typeof entry.repoRoot === "string" && entry.snapshot &&
-                typeof entry.snapshot.headTree === "string" && typeof entry.snapshot.indexTree === "string" &&
-                (entry.snapshot.headCommit === undefined || typeof entry.snapshot.headCommit === "string")
-            );
-            return { schema: 3, entries: history.entries.slice(-STAGE_TRANSACTION_HISTORY_LIMIT),
-                baselines: baselines.slice(-STAGE_TRANSACTION_HISTORY_LIMIT) };
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-                return empty();
-            }
+            stored = JSON.parse(await fs.promises.readFile(this.receiptPath, "utf8"));
+        } catch {
             return empty();
         }
+        // v1.2.52-v1.2.57 stored one schema-2 receipt directly. Preserve it
+        // as the oldest entry and migrate on the next successful mutation.
+        if (isStoredStageTransaction(stored)) {
+            return { schema: 3, entries: [stored], baselines: [] };
+        }
+        if (typeof stored !== "object" || stored === null) {
+            return empty();
+        }
+        const history = stored as Partial<StoredStageTransactionHistory>;
+        if (
+            history.schema !== 3 ||
+            !Array.isArray(history.entries) ||
+            !history.entries.every(isStoredStageTransaction)
+        ) {
+            return empty();
+        }
+        const baselines = (Array.isArray(history.baselines) ? history.baselines : []).filter((entry) =>
+            entry && typeof entry.repoRoot === "string" && entry.snapshot &&
+            typeof entry.snapshot.headTree === "string" && typeof entry.snapshot.indexTree === "string" &&
+            (entry.snapshot.headCommit === undefined || typeof entry.snapshot.headCommit === "string")
+        );
+        const bounded: StoredStageTransactionHistory = {
+            schema: 3, entries: history.entries.slice(-STAGE_TRANSACTION_HISTORY_LIMIT),
+            baselines: baselines.slice(-REPOSITORY_BASELINE_LIMIT),
+        };
+        // All readers hold the shared lock. Compact older histories once even
+        // on a read/no-change notification, instead of reparsing 100 entries
+        // until the next stage. Ordinary bounded reads perform no write.
+        if (history.entries.length > STAGE_TRANSACTION_HISTORY_LIMIT || baselines.length > REPOSITORY_BASELINE_LIMIT) {
+            await this.writeHistory(bounded);
+        }
+        return bounded;
     }
 
     private async writeHistory(history: StoredStageTransactionHistory): Promise<void> {

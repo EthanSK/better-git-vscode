@@ -33,6 +33,14 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-09-10T00:37:00Z
+**Trigger:** Ethan asked to reduce the Undo buffer to three and check its efficiency after suspected lag or memory growth.
+**Finding:** v1.2.64 used one global 100-entry stack across repositories, storing Git tree/commit identifiers and optional file URIs rather than file contents. The live saved file measured 49,489 bytes with 62 entries and 57 shared repository baselines; this is disk metadata, not a heap profile or proof of the reported lag's cause.
+**Fix:** v1.2.65 caps both explicit and observed transitions at three. First access atomically compacts an oversized persisted history under the existing cross-window lock, including read-only/no-change access. Bounded reads and unchanged single-repository notifications do not rewrite history. Repository baselines retain their separate existing 100-repository cap: reducing that safety metadata to three could allow a delayed window to recreate an evicted transition from stale local state.
+**Guard:** All 36 non-GUI tests and lint passed. Coverage pins the global three-entry cap, migration from 100 entries, no unchanged-state rewrite, retained cross-window baselines, and 12 concurrent appenders. On the Mini, three focused production-bundle E2Es passed: repeated mixed-route Undo, rapid repeated Undo, and four real index transitions followed by exactly three restores with a fourth Undo preserving the oldest stage and all working-file contents. Normal VS Code was not updated or restarted; the exact reported lag remains unverified.
+---
+
+---
 **Date:** 2026-09-07T22:30:00Z
 **Trigger:** Complete the Mini-verified v1.2.64 release after local E2Es were stopped at Ethan's request.
 **Release:** PR #113 merged as `d46da1a821407b296887e94837f50545224127ad`. The required verifier exited zero and printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED identity=EthanSK.better-git-vscode version=1.2.64 sha256=d2e16ac63c8e983d310de4f4cb3b48d7b7170d1ac46e065de5bc251e5e0168c4` after authenticated publisher validation, public validated-only Gallery visibility and exact downloaded-byte comparison. The uploaded nine-file VSIX was built on the Mini with vsce 3.9.2; its embedded JavaScript matched the focused-E2E bundle at `9d6c2e7802bb235aa62fd4f690b0af4dc68ca47178d95cd1973afad17158d48f`. Normal VS Code remained gallery-installed at 1.2.63 and was not installed, reloaded or restarted. No local E2E host remained.
