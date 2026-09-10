@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.67] — open worktrees from links
+
+- Add a Better Git URI handler and command to open a specific local worktree in Source Control, including worktrees outside the workspace.
+- Open a change to use VS Code’s automatic expansion and reveal while preserving other repositories and workspace folders. Explain the clean-worktree and disabled-Auto-Reveal cases.
+- Add a repository-header action to copy the link. Decode paths once and wait for the target repository’s first Git scan.
+
 ## [1.2.66] — preserve Git’s unchanged-file cache after Undo
 
 - Preserve cached file metadata when Undo restores the index, avoiding unnecessary content checks across unchanged files during the following Git refresh. Exact index restoration, later working edits, and the three-entry history limit remain intact.
