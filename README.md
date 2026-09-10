@@ -79,6 +79,16 @@ VS Code saves Source Control tree data per workspace, but current releases can s
 
 Exact mixed-state restoration remains paused until VS Code provides a dependable per-node contract that can be tested without selecting rows or accidentally targeting another Source Control list such as Source Control Graph.
 
+## Open a worktree from a link
+
+A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolute%2Fworktree` opens Source Control in the VS Code window receiving the link and opens one change from that exact worktree. Percent-encode the entire absolute path so spaces, plus signs, percent signs and other URL characters survive. VS Code can ask permission before handing the link to Better Git.
+
+For chat clients that require HTTPS, encode the complete URI twice as the `url` value of `https://vscode.dev/redirect?url=...`. Microsoft's redirect forwards it to VS Code; the copied link uses this form.
+
+Right-click a Git repository header and choose **Copy link to open worktree in Source Control**, or use **Better Git: Open Worktree in Source Control** in the Command Palette to choose an open repository. The link can also open a Git worktree outside the current workspace without replacing or adding workspace folders. It does not collapse other repositories or modify Git contents.
+
+Expansion and scrolling use VS Code's **SCM: Auto Reveal**. Clean or hidden repositories, disabled Auto Reveal, and changes without a working file can require manually showing or expanding the repository. VS Code can also keep the current scroll position when its already-selected file is opened again. Better Git does not change these settings or walk other repository rows.
+
 ## Pull a worktree into your sidebar without leaving the editor
 
 Reviewing a file that lives in another git **worktree** and want it in your workspace? Run **`Better Git: Add current file's git worktree to workspace`** (`better-git-vscode.add-current-worktree-to-workspace`) from the Command Palette. It finds the worktree the current (or under-review) file belongs to and adds that worktree's root as a workspace folder, so it shows up in your Explorer / Source Control sidebar.

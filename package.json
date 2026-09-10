@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.66",
+  "version": "1.2.67",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -33,11 +33,22 @@
     "SCM Providers"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "better-git-vscode.open-worktree-in-source-control",
+        "category": "Better Git",
+        "title": "Open Worktree in Source Control"
+      },
+      {
+        "command": "better-git-vscode.copy-worktree-link",
+        "category": "Better Git",
+        "title": "Copy link to open worktree in Source Control"
+      },
       {
         "command": "better-git-vscode.stage-before-mouse-navigation",
         "category": "Better Git",
@@ -187,6 +198,10 @@
       ],
       "commandPalette": [
         {
+          "command": "better-git-vscode.copy-worktree-link",
+          "when": "false"
+        },
+        {
           "command": "better-git-vscode.add-current-worktree-to-workspace",
           "when": "gitOpenRepositoryCount != 0"
         },
@@ -223,6 +238,11 @@
         }
       ],
       "scm/sourceControl": [
+        {
+          "command": "better-git-vscode.copy-worktree-link",
+          "when": "scmProvider == git",
+          "group": "navigation@3"
+        },
         {
           "command": "better-git-vscode.copy-worktree-name",
           "group": "navigation@-1000",

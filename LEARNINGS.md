@@ -32,6 +32,17 @@ Each entry looks like:
 
 (newest first)
 
+
+---
+**Date:** 2026-09-10T17:09:37.456460+00:00
+**Trigger:** Ethan wanted AIMVS Worktree footer links to open Better Git, expand that exact Source Control repository, and scroll to it without collapsing other worktrees.
+**Fix:** v1.2.67 adds an on-demand URI handler, an Open Worktree in Source Control command and a repository-header copy-link action. Validate the exact local Git root, reuse an already-open alias when possible, await only the target repository's status, and open its first usable change through the existing review helper. Repeated modified/new-file opening changes editor inputs to trigger VS Code Auto Reveal; no generic list commands, startup scanners, recollapse loops, configuration changes or working-file writes are introduced.
+**API boundaries:** `git.openRepository()` can return before its first status scan; an initial failing E2E reported a dirty worktree as clean until the explicit status await. A canonical path can refer to an already-open noncanonical alias, so retrying openRepository alone can return no repository: match real paths on lookup misses. Clean/hidden repositories, disabled Auto Reveal, missing working files and already-selected resources still have VS Code expansion/reveal limits; never promise universal per-node control.
+**Link contract:** Codex's installed Markdown library filters the direct `vscode:` scheme but accepts HTTPS. Use `https://vscode.dev/redirect?url=...`: encode the path once in the Better Git URI, then encode that entire URI twice. The live redirect decodes its url again after query parsing; one outer encoding corrupted plus signs, literal percent escapes and fragment/query punctuation, while two preserved the exact invented test path. Escape parentheses for Markdown too. The AIMVS footer's Python generator was checked against the extension generator, invalid-root cases, the installed URL transform and the live HTTP 302 result.
+**Automated guard:** 41 non-GUI tests and lint passed. Five focused Mini E2Es passed on the production bundle, covering an outside worktree with punctuation, repeated opening, alias and canonical roots, exact copied links, clean/invalid targets, workspace-folder preservation and unchanged Git/working-file contents. The packaged bundle SHA256 is `83d1b88d375cd7afc71e11088a96f9bda2ddaa1ef8bd5b65983ef49a8d86861e`; the nine-file VSIX SHA256 is `ac865c7a4f794bd7a8a4bfae06f01d8bdbb1d474409d294cdfdbf7948d7828d5`.
+**Manual guard:** A disposable Mini VS Code profile with nine repositories and visible Graph verified protocol approval, expansion of worktree-8, preservation of an expanded main repository, repeated reopening after collapse, and clean/Auto-Reveal-off fallback messages. This is sandbox evidence; Ethan's normal VS Code was not installed, updated or restarted, and his actual Codex footer click remains a post-update acceptance check.
+---
+
 ---
 **Date:** 2026-09-10T00:48:00Z
 **Trigger:** Ethan added that everything lags briefly immediately after Undo.

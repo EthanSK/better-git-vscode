@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import { performance } from "perf_hooks";
+import { createWorktreeLink, parseWorktreeLink } from "./gitWorktreeLink";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 import { StageTransactionStore, StoredStageTransaction } from "./stageTransactionStore";
@@ -819,6 +820,40 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
     );
 
+    // External links and the palette share one ordered, on-demand path. There
+    // are no startup scans, expansion loops, configuration writes or timers.
+    let worktreeLinkQueue: Promise<void> = Promise.resolve();
+    const openWorktree = (root?: vscode.Uri): Promise<void> => {
+        const next = worktreeLinkQueue.then(() => openWorktreeInSourceControl(root));
+        worktreeLinkQueue = next.catch(() => undefined);
+        return next;
+    };
+    const worktreeLinkCommand = vscode.commands.registerCommand(
+        "better-git-vscode.open-worktree-in-source-control",
+        (...targets: unknown[]) => openWorktree(targets.find(target => target instanceof vscode.Uri) as vscode.Uri | undefined ?? findWorktreeRootUri(targets))
+    );
+    const worktreeLinkHandler = vscode.window.registerUriHandler({
+        async handleUri(uri) {
+            const root = parseWorktreeLink(uri);
+            if (!root) {
+                void vscode.window.showErrorMessage("Better Git: This link does not contain a valid worktree path.");
+                return;
+            }
+            await openWorktree(vscode.Uri.file(root));
+        }
+    });
+    const copyWorktreeLinkCommand = vscode.commands.registerCommand(
+        "better-git-vscode.copy-worktree-link",
+        async (...targets: unknown[]) => {
+            const root = findWorktreeRootUri(targets);
+            if (root?.scheme !== "file") {
+                void vscode.window.showErrorMessage("Better Git: VS Code did not provide a local git worktree.");
+                return;
+            }
+            await vscode.env.clipboard.writeText(createWorktreeLink(root.fsPath, vscode.env.uriScheme));
+        }
+    );
+
     // VS Code's built-in "Open Worktree in Current Window" replaces the window's current folder/workspace.
     // This header action deliberately does the additive operation instead: keep every existing workspace folder
     // and append the clicked worktree root, using the same single-folder -> multi-root safety helper as reveal.
@@ -1209,6 +1244,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,
+        worktreeLinkCommand, worktreeLinkHandler, copyWorktreeLinkCommand,
         addWorktreeToWorkspaceCommand,
         commitMessageGenerator,
         stageAndAdvanceStatusBarItem, // fixed-location Stage & Next mouse target (v1.2.20)
@@ -1634,6 +1670,103 @@ interface FileChange {
     status?: number;
     originalUri?: vscode.Uri; // staged RENAME/COPY: the HEAD-side blob lives at this old path, not `uri`
 }
+
+const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<void> => {
+    let root = requestedRoot;
+    try {
+        const extension = vscode.extensions.getExtension<any>("vscode.git");
+        const git = (await extension?.activate())?.getAPI(1);
+        if (!git) {
+            void vscode.window.showErrorMessage("Better Git: VS Code could not use the built-in Git extension.");
+            return;
+        }
+        if (!root) {
+            const items = git.repositories.map((repo: any) => ({
+                label: path.basename(repo.rootUri.fsPath), description: repo.rootUri.fsPath, root: repo.rootUri as vscode.Uri
+            }));
+            if (items.length === 0) {
+                void vscode.window.showInformationMessage("Better Git: No git worktrees found");
+                return;
+            }
+            const selected = await vscode.window.showQuickPick<{ label: string; description: string; root: vscode.Uri }>(
+                items, { placeHolder: "Select a worktree to open in Source Control" }
+            );
+            if (!selected) { return; }
+            root = selected.root;
+        }
+        if (root.scheme !== "file" || !path.isAbsolute(root.fsPath)) {
+            throw new Error("This link does not contain a valid worktree path.");
+        }
+        const canonicalRoot = await fs.promises.realpath(root.fsPath);
+        await fs.promises.stat(path.join(canonicalRoot, ".git"));
+        let repository = git.getRepository(root);
+        if (!repository || await fs.promises.realpath(repository.rootUri.fsPath) !== canonicalRoot) {
+            // A canonical link can refer to an already-open alias (e.g. /tmp
+            // versus /private/tmp). Only this lookup miss needs metadata reads
+            // for other roots; never refresh their Git status or reopen them.
+            const roots = await Promise.all(git.repositories.map(async (candidate: any) => {
+                try { return await fs.promises.realpath(candidate.rootUri.fsPath) === canonicalRoot ? candidate : undefined; }
+                catch { return undefined; } // A removed repository can remain in VS Code until its watcher catches up.
+            }));
+            repository = roots.find(candidate => candidate);
+        }
+        root = vscode.Uri.file(canonicalRoot);
+        repository ??= await git.openRepository(root);
+        // Never fall through to the active editor's or primary repository.
+        if (!repository || await fs.promises.realpath(repository.rootUri.fsPath) !== canonicalRoot) {
+            throw new Error("No git worktree found at this path.");
+        }
+        // openRepository returns before its first status scan settles. Await
+        // that one repository, otherwise a new dirty worktree appears clean.
+        await repository.status();
+        await vscode.commands.executeCommand("workbench.view.scm");
+        const name = path.basename(canonicalRoot);
+        // Read only the validated Repository and stop at its first usable
+        // change; this action does not need to collect or sort all files.
+        let target: FileChange | undefined;
+        let deleted: FileChange | undefined;
+        for (const [changes, staged] of [
+            [repository.state.workingTreeChanges, false], [repository.state.untrackedChanges, false],
+            [repository.state.indexChanges, true], [repository.state.mergeChanges, false]
+        ] as [any[] | undefined, boolean][]) {
+            for (const change of changes ?? []) {
+                if (change.status === GitStatus.IGNORED) { continue; }
+                const entry = { uri: change.uri, status: change.status, originalUri: change.originalUri, staged };
+                if (change.status === GitStatus.DELETED || change.status === GitStatus.INDEX_DELETED) {
+                    deleted ??= entry;
+                } else { target = entry; break; }
+            }
+            if (target) { break; }
+        }
+        target ??= deleted;
+        if (!target) {
+            void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}, but it has no changes to reveal. You may need to expand its section.`);
+            return;
+        }
+        const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+        if (!target.staged && input instanceof vscode.TabInputTextDiff && input.modified.toString() === target.uri.toString()) {
+            // Changing from this diff to its real file emits the editor event
+            // autoReveal needs even after the user has collapsed the same repo.
+            await vscode.commands.executeCommand("vscode.open", target.uri, { preview: true, preserveFocus: true });
+        }
+        if (!target.staged && input instanceof vscode.TabInputText && input.uri.toString() === target.uri.toString()
+            && (target.status === GitStatus.UNTRACKED || target.status === GitStatus.INTENT_TO_ADD)) {
+            // An already-open new file has no ordinary working diff to switch
+            // to. Its correct comparison is the empty tree, without a temp file.
+            const empty = await getEmptyTreeRef(target.uri);
+            if (empty) {
+                await vscode.commands.executeCommand("vscode.diff", toGitUri(target.uri, empty), target.uri, undefined,
+                    { preview: true, preserveFocus: true });
+            }
+        }
+        await openChangeEntry(target, true);
+        if (!vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true)) {
+            void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}. Auto reveal is off, so expand its section manually.`);
+        }
+    } catch (error) {
+        void vscode.window.showErrorMessage(`Better Git: Failed to open ${root?.fsPath ?? "worktree"}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+};
 
 const revealUndoneStageTransaction = async (transaction: StoredStageTransaction): Promise<void> => {
     const changedPaths = new Set((await readStageTransactionPaths(transaction))
