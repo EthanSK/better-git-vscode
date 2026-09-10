@@ -91,7 +91,12 @@ export const restoreStageTransaction = async (receipt: StoredStageTransaction): 
             if (await git(root, ["write-tree"], env) !== receipt.afterIndexTree) {
                 return "index-changed";
             }
-            await git(root, ["read-tree", receipt.beforeIndexTree], env);
+            // A one-tree merge restores the exact tree while reusing stat data for
+            // unchanged entries. Plain read-tree clears that cache for every
+            // file, forcing the next status to reopen/rehash the whole repo.
+            // -i confines this to our private index; never inspect or update
+            // working files while restoring a partially staged transaction.
+            await git(root, ["read-tree", "-m", "-i", receipt.beforeIndexTree], env);
             await lock.writeFile(await fs.promises.readFile(temporaryIndex));
             await lock.sync();
             if (!sameHead(currentHead, await readHead(root))) {

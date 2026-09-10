@@ -42,6 +42,19 @@ suite("Git stage undo safety", () => {
         assert.strictEqual(fs.existsSync(path.join(root, ".git/index.lock")), false);
     });
 
+    test("keeps cached stat information for files untouched by Undo", async () => {
+        write("untouched.txt", "unchanged file that must not be rehashed\n");
+        git("add", "untouched.txt");
+        git("commit", "-qm", "add unchanged fixture");
+        const before = git("ls-files", "--debug", "--", "untouched.txt");
+        assert.ok(!before.includes("ctime: 0:0"), "fixture must begin with populated stat information");
+        const receipt = await stage();
+        assert.strictEqual(await restoreStageTransaction(receipt), "undone");
+        assert.strictEqual(git("ls-files", "--debug", "--", "untouched.txt"), before);
+        assert.strictEqual(git("write-tree"), receipt.beforeIndexTree);
+        assert.strictEqual(fs.readFileSync(path.join(root, "untouched.txt"), "utf8"), "unchanged file that must not be rehashed\n");
+    });
+
     test("finds receipt paths after Undo without including newer index changes", async () => {
         const receipt = await stage();
         await restoreStageTransaction(receipt);
@@ -112,6 +125,23 @@ suite("Git stage undo safety", () => {
         const receipt = await stage();
         assert.strictEqual(await restoreStageTransaction(receipt), "undone");
         assert.strictEqual(git("write-tree"), receipt.beforeIndexTree);
+    });
+
+    test("preserves sparse-checkout exclusions while restoring the exact index", async () => {
+        fs.mkdirSync(path.join(root, "omitted"));
+        write("omitted/untouched.txt", "excluded file\n");
+        git("add", ".");
+        git("commit", "-qm", "sparse fixture");
+        git("sparse-checkout", "init", "--cone");
+        git("sparse-checkout", "set", "included");
+        const before = git("ls-files", "-t", "--", "omitted/untouched.txt");
+        assert.ok(before.startsWith("S "));
+        assert.strictEqual(fs.existsSync(path.join(root, "omitted/untouched.txt")), false);
+        const receipt = await stage();
+        assert.strictEqual(await restoreStageTransaction(receipt), "undone");
+        assert.strictEqual(git("write-tree"), receipt.beforeIndexTree);
+        assert.strictEqual(git("ls-files", "-t", "--", "omitted/untouched.txt"), before);
+        assert.strictEqual(fs.existsSync(path.join(root, "omitted/untouched.txt")), false);
     });
 
     test("restores the empty index on an unborn branch", async () => {

@@ -1,5 +1,9 @@
 # Change Log
 
+## [1.2.66] — preserve Git’s unchanged-file cache after Undo
+
+- Preserve cached file metadata when Undo restores the index, avoiding unnecessary content checks across unchanged files during the following Git refresh. Exact index restoration, later working edits, and the three-entry history limit remain intact.
+
 ## [1.2.65] — keep the latest three Undo entries
 
 - Limit the shared stage/index Undo history to the latest three transitions across repositories.
