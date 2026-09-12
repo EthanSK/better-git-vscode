@@ -114,6 +114,11 @@ export async function run(): Promise<void> {
         fs.writeFileSync(path.join(root, c), "Computer Use change C\n");
         fs.writeFileSync(path.join(root, d), "Computer Use change D\n");
     }
+    const initialStaged = worktreeLink && process.env.BGV_UI_COLLAPSE_OTHERS === "1" ? ["zz_staged.txt"] : [];
+    for (const file of initialStaged) {
+        fs.writeFileSync(path.join(root, file), "Existing staged change\n");
+        execFileSync("git", ["add", "--", file], { cwd: root });
+    }
     await repo.status();
     await api.whenStageTransactionsSettled();
     if (worktreeLink) {
@@ -153,13 +158,14 @@ export async function run(): Promise<void> {
         const uri = (relative: string) => vscode.Uri.file(path.join(root, relative));
         await waitFor(() => api.getReviewDecorationBadge(uri(a)) === "🔥🔥", "URI opens A with fire");
         await waitFor(() => api.getReviewDecorationBadge(uri(a)) === "💥💥", "hold A shows readiness");
-        assert.deepStrictEqual(staged(), [], "Hold cannot stage before release");
+        assert.deepStrictEqual(staged(), initialStaged, "Hold cannot stage before release");
         await waitFor(() => staged().includes(a) && api.getReviewDecorationBadge(uri(b)) === "🔥🔥", "release stages A and selects B with fire");
         await waitFor(() => staged().includes(b) && staged().includes(c) && api.getReviewDecorationBadge(uri(d)) === "🔥🔥", "two rapid releases stage B and C and select D");
-        assert.deepStrictEqual(staged(), [a, b, c].sort());
-        await waitFor(() => staged().length === 2 && api.getReviewDecorationBadge(uri(c)) === "🔥🔥", "first Undo restores and selects C");
-        await waitFor(() => staged().length === 1 && api.getReviewDecorationBadge(uri(b)) === "🔥🔥", "second Undo restores and selects B");
-        await waitFor(() => staged().length === 0 && api.getReviewDecorationBadge(uri(a)) === "🔥🔥", "third Undo restores and selects A");
+        assert.deepStrictEqual(staged(), [...initialStaged, a, b, c].sort());
+        await waitFor(() => staged().length === initialStaged.length + 2 && api.getReviewDecorationBadge(uri(c)) === "🔥🔥", "first Undo restores and selects C");
+        await waitFor(() => staged().length === initialStaged.length + 1 && api.getReviewDecorationBadge(uri(b)) === "🔥🔥", "second Undo restores and selects B");
+        await waitFor(() => staged().length === initialStaged.length && api.getReviewDecorationBadge(uri(a)) === "🔥🔥", "third Undo restores and selects A");
+        assert.deepStrictEqual(staged(), initialStaged, "Undo preserves the pre-existing stage");
         for (const [relative, text] of [[a, "A"], [b, "B"], [c, "C"], [d, "D"]]) {
             assert.ok(fs.readFileSync(path.join(root, relative), "utf8").includes(`Computer Use change ${text}`));
         }
@@ -167,7 +173,7 @@ export async function run(): Promise<void> {
             const trace = api.getScmTreeCommandTrace();
             assert.ok(trace.length >= 4 && trace.length % 4 === 0);
             for (let i = 0; i < trace.length; i += 4) {
-                assert.deepStrictEqual(trace.slice(i, i + 4), ["workbench.view.scm", "workbench.scm.action.collapseAllRepositories", "workbench.scm.focus", "list.clear"]);
+                assert.deepStrictEqual(trace.slice(i, i + 4), ["workbench.view.scm", "workbench.scm.focus", "list.collapseAll", "list.clear"]);
             }
             console.log(`COMPUTER_USE_COLLAPSE_TRACE ${JSON.stringify(trace)}`);
         }

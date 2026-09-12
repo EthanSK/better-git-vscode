@@ -1735,20 +1735,18 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
             return;
         }
         const autoReveal = vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true);
-        // This explicit link action uses the same one-shot collapse as the manual toolbar button.
-        // Opening the working file below then lets native Auto Reveal expand only its repository.
-        // Git-only editors (staged/deleted) cannot reliably trigger that reveal; preserve the existing
-        // fallback rather than closing their repository with no way to reopen it. No row walking,
-        // recollapse listener, timer or startup opt-in is involved.
+        // Git-only editors cannot reliably trigger native reveal. Keep their existing fallback,
+        // along with clean repositories and Auto Reveal off, rather than collapsing their target.
         if (autoReveal && !target.staged && target.status !== GitStatus.DELETED) {
-            if (await collapseScmRepositories("manual")) {
-                // Native Auto Reveal skips a still-selected resource even if its parent is collapsed.
-                // Collapsing first removes commit inputs; SCM focus now targets its Changes tree.
-                // Clear only that selection once. Never use list commands to walk/collapse rows or
-                // restore saved expansion state, and never run this preparation during startup.
-                await executeScmTreeCommand("manual", "workbench.scm.focus");
-                await executeScmTreeCommand("manual", "list.clear");
-            }
+            await executeScmTreeCommand("manual", "workbench.view.scm");
+            // Reveal first so native SCM focus belongs to this resource instead of a commit input
+            // or Graph. A recursive collapse must precede repository-header collapse: refreshing
+            // a collapsed repository can discard its groups before they can be closed.
+            await openChangeEntry(target, true);
+            await executeScmTreeCommand("manual", "workbench.scm.focus");
+            await executeScmTreeCommand("manual", "list.collapseAll");
+            // Auto Reveal skips a still-selected resource even when its parent is collapsed.
+            await executeScmTreeCommand("manual", "list.clear");
         } else {
             await vscode.commands.executeCommand("workbench.view.scm");
         }

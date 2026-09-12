@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.71] — collapse Staged Changes when opening a Worktree link
+
+- Collapse the selected worktree's Staged Changes group and the other repositories while revealing the first unstaged working file.
+- Prepare the target before the recursive collapse so its groups are available on first use as well as repeated clicks. Keep staging, Undo and the manual collapse button independent of this preparation.
+
 ## [1.2.70] — collapse other worktrees when opening a link
 
 - Reuse the manual collapse button when a Worktree link opens an unstaged working file, then reveal that file in the selected repository.

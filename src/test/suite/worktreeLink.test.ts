@@ -54,7 +54,7 @@ suite('Worktree link E2E', () => {
             assert.ok(changes > 0, 'same diff must change inputs so VS Code can reveal its row again');
         } finally { listener.dispose(); }
     });
-    test('link collapse reuses the manual button once per invocation with startup automation off', async () => {
+    test('link recursively collapses once per invocation with startup automation off', async () => {
         const config = vscode.workspace.getConfiguration('better-git-vscode');
         const beforeSetting = config.inspect<boolean>('experimentalScmTreeStateManagement')?.workspaceValue;
         try {
@@ -65,8 +65,8 @@ suite('Worktree link E2E', () => {
                 assert.strictEqual(activePath(), path.join(target, 'review.txt'));
             }
             assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), [
-                'workbench.view.scm', 'workbench.scm.action.collapseAllRepositories', 'workbench.scm.focus', 'list.clear',
-                'workbench.view.scm', 'workbench.scm.action.collapseAllRepositories', 'workbench.scm.focus', 'list.clear',
+                'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'list.clear',
+                'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'list.clear',
             ]);
         } finally {
             await config.update('experimentalScmTreeStateManagement', beforeSetting, vscode.ConfigurationTarget.Workspace);
