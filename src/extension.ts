@@ -146,6 +146,7 @@ const runStageCommand = async (operation: () => Promise<void>): Promise<void> =>
     try {
         await operation();
     } catch (error) {
+        if (error instanceof NavigationSuperseded) { throw error; }
         const candidate = error as { message?: unknown; stderr?: unknown };
         const detail = [candidate?.stderr, candidate?.message]
             .find((value): value is string => typeof value === "string" && value.trim().length > 0)
@@ -220,7 +221,9 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
         const detail = [candidate?.stderr, candidate?.message]
             .find((value): value is string => typeof value === "string" && value.trim().length > 0)
             ?.trim();
-        await vscode.window.showWarningMessage(
+        // This informational toast has no decision to wait for. Awaiting dismissal strands a successfully
+        // staged file (and later queued releases) instead of advancing when an exact Undo snapshot is unavailable.
+        void vscode.window.showWarningMessage(
             `Better Git: The file was staged, but its exact undo receipt could not be saved${detail ? ` — ${detail}` : "."}`
         );
     }
@@ -692,7 +695,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async () => {
         clearStageHoldFeedback();
         lastNavDirection = "next";
-        await runStageCommand(() => stageCurrentFileAndAdvance("next"));
+        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("next", undefined, check)));
     });
 
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
@@ -700,7 +703,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async () => {
         clearStageHoldFeedback();
         lastNavDirection = "previous";
-        await runStageCommand(() => stageCurrentFileAndAdvance("previous"));
+        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("previous", undefined, check)));
     });
 
     let undoLastStageDisposable = vscode.commands.registerCommand(
@@ -723,7 +726,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // keyboard shortcut. On a non-diff / non-change editor stageCurrentFileAndAdvance safely no-ops (its
     // isChangedFile guard), so the button never errors even when "advance" is meaningless.
     let disposable15 = vscode.commands.registerCommand("better-git-vscode.stage-current-file-and-advance", async () => {
-        await runStageCommand(() => stageCurrentFileAndAdvance(lastNavDirection));
+        const direction = lastNavDirection;
+        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance(direction, undefined, check)));
     });
 
     // Manual trigger for collapsing the worktree/repository section headers (see the big comment block
@@ -1727,8 +1731,11 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         let deleted: FileChange | undefined;
         for (const [changes, staged] of [
             [repository.state.workingTreeChanges, false], [repository.state.untrackedChanges, false],
-            [repository.state.indexChanges, true], [repository.state.mergeChanges, false]
+            [repository.state.mergeChanges, false], [repository.state.indexChanges, true]
         ] as [any[] | undefined, boolean][]) {
+            // An unstaged deletion is still actionable. Do not skip past it to an already-staged file,
+            // where hold-to-stage deliberately does nothing even though the link displays the fire badge.
+            if (staged && deleted) { target = deleted; break; }
             for (const change of changes ?? []) {
                 if (change.status === GitStatus.IGNORED) { continue; }
                 const entry = { uri: change.uri, status: change.status, originalUri: change.originalUri, staged };
@@ -3564,7 +3571,7 @@ const stageMouseNavigationOrigin = (args: unknown): Promise<void> => {
     if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) { return Promise.resolve(); }
     const { source, direction } = args;
     if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) { return Promise.resolve(); }
-    return serializeChangeNavigation(() => runStageCommand(async () => {
+    return serializeChangeNavigation(check => runStageCommand(async () => {
         const origin = mouseNavigationOrigins.get(source);
         mouseNavigationOrigins.delete(source);
         if (!origin || origin.direction !== direction || requestedAt < origin.requestedAt || requestedAt - origin.requestedAt >= 1000) { return; }
@@ -3574,8 +3581,9 @@ const stageMouseNavigationOrigin = (args: unknown): Promise<void> => {
         const stillUnstaged = (await getFileChanges(origin.change.uri)).some(change => !change.staged && change.uri.toString() === origin.change.uri.toString());
         if (!stillUnstaged) { return; }
         const shown = await getActiveFileUri();
+        check();
         if (shown?.toString() === origin.change.uri.toString()) {
-            await stageCurrentFileAndAdvance(direction, origin.change);
+            await stageCurrentFileAndAdvance(direction, origin.change, check);
         } else {
             await stageThroughExtension(repo, origin.change.uri); // Navigation already crossed files: stage the origin without a second jump.
         }
@@ -3808,11 +3816,15 @@ const stageCurrentFile = async () => {
 // stage-and-advance commands: "next" advances down the list (top-to-bottom review, shift + next), "previous"
 // moves up (bottom-to-top review, shift + previous). Only the landing-target differs; everything else (the
 // staged-side no-op, the safety guard, the untracked-aware list, the editor handling) is identical.
-const stageCurrentFileAndAdvance = async (direction: "next" | "previous", capturedChange?: FileChange) => {
+const stageCurrentFileAndAdvance = async (
+    direction: "next" | "previous", capturedChange?: FileChange,
+    check: NavigationCheckpoint = noNavigationCheckpoint
+) => {
     const gitExtension = vscode.extensions.getExtension<any>("vscode.git")!.exports;
     const git = gitExtension.getAPI(1);
 
     const currentUri = capturedChange?.uri ?? await getActiveFileUri();
+    check();
     if (!currentUri) {
         return;
     }
@@ -3820,6 +3832,7 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous", captur
     // If the active diff is the STAGED side of a file, there's nothing to stage — do nothing (don't jump
     // to an unstaged file). This command is for working through UNSTAGED files; on a staged file it no-ops.
     const activeSide = capturedChange ?? await getActiveChange();
+    check();
     if (activeSide?.staged === true) {
         return;
     }
@@ -3846,6 +3859,7 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous", captur
     // fixes both parts with no divergent merge-only branch. Read it BEFORE staging: getFileChanges snapshots
     // activeRepo.state at call time, so the target is computed against the pre-stage state (deterministic).
     const allChanges = await getFileChanges(currentUri);
+    check();
 
     // SAFETY GUARD: only act if the active file is actually a change (staged, unstaged, untracked, OR a merge
     // conflict). Without this, an accidental stage-and-advance while editing a clean/unrelated file would run
@@ -3887,18 +3901,24 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous", captur
     // afterwards would record the wrong file. stageThroughExtension only updates the status bar if add()
     // succeeds, so a no-op/failed stage won't show a file in the bar.
     await stageThroughExtension(activeRepo, currentUri);
+    check(); // Finish the exact stage, but never pull the user back after a manual tab/worktree switch.
 
     if (!targetUnstagedChange) {
         // Current was the ONLY unstaged file (no next and no previous) — nothing left to review, so close.
-        await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+        navigationOwnTabChange = true;
+        try {
+            await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+        } finally {
+            observeNavigationTab();
+            navigationOwnTabChange = false;
+        }
+        // Exhausting this review must not let already queued releases stage an unrelated revealed tab.
+        invalidateChangeNavigation();
         return;
     }
 
     // Mirror openNextFile's editor handling: replace a pinned (non-preview) editor, keep a preview tab.
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
-    if (!isPreview) {
-        await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
-    }
     // BUG 11 FIX (v1.2.9 — stage-and-advance landed nowhere on an untracked target with
     // git.untrackedChanges="separate"): route the final open through the SHARED openChangeEntry (the same
     // function nav's openNextFile/openPreviousFile use) instead of a raw git.openChange. In "separate" mode
@@ -3906,11 +3926,11 @@ const stageCurrentFileAndAdvance = async (direction: "next" | "previous", captur
     // the target never opened and the user was stranded on a blank/closed editor. openChangeEntry's unstaged
     // path has a shown-tab verification + showTextDocument fallback that handles exactly this silent-no-op —
     // so the mouse/keyboard/"+" stage-and-advance now inherits it for free, matching plain navigation.
-    await openChangeEntry(targetUnstagedChange);
+    await openNavigationTarget(targetUnstagedChange, check, !isPreview);
     if (direction === "previous") {
         // Stage-and-Previous is a cross-file backward transition too: land new files at EOF and tall diff hunks
         // at their last line, exactly like openPreviousFile/openLastFile.
-        await landChangeForBackwardReview(targetUnstagedChange);
+        await landChangeForBackwardReview(targetUnstagedChange, check);
     }
 };
 

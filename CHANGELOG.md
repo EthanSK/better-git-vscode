@@ -1,5 +1,13 @@
 # Change Log
 
+## [1.2.68] — keep stage-and-advance releases in order
+
+- Prefer unstaged deletions and merge conflicts over already-staged files when opening a Worktree link.
+- Queue Stage and Next/Previous with change navigation so rapid mouse releases each stage the next file, including after opening a Worktree link.
+- Keep an in-progress stage tied to its original file and cancel its pending navigation when you switch tabs or worktrees. Stop queued releases when the final unstaged file closes, preserving other open editors.
+- Continue advancing after a successful stage if an Undo snapshot cannot be saved; show the warning without waiting for it to be dismissed.
+- Extend real-host and manual URI coverage through hold feedback, staging, fire movement, rapid releases, and exact Undo.
+
 ## [1.2.67] — open worktrees from links
 
 - Add a Better Git URI handler and command to open a specific local worktree in Source Control, including worktrees outside the workspace.
