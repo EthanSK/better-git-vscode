@@ -260,6 +260,43 @@ suite('Worktree link E2E', () => {
         assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab);
         assert.strictEqual(runGit(target, 'diff', '--cached', '--binary'), before);
     });
+    for (const treeView of [false, true]) {
+        for (const kind of ['modified', 'untracked', 'deleted']) {
+            test(`the link opens the top unstaged ${kind} in ${treeView ? 'tree' : 'list'} review order and staging advances`, async () => {
+                await resetTarget();
+                runGit(target, 'clean', '-fd');
+                const base = runGit(target, 'rev-parse', 'HEAD').trim();
+                const config = vscode.workspace.getConfiguration('better-git-vscode');
+                const previous = config.inspect<boolean>('treeView')?.workspaceValue;
+                const files = ['.notes/findings.md', 'item-2.txt', 'item-10.txt'];
+                try {
+                    for (const file of files) {
+                        fs.mkdirSync(path.dirname(path.join(target, file)), { recursive: true });
+                        fs.writeFileSync(path.join(target, file), 'base\n');
+                    }
+                    runGit(target, 'add', '.');
+                    runGit(target, 'commit', '-m', 'ordering fixture');
+                    for (const file of files) { fs.writeFileSync(path.join(target, file), 'changed\n'); }
+                    const first = treeView ? files[0] : files[1];
+                    if (kind === 'untracked') { runGit(target, 'rm', '--cached', first); }
+                    if (kind === 'deleted') { fs.unlinkSync(path.join(target, first)); }
+                    await config.update('treeView', treeView, vscode.ConfigurationTarget.Workspace);
+                    const before = runGit(target, 'status', '--porcelain=v1');
+                    await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+                    await api.whenReviewDecorationSettled();
+                    assert.strictEqual(api.getCurrentReviewUri(), vscode.Uri.file(path.join(target, first)).toString());
+                    assert.strictEqual(runGit(target, 'status', '--porcelain=v1'), before, 'opening the link must not mutate Git');
+                    await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+                    assert.strictEqual(activePath(), path.join(target, treeView ? files[1] : files[2]));
+                    assert.strictEqual(runGit(target, 'diff', '--name-only').split('\n').includes(first), false);
+                } finally {
+                    await config.update('treeView', previous, vscode.ConfigurationTarget.Workspace);
+                    await runWithTransientGitIndexRetry(async () => runGit(target, 'reset', '--hard', base));
+                    runGit(target, 'clean', '-fd');
+                }
+            });
+        }
+    }
     test('the link prefers an unstaged deletion over an already-staged file', async () => {
         await resetTarget();
         runGit(target, 'clean', '-fd');

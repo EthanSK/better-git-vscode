@@ -95,12 +95,21 @@ export async function run(): Promise<void> {
         }
         return;
     }
-    const a = "committed/mod_a.txt";
-    const b = "committed/mod_d.txt";
+    const a = worktreeLink ? "firestore.indexes.json" : "committed/mod_a.txt";
+    const b = worktreeLink ? "firestore.rules.template" : "committed/mod_d.txt";
+    const c = worktreeLink ? ".notes/findings.md" : "committed/yy_third.txt";
+    const d = worktreeLink ? ".notes/zz_fourth.txt" : "committed/zz_fourth.txt";
+    if (worktreeLink) {
+        // Reproduce raw Git order starting inside a dot-directory while SCM's list starts with root files.
+        for (const relative of [a, b, c, d]) {
+            fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+            fs.writeFileSync(path.join(root, relative), "base\n");
+        }
+        execFileSync("git", ["add", "--", a, b, c, d], { cwd: root });
+        execFileSync("git", ["commit", "-m", "Worktree ordering fixture"], { cwd: root });
+    }
     fs.appendFileSync(path.join(root, a), "Computer Use change A\n");
     fs.appendFileSync(path.join(root, b), "Computer Use change B\n");
-    const c = "committed/yy_third.txt";
-    const d = "committed/zz_fourth.txt";
     if (worktreeLink) {
         fs.writeFileSync(path.join(root, c), "Computer Use change C\n");
         fs.writeFileSync(path.join(root, d), "Computer Use change D\n");
@@ -134,7 +143,7 @@ export async function run(): Promise<void> {
         assert.deepStrictEqual(staged(), [], "Hold cannot stage before release");
         await waitFor(() => staged().includes(a) && api.getReviewDecorationBadge(uri(b)) === "🔥🔥", "release stages A and selects B with fire");
         await waitFor(() => staged().includes(b) && staged().includes(c) && api.getReviewDecorationBadge(uri(d)) === "🔥🔥", "two rapid releases stage B and C and select D");
-        assert.deepStrictEqual(staged(), [a, b, c]);
+        assert.deepStrictEqual(staged(), [a, b, c].sort());
         await waitFor(() => staged().length === 2 && api.getReviewDecorationBadge(uri(c)) === "🔥🔥", "first Undo restores and selects C");
         await waitFor(() => staged().length === 1 && api.getReviewDecorationBadge(uri(b)) === "🔥🔥", "second Undo restores and selects B");
         await waitFor(() => staged().length === 0 && api.getReviewDecorationBadge(uri(a)) === "🔥🔥", "third Undo restores and selects A");
