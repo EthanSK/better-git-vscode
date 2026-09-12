@@ -33,6 +33,14 @@ Each entry looks like:
 (newest first)
 
 ---
+**Date:** 2026-09-12T14:47:48+00:00
+**Trigger:** Ethan confirmed the Worktree link selects the top unstaged change and asked to collapse Staged Changes on opening.
+**Verified boundary:** Rechecked the installed VS Code 1.136.1 renderer and current upstream SCMViewPane source. collapseAllRepositories calls tree.collapse(repository) without recursion, preserving expanded child groups. workbench.scm.action.collapseAll accepts an internal resource-group node and collapses its children, not that group. SourceControlResourceGroup has no public collapse/expanded property or per-group command. Neither existing collapse action can implement this request.
+**Additional trap:** focusNextResourceGroup/focusPreviousResourceGroup enqueue asynchronous tree work but return void without awaiting it. Following executeCommand with generic list.collapse therefore has no completed-focus guarantee; list.collapse uses the last focused list and moves focus to the parent when a node is already collapsed. Group order also depends on visible merge/index/working-tree groups. A fixed delay or repeated row navigation would reintroduce the cross-list/timing failure recorded for v1.2.30; do not ship that as a targeted collapse implementation.
+**Outcome:** Automatic staged-group collapse remains unimplemented pending a VS Code command/API accepting an exact repository and group, or another verified focus-independent primitive. No extension runtime, package version or normal VS Code state was changed. This was source/command-contract verification, not a manual UI test. Current source: https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/scm/browser/scmViewPane.ts and https://code.visualstudio.com/api/references/vscode-api#SourceControlResourceGroup.
+---
+
+---
 **Date:** 2026-09-12T12:01:26+00:00
 **Trigger:** Ethan confirmed hold-and-release staging works but the Worktree link selected findings.md below firestore.indexes.json and firestore.rules.template instead of the top unstaged row.
 **Root cause:** The URI action took the first usable entry from Git's raw state arrays, bypassing the existing SCM review sort. Raw Git path order places a nested dot-directory before root files, differs for numbered names, and separates some untracked entries; the link also deferred deletions despite their visible position.
