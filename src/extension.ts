@@ -1723,7 +1723,6 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         // openRepository returns before its first status scan settles. Await
         // that one repository, otherwise a new dirty worktree appears clean.
         await repository.status();
-        await vscode.commands.executeCommand("workbench.view.scm");
         const name = path.basename(canonicalRoot);
         // Use the same sorted entries as Stage and Next/Previous. Git's raw state arrays can put a
         // nested path above root files and item-10 above item-2, unlike the visible SCM review order.
@@ -1731,27 +1730,44 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         const changes = await getFileChanges(repository.rootUri);
         const target = changes.find(change => !change.staged) ?? changes[0];
         if (!target) {
+            await vscode.commands.executeCommand("workbench.view.scm");
             void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}, but it has no changes to reveal. You may need to expand its section.`);
             return;
         }
-        const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-        if (!target.staged && input instanceof vscode.TabInputTextDiff && input.modified.toString() === target.uri.toString()) {
-            // Changing from this diff to its real file emits the editor event
-            // autoReveal needs even after the user has collapsed the same repo.
-            await vscode.commands.executeCommand("vscode.open", target.uri, { preview: true, preserveFocus: true });
+        const autoReveal = vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true);
+        // This explicit link action uses the same one-shot collapse as the manual toolbar button.
+        // Opening the working file below then lets native Auto Reveal expand only its repository.
+        // Git-only editors (staged/deleted) cannot reliably trigger that reveal; preserve the existing
+        // fallback rather than closing their repository with no way to reopen it. No row walking,
+        // recollapse listener, timer or startup opt-in is involved.
+        if (autoReveal && !target.staged && target.status !== GitStatus.DELETED) {
+            if (await collapseScmRepositories("manual")) {
+                // Native Auto Reveal skips a still-selected resource even if its parent is collapsed.
+                // Collapsing first removes commit inputs; SCM focus now targets its Changes tree.
+                // Clear only that selection once. Never use list commands to walk/collapse rows or
+                // restore saved expansion state, and never run this preparation during startup.
+                await executeScmTreeCommand("manual", "workbench.scm.focus");
+                await executeScmTreeCommand("manual", "list.clear");
+            }
+        } else {
+            await vscode.commands.executeCommand("workbench.view.scm");
         }
-        if (!target.staged && input instanceof vscode.TabInputText && input.uri.toString() === target.uri.toString()
-            && (target.status === GitStatus.UNTRACKED || target.status === GitStatus.INTENT_TO_ADD)) {
-            // An already-open new file has no ordinary working diff to switch
-            // to. Its correct comparison is the empty tree, without a temp file.
-            const empty = await getEmptyTreeRef(target.uri);
-            if (empty) {
-                await vscode.commands.executeCommand("vscode.diff", toGitUri(target.uri, empty), target.uri, undefined,
-                    { preview: true, preserveFocus: true });
+        const shown = await currentReviewFileUriAsync();
+        if (!target.staged && target.status !== GitStatus.DELETED && shown?.toString() === target.uri.toString()) {
+            // Auto Reveal also needs a real editor-input change on repeat clicks. Use the shared
+            // resolver so image/custom previews receive the same handling as ordinary text tabs.
+            if (target.status === GitStatus.UNTRACKED || target.status === GitStatus.INTENT_TO_ADD) {
+                const empty = await getEmptyTreeRef(target.uri);
+                if (empty) {
+                    await vscode.commands.executeCommand("vscode.diff", toGitUri(target.uri, empty), target.uri, undefined,
+                        { preview: true, preserveFocus: true });
+                }
+            } else {
+                await vscode.commands.executeCommand("vscode.open", target.uri, { preview: true, preserveFocus: true });
             }
         }
         await openChangeEntry(target, true);
-        if (!vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true)) {
+        if (!autoReveal) {
             void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}. Auto reveal is off, so expand its section manually.`);
         }
     } catch (error) {
