@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.69] — start Worktree links at the top unstaged change
+
+- Choose the first unstaged file using the same list/tree order as review navigation, including root files, numbered names, new files, and deletions.
+- Keep Stage and Next/Previous in that same sequence after opening the link.
+
 ## [1.2.68] — keep stage-and-advance releases in order
 
 - Prefer unstaged deletions and merge conflicts over already-staged files when opening a Worktree link.

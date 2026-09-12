@@ -1725,27 +1725,11 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         await repository.status();
         await vscode.commands.executeCommand("workbench.view.scm");
         const name = path.basename(canonicalRoot);
-        // Read only the validated Repository and stop at its first usable
-        // change; this action does not need to collect or sort all files.
-        let target: FileChange | undefined;
-        let deleted: FileChange | undefined;
-        for (const [changes, staged] of [
-            [repository.state.workingTreeChanges, false], [repository.state.untrackedChanges, false],
-            [repository.state.mergeChanges, false], [repository.state.indexChanges, true]
-        ] as [any[] | undefined, boolean][]) {
-            // An unstaged deletion is still actionable. Do not skip past it to an already-staged file,
-            // where hold-to-stage deliberately does nothing even though the link displays the fire badge.
-            if (staged && deleted) { target = deleted; break; }
-            for (const change of changes ?? []) {
-                if (change.status === GitStatus.IGNORED) { continue; }
-                const entry = { uri: change.uri, status: change.status, originalUri: change.originalUri, staged };
-                if (change.status === GitStatus.DELETED || change.status === GitStatus.INDEX_DELETED) {
-                    deleted ??= entry;
-                } else { target = entry; break; }
-            }
-            if (target) { break; }
-        }
-        target ??= deleted;
+        // Use the same sorted entries as Stage and Next/Previous. Git's raw state arrays can put a
+        // nested path above root files and item-10 above item-2, unlike the visible SCM review order.
+        // Keep this lookup tied to the validated repository, including an already-open path alias.
+        const changes = await getFileChanges(repository.rootUri);
+        const target = changes.find(change => !change.staged) ?? changes[0];
         if (!target) {
             void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}, but it has no changes to reveal. You may need to expand its section.`);
             return;

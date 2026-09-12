@@ -32,6 +32,16 @@ Each entry looks like:
 
 (newest first)
 
+---
+**Date:** 2026-09-12T12:01:26+00:00
+**Trigger:** Ethan confirmed hold-and-release staging works but the Worktree link selected findings.md below firestore.indexes.json and firestore.rules.template instead of the top unstaged row.
+**Root cause:** The URI action took the first usable entry from Git's raw state arrays, bypassing the existing SCM review sort. Raw Git path order places a nested dot-directory before root files, differs for numbered names, and separates some untracked entries; the link also deferred deletions despite their visible position.
+**Fix:** v1.2.69 obtains the validated repository's existing sorted review entries through getFileChanges(repository.rootUri), selects its first unstaged entry, and falls back to the first staged entry only when no unstaged entry remains. This shares the list/tree order used by Stage and Next/Previous and the existing better-git-vscode.treeView preference, rather than creating a second ordering policy or background work.
+**Automated guard:** Five of six new real-host cases failed on the previous code. The final Mini production bundle passed all 70 focused VS Code 1.136.1 checks, including modified/new/deleted first entries in both list and tree review order followed by staging to the next entry; 41 non-GUI tests and lint passed. Existing exact-worktree/alias, conflict, partial-index, rapid-release and Undo guards remained green.
+**Manual guard:** A real HTTPS 302 was verified and its exact URI delivered to the isolated Mini profile. The screenshot visibly selected firestore.indexes.json at the top of Changes, followed by firestore.rules.template and nested .notes/findings.md; F20 readiness, F15 clear and F18 release selected the second row with fire. Two rapid F18 releases and three F16 Undo inputs passed exact Git/content/selection assertions; the harness printed BETTER_GIT_WORKTREE_HOLD_COMPUTER_USE_VERIFIED and exited zero. This was shortcut transport on dummy files, not physical mouse hardware; normal VS Code was untouched.
+**Artifact:** The nine-file VSIX contains the tested production JavaScript at SHA-256 ca891a3dbd9d9ad02f6c2da5cbc4caea5892b9539df4337531fbd7b9e27b28ca; VSIX SHA-256 18dd95f67f9d442f44a7d9af118787266e4cce2eca7afa4cdf5f6f63fb398e10.
+---
+
 
 ---
 **Date:** 2026-09-12T00:14:00Z
