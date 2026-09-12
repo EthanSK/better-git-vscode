@@ -321,7 +321,7 @@ suite('SCM change navigation E2E', () => {
 		const gitExt = vscode.extensions.getExtension<any>('vscode.git')!;
 		await gitExt.activate();
 		const api = gitExt.exports.getAPI(1);
-		repo = await poll(() => api.repositories[0], 'vscode.git to discover the fixture repository', 60_000);
+		repo = await poll(() => api.getRepository(vscode.Uri.file(ws)), 'vscode.git to discover the fixture repository', 60_000);
 		baseSha = git('rev-parse HEAD');
 		// Ask git itself for the empty-tree id of THIS repo's object format (SHA-1 vs SHA-256).
 		EMPTY_TREE = git('hash-object -t tree /dev/null');
