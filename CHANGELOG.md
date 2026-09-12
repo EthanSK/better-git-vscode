@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.70] — collapse other worktrees when opening a link
+
+- Reuse the manual collapse button when a Worktree link opens an unstaged working file, then reveal that file in the selected repository.
+- Keep this action independent of startup automation and preserve existing expansion when Auto Reveal is off or the target uses a staged/deleted Git-only editor.
+
 ## [1.2.69] — start Worktree links at the top unstaged change
 
 - Choose the first unstaged file using the same list/tree order as review navigation, including root files, numbered names, new files, and deletions.

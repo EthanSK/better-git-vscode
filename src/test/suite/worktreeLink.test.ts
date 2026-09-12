@@ -54,6 +54,37 @@ suite('Worktree link E2E', () => {
             assert.ok(changes > 0, 'same diff must change inputs so VS Code can reveal its row again');
         } finally { listener.dispose(); }
     });
+    test('link collapse reuses the manual button once per invocation with startup automation off', async () => {
+        const config = vscode.workspace.getConfiguration('better-git-vscode');
+        const beforeSetting = config.inspect<boolean>('experimentalScmTreeStateManagement')?.workspaceValue;
+        try {
+            await config.update('experimentalScmTreeStateManagement', false, vscode.ConfigurationTarget.Workspace);
+            const before = api.getScmTreeCommandTrace().length;
+            for (let i = 0; i < 2; i++) {
+                await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+                assert.strictEqual(activePath(), path.join(target, 'review.txt'));
+            }
+            assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), [
+                'workbench.view.scm', 'workbench.scm.action.collapseAllRepositories', 'workbench.scm.focus', 'list.clear',
+                'workbench.view.scm', 'workbench.scm.action.collapseAllRepositories', 'workbench.scm.focus', 'list.clear',
+            ]);
+        } finally {
+            await config.update('experimentalScmTreeStateManagement', beforeSetting, vscode.ConfigurationTarget.Workspace);
+        }
+    });
+    test('a link with Auto Reveal disabled leaves repository expansion alone', async () => {
+        const config = vscode.workspace.getConfiguration('scm');
+        const previous = config.inspect<boolean>('autoReveal')?.workspaceValue;
+        try {
+            await config.update('autoReveal', false, vscode.ConfigurationTarget.Workspace);
+            const before = api.getScmTreeCommandTrace().length;
+            await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+            assert.strictEqual(activePath(), path.join(target, 'review.txt'));
+            assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), []);
+        } finally {
+            await config.update('autoReveal', previous, vscode.ConfigurationTarget.Workspace);
+        }
+    });
     test('reuses an already opened worktree through a filesystem alias', async () => {
         const actual = path.join(path.dirname(root), 'alias-actual');
         const alias = path.join(path.dirname(root), 'alias-link');
@@ -87,12 +118,14 @@ suite('Worktree link E2E', () => {
     });
     test('a clean worktree and invalid path do not fall back to a different repository', async () => {
         const before = activePath();
+        const traceStart = api.getScmTreeCommandTrace().length;
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', { rootUri: vscode.Uri.file(root) });
         assert.strictEqual(activePath(), before);
         const repositories = git.repositories.map((repo: any) => repo.rootUri.fsPath).sort();
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', { rootUri: vscode.Uri.file(path.join(root, 'missing')) });
         assert.strictEqual(activePath(), before);
         assert.deepStrictEqual(git.repositories.map((repo: any) => repo.rootUri.fsPath).sort(), repositories);
+        assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(traceStart), []);
     });
     for (const command of ['stage-current-file-and-advance', 'stage-and-next-changed-file']) {
         test(`link-opened review: ${command} stages the highlighted file and opens the next`, async () => {
@@ -253,7 +286,9 @@ suite('Worktree link E2E', () => {
         runGit(target, 'clean', '-fd');
         fs.writeFileSync(path.join(target, 'review.txt'), 'staged only\n');
         runGit(target, 'add', 'review.txt');
+        const traceStart = api.getScmTreeCommandTrace().length;
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+        assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(traceStart), [], 'Keep Git-only fallback repositories visible');
         const before = runGit(target, 'diff', '--cached', '--binary');
         const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
         await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
@@ -296,6 +331,29 @@ suite('Worktree link E2E', () => {
                 }
             });
         }
+    }
+    for (const stagedBase of [false, true]) {
+        test(`repeated ${stagedBase ? 'modified' : 'new'} image links change editor inputs for native reveal`, async () => {
+            await resetTarget();
+            runGit(target, 'clean', '-fd');
+            const image = vscode.Uri.file(path.join(target, '00-repeat.png'));
+            fs.writeFileSync(image.fsPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlqB9sAAAAASUVORK5CYII=', 'base64'));
+            if (stagedBase) {
+                runGit(target, 'add', '00-repeat.png');
+                fs.writeFileSync(image.fsPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+            }
+            await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+            const before = runGit(target, 'status', '--porcelain=v1');
+            let changes = 0;
+            const listener = vscode.window.tabGroups.onDidChangeTabs(() => { changes++; });
+            try {
+                await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+                await api.whenReviewDecorationSettled();
+                assert.ok(changes > 0, 'Repeat must change the custom/image editor input');
+                assert.strictEqual(api.getCurrentReviewUri(), image.toString());
+                assert.strictEqual(runGit(target, 'status', '--porcelain=v1'), before);
+            } finally { listener.dispose(); }
+        });
     }
     test('the link prefers an unstaged deletion over an already-staged file', async () => {
         await resetTarget();

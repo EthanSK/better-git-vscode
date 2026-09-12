@@ -290,10 +290,15 @@ try {
   console.log(`[scm-state-test] expected=${expectedMode}`);
 
   const productionSource = fs.readFileSync(path.join(extensionDevelopmentPath, 'src', 'extension.ts'), 'utf8');
-  assert.ok(
-    !/executeScmTreeCommand\(["']list\./.test(productionSource),
-    'production code still dispatches a generic list command'
-  );
+  // The explicit Worktree link may clear stale selection once after native SCM focus. It never
+  // drives expansion through a list command; startup and the manual collapse button still forbid
+  // every list command in their runtime traces above. Include the dispatcher origin argument here.
+  const listCalls = [...productionSource.matchAll(/executeScmTreeCommand\([^,]+,\s*["'](list\.[^"']+)["']/g)];
+  assert.deepEqual(listCalls.map(match => match[1]), ['list.clear']);
+  const linkStart = productionSource.indexOf('const openWorktreeInSourceControl =');
+  const linkEnd = productionSource.indexOf('const revealUndoneStageTransaction =', linkStart);
+  assert.ok(listCalls[0].index > linkStart && listCalls[0].index < linkEnd,
+    'selection clearing must stay inside the explicit Worktree link action');
   for (const removedRestorerSymbol of [
     'runRestoreScmTreeStateOnStartup',
     'startScmTreeStateCapture',

@@ -119,6 +119,19 @@ export async function run(): Promise<void> {
     if (worktreeLink) {
         // The operator delivers the real URI to this isolated profile; the harness must not call the
         // handler directly or manufacture its focus/selection state before testing mouse shortcuts.
+        if (process.env.BGV_UI_COLLAPSE_OTHERS === "1") {
+            // Task-owned peers make the native collapsed-header result visible with a nontrivial list.
+            for (let i = 1; i <= 8; i++) {
+                const peer = path.join(path.dirname(root), `collapse-peer-${i}`);
+                execFileSync("git", ["worktree", "add", "--detach", peer], { cwd: root });
+                fs.writeFileSync(path.join(peer, "peer-change.txt"), `peer ${i}\n`);
+                await (await git.openRepository(vscode.Uri.file(peer))).status();
+            }
+            await vscode.commands.executeCommand("workbench.view.scm");
+            await vscode.commands.executeCommand("workbench.scm.action.expandAllRepositories");
+            await vscode.commands.executeCommand("workbench.scm.history.focus");
+            console.log("COMPUTER_USE_COLLAPSE_PEERS_READY count=8 graph-focused=true");
+        }
         console.log(`COMPUTER_USE_WORKTREE_LINK root=${root} vscode=${vscode.version}`);
     } else {
         await vscode.commands.executeCommand("workbench.view.scm");
@@ -149,6 +162,14 @@ export async function run(): Promise<void> {
         await waitFor(() => staged().length === 0 && api.getReviewDecorationBadge(uri(a)) === "🔥🔥", "third Undo restores and selects A");
         for (const [relative, text] of [[a, "A"], [b, "B"], [c, "C"], [d, "D"]]) {
             assert.ok(fs.readFileSync(path.join(root, relative), "utf8").includes(`Computer Use change ${text}`));
+        }
+        if (process.env.BGV_UI_COLLAPSE_OTHERS === "1") {
+            const trace = api.getScmTreeCommandTrace();
+            assert.ok(trace.length >= 4 && trace.length % 4 === 0);
+            for (let i = 0; i < trace.length; i += 4) {
+                assert.deepStrictEqual(trace.slice(i, i + 4), ["workbench.view.scm", "workbench.scm.action.collapseAllRepositories", "workbench.scm.focus", "list.clear"]);
+            }
+            console.log(`COMPUTER_USE_COLLAPSE_TRACE ${JSON.stringify(trace)}`);
         }
         console.log("BETTER_GIT_WORKTREE_HOLD_COMPUTER_USE_VERIFIED uri=true release-advances=true rapid-releases-ordered=true undo=C,B,A working-files-preserved=true");
         return;
