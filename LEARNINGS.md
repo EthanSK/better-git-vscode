@@ -32,6 +32,15 @@ Each entry looks like:
 
 (newest first)
 
+
+---
+**Date:** 2026-09-12T22:27:00Z
+**Trigger:** Ethan requested automatic collapse of the linked worktree's own Staged Changes group, authorized revising the personal SCM skill restriction, and required ordinary native VS Code plus manual sandbox tests.
+**Reproduced cause:** The repository collapse button is nonrecursive. Adding list.collapseAll after that button passed repeat clicks but failed first use with an existing staged addition. Native logging proved the command reached the correct Changes tree, yet the target's resource-group nodes were absent from recursive collapse. VS Code 1.136.1 AsyncDataTree.refreshNode clears children and marks a collapsed node stale; collapsing repository headers before the pending status refresh can therefore discard groups before the later recursive command reaches them. A source-only API-boundary conclusion missed the usable recursive command and this ordering issue.
+**Fix:** v1.2.71 reveals SCM and opens the sorted unstaged target first, then focuses its native Changes tree, runs list.collapseAll once and clears stale selection. The existing editor-input change/reopen triggers Auto Reveal again, reopening only the target's ancestor group and repository. This uses four traced commands, no row search, no recollapse loop, no arbitrary input delay, no stored expansion-state writes and no production debugging connection or VS Code patch. Startup and the plain manual button retain their separate unchanged contracts; clean, staged-only, deleted and Auto-Reveal-off fallbacks are preserved.
+**Verification:** The final production bundle passed 74 focused Mini VS Code 1.136.1 checks; 41 non-GUI checks and final lint passed. The failing first-use case then passed with the four-command sequence, and a fresh Explorer-first window passed with the original renderer restored byte-for-byte from Microsoft's archive (SHA-256 b8bf2c00f2f0197d3decf1e65eedbcf6f1ebc343b52f6914ec397056c68cd433). The visible harness now seeds an existing staged addition so screenshots must verify a real Staged Changes group before proceeding to hold/release, rapid stage and Undo. Never treat command traces alone or a repeated-click success as proof of first-use collapse. Disposable renderer logging was diagnostic only; final acceptance uses unmodified VS Code. Evidence is retained in ~/.codex/outputs/better-git-collapse-staged/.
+---
+
 ---
 **Date:** 2026-09-12T15:24:40+00:00
 **Trigger:** Ethan pointed out that Worktree links still left other worktree sections expanded, despite the existing manual collapse button.
