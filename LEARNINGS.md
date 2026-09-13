@@ -32,6 +32,13 @@ Each entry looks like:
 
 (newest first)
 
+---
+**Date:** 2026-09-13
+**Trigger:** Return Codex to the front after clicking its Worktree footer link, so the Chrome redirect does not cover the task.
+**Fix:** v1.2.72 accepts only one explicit `returnTo=codex` parameter on a valid worktree URI. After successful reveal, a macOS AppKit call activates the single already-running Codex instance only while Code, Chrome or Codex is frontmost. It does not launch apps, request Accessibility access, run URL-provided commands, or use a delayed activation timer. Failed opens and ordinary commands do not restore focus.
+**Guard:** 44 non-GUI tests, lint and 31 Mini VS Code 1.136.1 integration tests passed. A real URI delivered to the disposable host opened the fixture change and returned `com.openai.codex` as frontmost on three opens; an invalid target kept `com.microsoft.VSCode` frontmost. The existing UI harness independently observed the expected review decoration after the URI. Screenshot capture and simulated keys were blocked by the Mini's permissions, so native visual inspection and additional manual hold/release checks were not completed; automated staging/Undo coverage passed. JXA exposes the AppKit collection count as a string here: convert with Number before strict comparison. Evidence: ~/.codex/outputs/better-git-return-to-codex/.
+---
+
 
 ---
 **Date:** 2026-09-12T22:27:00Z
