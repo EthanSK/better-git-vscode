@@ -83,6 +83,8 @@ Exact mixed-state restoration remains paused until VS Code provides a dependable
 
 A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolute%2Fworktree` opens Source Control in the VS Code window receiving the link and opens one change from that exact worktree. Percent-encode the entire absolute path so spaces, plus signs, percent signs and other URL characters survive. VS Code can ask permission before handing the link to Better Git.
 
+Codex footer links can append `&returnTo=codex` to the inner URI before encoding it for the HTTPS redirect. On macOS, this returns the already-running Codex app to the front after a successful open, provided VS Code, Chrome or Codex is still active. Switching to another app cancels the focus return. It does not launch Codex or change the behaviour of links without this option.
+
 For chat clients that require HTTPS, encode the complete URI twice as the `url` value of `https://vscode.dev/redirect?url=...`. Microsoft's redirect forwards it to VS Code; the copied link uses this form.
 
 Right-click a Git repository header and choose **Copy link to open worktree in Source Control**, or use **Better Git: Open Worktree in Source Control** in the Command Palette to choose an open repository. The link can also open a Git worktree outside the current workspace without replacing or adding workspace folders. It does not collapse other repositories or modify Git contents.

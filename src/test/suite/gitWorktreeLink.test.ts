@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as path from 'path';
-import { createWorktreeLink, parseWorktreeLink } from '../../gitWorktreeLink';
+import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnsToCodex } from '../../gitWorktreeLink';
 
 const parse = (value: string) => {
     const outer = new URL(value);
@@ -8,6 +8,17 @@ const parse = (value: string) => {
     return parseWorktreeLink({ authority: uri.hostname, path: uri.pathname, query: uri.search.slice(1), fragment: uri.hash.slice(1) });
 };
 suite('Git worktree links', () => {
+    test('only an explicit, unambiguous Codex return on a valid link opts in', () => {
+        const base = { authority: 'ethansk.better-git-vscode', path: '/open-worktree', fragment: '' };
+        for (const suffix of ['', '&returnTo=chrome', '&returnTo=Codex', '&returnTo=codex&returnTo=codex', '&returnTo=codex&returnTo=other']) {
+            assert.strictEqual(worktreeLinkReturnsToCodex({ ...base, query: 'path=%2Ftmp%2Frepo' + suffix }), false);
+        }
+        assert.strictEqual(worktreeLinkReturnsToCodex({ ...base, query: 'path=relative&returnTo=codex' }), false);
+        const outer = new URL(createWorktreeLink(path.resolve('work + 100% # & 日本'), 'vscode', true));
+        const inner = new URL(decodeURIComponent(outer.searchParams.get('url')!));
+        assert.strictEqual(worktreeLinkReturnsToCodex({ ...base, query: inner.search.slice(1) }), true);
+        assert.strictEqual(parse(outer.href), path.resolve('work + 100% # & 日本'));
+    });
     test('preserves spaces, unicode, plus, percent and URL punctuation exactly once', () => {
         const root = path.resolve("work tree ) ' + 100% # ? & 日本 %2F");
         assert.strictEqual(new URL(createWorktreeLink(root)).origin, 'https://vscode.dev');

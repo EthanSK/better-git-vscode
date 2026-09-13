@@ -5,7 +5,8 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import { performance } from "perf_hooks";
-import { createWorktreeLink, parseWorktreeLink } from "./gitWorktreeLink";
+import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnsToCodex } from "./gitWorktreeLink";
+import { returnToCodex } from "./gitWorktreeFocus";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 import { StageTransactionStore, StoredStageTransaction } from "./stageTransactionStore";
@@ -827,8 +828,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // External links and the palette share one ordered, on-demand path. There
     // are no startup scans, expansion loops, configuration writes or timers.
     let worktreeLinkQueue: Promise<void> = Promise.resolve();
-    const openWorktree = (root?: vscode.Uri): Promise<void> => {
-        const next = worktreeLinkQueue.then(() => openWorktreeInSourceControl(root));
+    const openWorktree = (root?: vscode.Uri, restoreCodex = false): Promise<void> => {
+        const next = worktreeLinkQueue.then(async () => {
+            if (await openWorktreeInSourceControl(root) && restoreCodex) {
+                try { await returnToCodex(); }
+                catch (error) { debugLog("worktree-focus", String(error)); }
+            }
+        });
         worktreeLinkQueue = next.catch(() => undefined);
         return next;
     };
@@ -843,7 +849,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 void vscode.window.showErrorMessage("Better Git: This link does not contain a valid worktree path.");
                 return;
             }
-            await openWorktree(vscode.Uri.file(root));
+            await openWorktree(vscode.Uri.file(root), worktreeLinkReturnsToCodex(uri));
         }
     });
     const copyWorktreeLinkCommand = vscode.commands.registerCommand(
@@ -1675,14 +1681,14 @@ interface FileChange {
     originalUri?: vscode.Uri; // staged RENAME/COPY: the HEAD-side blob lives at this old path, not `uri`
 }
 
-const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<void> => {
+const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<boolean> => {
     let root = requestedRoot;
     try {
         const extension = vscode.extensions.getExtension<any>("vscode.git");
         const git = (await extension?.activate())?.getAPI(1);
         if (!git) {
             void vscode.window.showErrorMessage("Better Git: VS Code could not use the built-in Git extension.");
-            return;
+            return false;
         }
         if (!root) {
             const items = git.repositories.map((repo: any) => ({
@@ -1690,12 +1696,12 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
             }));
             if (items.length === 0) {
                 void vscode.window.showInformationMessage("Better Git: No git worktrees found");
-                return;
+                return false;
             }
             const selected = await vscode.window.showQuickPick<{ label: string; description: string; root: vscode.Uri }>(
                 items, { placeHolder: "Select a worktree to open in Source Control" }
             );
-            if (!selected) { return; }
+            if (!selected) { return false; }
             root = selected.root;
         }
         if (root.scheme !== "file" || !path.isAbsolute(root.fsPath)) {
@@ -1732,7 +1738,7 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         if (!target) {
             await vscode.commands.executeCommand("workbench.view.scm");
             void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}, but it has no changes to reveal. You may need to expand its section.`);
-            return;
+            return true;
         }
         const autoReveal = vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true);
         // Git-only editors cannot reliably trigger native reveal. Keep their existing fallback,
@@ -1768,8 +1774,10 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         if (!autoReveal) {
             void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}. Auto reveal is off, so expand its section manually.`);
         }
+        return true;
     } catch (error) {
         void vscode.window.showErrorMessage(`Better Git: Failed to open ${root?.fsPath ?? "worktree"}: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
     }
 };
 

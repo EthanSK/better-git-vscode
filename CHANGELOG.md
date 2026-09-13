@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.72] — return to Codex after a Worktree link
+
+- Support `returnTo=codex` on Worktree links. On macOS, return the already-running Codex app to the front after the worktree opens, so Chrome's redirect does not cover it.
+- Leave focus alone when an unrelated app is active, Codex is not running, or opening the worktree fails. Ordinary worktree commands and copied links keep their existing behaviour.
+
 ## [1.2.71] — collapse Staged Changes when opening a Worktree link
 
 - Collapse the selected worktree's Staged Changes group and the other repositories while revealing the first unstaged working file.
