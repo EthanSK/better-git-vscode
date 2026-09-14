@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.74] — allow more time before worktree collapse
+
+- Increase the Worktree-link presentation wait from 150 ms to 500 ms before collapsing Staged Changes.
+- Cover a larger native Source Control tree with 331 staged and 395 unstaged entries.
+
 ## [1.2.73] — settle Source Control before worktree collapse
 
 - Allow VS Code’s pending Source Control update to arrive before collapsing the linked worktree’s Staged Changes group. Keep this presentation wait confined to opening a worktree.
