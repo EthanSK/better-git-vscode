@@ -1,5 +1,15 @@
 # Learnings
 
+## Marketplace association during local updates (2026-09-15)
+
+**Trigger:** Ethan asked to update his local Better Git when changes are finished while preserving the Marketplace connection, and to make this the default from now on.
+
+**Verified behavior:** VS Code supports installation/update by Marketplace identifier. Its documentation says installing a local VSIX disables that extension's automatic updates by default. Prefer `code --install-extension ethansk.better-git-vscode --force` after the mandatory release verifier succeeds, without an `@version` suffix. Check installed metadata and effective automatic-update state; do not infer Marketplace association from a version label alone. Do not uninstall/reinstall an already-correct copy.
+
+**Evidence:** The normal VS Code 1.137.0 installation already contained Better Git 1.2.79 with `source=gallery`, `pinned=false`, Marketplace UUID `939b51df-f995-4799-88fa-ae47815cabb2`, and an explicit per-extension auto-update entry. Its installed `dist/extension.js` SHA-256 matched the tested and Marketplace-verified production bundle (`a94ae2493f6d8c4c944fd150d0fcfa9bbf5fb122db67dfcd4438d1a6594f1c70`). No reinstall or restart was needed for this documentation change; this checks installed files, not the active extension host. Earlier entries describing user-managed installs are historical and superseded by the current policy.
+
+Sources: [VS Code extension installation and automatic updates](https://code.visualstudio.com/docs/configure/extensions/extension-marketplace#install-from-a-vsix), [VS Code CLI](https://code.visualstudio.com/docs/configure/command-line#working-with-extensions), and the installed VS Code CLI help.
+
 ## Configurable worktree return and public-default audit (2026-09-14)
 
 **Trigger:** Ethan requested origin-app metadata, configurable focus return after worktree expansion, public opt-out by default, and a check of personal defaults that affect other users.
@@ -86,9 +96,9 @@ Each entry looks like:
 
 - Pass `--repo EthanSK/better-git-vscode` explicitly to GitHub CLI release/PR commands. This fork can resolve bare `gh` commands to the original upstream repository even when `git remote origin` correctly points to Ethan's fork; verify the exact repository before any mutation.
 - Every completed Better Git VS Code code change requested by Ethan—features, fixes, and maintenance—must be released to the Marketplace and have its exact version-specific gallery package downloaded and verified by default, unless he explicitly says not to release that change. "Done" never means stopping at local implementation, tests, a commit, a PR, or a locally packaged VSIX.
-- Release work must **not install, uninstall, update, reload, or restart** Better Git VS Code in Ethan's normal VS Code. Ethan will install Marketplace updates himself after they appear.
-- Test only in isolated Extension Development Hosts. A release is complete only when Marketplace publication succeeds, the exact version-specific gallery package is downloadable and valid, the authenticated publisher API marks that exact version `Validated`, and a public Gallery query with `ExcludeNonValidated` returns it as the latest version. The local installed version is not a release gate.
-- Do not run `code --install-extension`, `code --uninstall-extension`, or any equivalent normal-VS-Code mutation unless Ethan explicitly asks for that installation action in the current task. Permission to code, test, publish, or "release" does not imply permission to install.
+- Follow `AGENTS.md` Local updates after release. Ethan's 2026-09-15 request replaces the former user-managed-install restriction: update the local extension through its Marketplace identifier after the release gate passes.
+- Test only in isolated Extension Development Hosts. A release is complete only when Marketplace publication succeeds, the exact version-specific gallery package is downloadable and valid, the authenticated publisher API marks that exact version `Validated`, and a public Gallery query with `ExcludeNonValidated` returns it as the latest version. Local installation and safe activation are separate completion steps after the Marketplace release gate.
+- Use the Marketplace identifier without an explicit version pin for normal updates; verify gallery association and automatic updates afterward. Preserve live work, and distinguish installed files from activation in the running extension host.
 - Marketplace upload, package download, validation, and VS Code update visibility are separate states. A direct version-specific VSIX can already be downloadable while the version is still unvalidated and hidden from VS Code. Poll both the publisher validation flag and the validated-only public query; never call the release complete or ask Ethan to refresh repeatedly before both pass. Remote verification must never touch Ethan's installed extension while waiting.
 
 ## Entries
