@@ -41,6 +41,16 @@ for (const repo of roots) {
     git(repo, 'add', 'staged.txt');
     for (const name of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) { fs.writeFileSync(path.join(repo, name), 'modified\n'); }
 }
+// Match the reported busy worktree: 331 staged entries and 395 unstaged entries.
+// Keep the first review file unchanged so the existing selection/advance guards still apply.
+const largeRepo = roots.at(-1);
+for (const [directory, count] of [['bulk-staged', 330], ['bulk-working', 391]]) {
+    fs.mkdirSync(path.join(largeRepo, directory));
+    for (let i = 0; i < count; i++) {
+        fs.writeFileSync(path.join(largeRepo, directory, `file-${String(i).padStart(3, '0')}.txt`), 'fixture change\n');
+    }
+}
+git(largeRepo, 'add', 'bulk-staged');
 fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify(roots));
 const workspace = path.join(root, 'native-worktree.code-workspace');
 fs.writeFileSync(workspace, JSON.stringify({ folders: roots.slice(0, -1).map(p => ({ path: p })), settings: {
@@ -89,7 +99,20 @@ async function check(repo, name, file = 'a.txt') {
     // recollapse would hide the exact regression this test must catch.
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ',')), name);
     await pause(350); // Observe late resource publication after the command has returned.
-    const rows = await evaluate(rowsExpression);
+    let rows = await evaluate(rowsExpression);
+    if (rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria)).length < roots.length) {
+        // A large selected worktree scrolls its preceding repository headers out of the DOM.
+        // Inspect the top of the same tree without changing selection or issuing another collapse.
+        await capture(`${name}-selected`);
+        const point = await evaluate(`(()=>{const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');const b=tree.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+Math.min(100,b.height/2)};})()`);
+        // Scroll in bounded steps and inspect each resulting viewport.
+        for (let i = 0; i < 8; i++) {
+            await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: -1000 });
+            await pause(100);
+            rows = await evaluate(rowsExpression);
+            if (rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria)).length === roots.length) { break; }
+        }
+    }
     await capture(name);
     const repositories = rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria));
     assert.equal(repositories.length, 9, `${name}: missing repository headers`);

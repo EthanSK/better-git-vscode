@@ -1,5 +1,14 @@
 # Learnings
 
+## Worktree collapse allowance increased to 500 ms (2026-09-14)
+
+**Trigger:** Ethan reported another expanded Staged Changes group after opening a Worktree link on 1.2.73, then requested a 500 ms delay. The installed JavaScript matched the released bundle. Read-only native inspection showed AIMVS13 with 331 staged and 395 unstaged entries; the exact failing click was not replayed in his normal window.
+
+**Change:** Increase only the explicit Worktree-link presentation allowance from 150 ms to 500 ms. Keep the existing native reveal, focus and recursive-collapse sequence. This remains a bounded allowance, not an acknowledgement that native rendering finished.
+
+**Verification:** All 44 non-GUI tests, lint and the production build passed. The exact production bundle passed all 11 native scenarios on the Mini with unmodified VS Code 1.137.0, including first opening a newly registered worktree containing 331 staged and 395 unstaged entries, switching/reopening, hold readiness, stage advancement, rapid stages and three exact Undos. The large tree virtualizes repository headers: capture the selected file first, then use bounded viewport scrolling to inspect the existing headers without changing selection or repeating collapse. The original header-count assertion failed because the headers were off-screen even though Staged Changes was correctly collapsed. No browser launcher, normal VS Code update/reload or physical mouse input was performed.
+
+**Release:** Version 1.2.74 passed the required Marketplace verifier with exit zero and `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED identity=EthanSK.better-git-vscode version=1.2.74 sha256=179ca89c6effd3d3526db5262b8f827113c9ff0c5d2e860eb5fb945d2d865d7b`. Authenticated publisher validation, the public validated-only Gallery and exact downloaded VSIX bytes all passed. The packaged JavaScript matches the Mini-tested SHA-256 b28a5d4da7dd937e54b52d10442a20a58df99d1665724886e2a8625ff8617f03. PR #133 contains the change. The package, concise verification report, native pass log and three selected screenshots are retained in `~/.codex/outputs/better-git-worktree-collapse-500ms/`; task-owned native test processes and disposable fixtures were cleaned up. Normal VS Code updates remain user-managed.
 
 ## Worktree presentation batch and native regression coverage (2026-09-14)
 
