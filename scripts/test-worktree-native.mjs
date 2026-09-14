@@ -140,6 +140,11 @@ try {
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.aria === 'Staged Changes'  && r.expanded === 'true'), 'initial staged group');
     await capture('before-first-open');
     await request('plain', { repo: 0 });
+    const graph = await evaluate(`(()=>{const r=[...document.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')==='base, Test'); if(!r)return null; const b=r.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2};})()`);
+    assert.ok(graph, 'visible Source Control Graph commit');
+    for (const type of ['mousePressed', 'mouseReleased']) { await send('Input.dispatchMouseEvent', { type, ...graph, button: 'left', clickCount: 1 }); }
+    await until(() => evaluate(rowsExpression), rows => rows.some(r => r.aria === 'base, Test' && r.selected === 'true'), 'Graph has native selection');
+    await capture('graph-focused');
     await request('open', { repo: 8 }); await check(8, 'new-worktree-first-open');
     await request('open', { repo: 0 }); await check(0, 'first-open');
     await request('open', { repo: 0 }); await check(0, 'repeat-open');
