@@ -17,6 +17,7 @@ const evidence = process.env.BGV_NATIVE_EVIDENCE_DIR ?? root;
 fs.mkdirSync(evidence, { recursive: true });
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const testReturnApp = process.argv.includes('--return-app');
 async function until(read, accept, description, timeout = 15_000) {
     const end = Date.now() + timeout;
     let last;
@@ -187,6 +188,51 @@ try {
     fs.writeFileSync(path.join(roots[1], 'staged-late.txt'), 'late staged change\n'); git(roots[1], 'add', 'staged-late.txt');
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'switch-after-staged-refresh');
+    if (testReturnApp) {
+        // Dummy apps are launched by the test caller, never by production focus code.
+        const appA = process.env.BGV_RETURN_APP_A;
+        const appB = process.env.BGV_RETURN_APP_B;
+        assert.ok(appA && appB, 'Set two running dummy origin app bundle identifiers');
+        const jxa = code => execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit'); ${code}`], { encoding: 'utf8' }).trim();
+        const front = () => jxa('ObjC.unwrap($.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier)');
+        const focusCode = () => jxa(`$.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`);
+        const focusApp = app => jxa(`$.NSRunningApplication.runningApplicationsWithBundleIdentifier(${JSON.stringify(app)}).objectAtIndex(0).activateWithOptions(2);`);
+        const uri = (repo, destination) => `vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}${destination === undefined ? '' : '&returnTo=' + encodeURIComponent(destination)}`;
+        const appOfCopy = async () => new URL(decodeURIComponent(new URL((await request('copy', { repo: 1 })).value).searchParams.get('url'))).searchParams.get('returnTo');
+        async function verifyReturn(repo, destination, expected, name) {
+            focusCode();
+            await request('uri', { uri: uri(repo, destination) });
+            await until(front, app => app === expected, name);
+            await check(repo, name);
+            assert.equal(front(), expected, `${name}: Source Control inspection must not change native focus`);
+            fs.writeFileSync(path.join(evidence, `${name}-focus.json`), JSON.stringify({ expected, observed: front(), worktree: roots[repo] }));
+        }
+        await request('config', { settings: { worktreeLinkReturnFocus: false, worktreeLinkReturnApp: appA } });
+        assert.equal(await appOfCopy(), null, 'disabled copy must omit app metadata');
+        await verifyReturn(0, appA, 'com.microsoft.VSCode', 'return-disabled');
+        const settings = await request('config', { settings: { worktreeLinkReturnFocus: true, worktreeLinkReturnApp: appA } });
+        assert.deepEqual(settings.value, { enabled: true, app: appA });
+        assert.equal(await appOfCopy(), appA, 'enabled copy includes configured origin');
+        await verifyReturn(1, appA, appA, 'return-explicit-first');
+        await verifyReturn(1, appA, appA, 'return-explicit-repeat');
+        await verifyReturn(8, appB, appB, 'return-switch-large-other-app');
+        await verifyReturn(0, undefined, appA, 'return-legacy-link-fallback');
+        await verifyReturn(1, 'com.bettergit.test.not-running', 'com.microsoft.VSCode', 'return-app-not-running');
+        await verifyReturn(0, '', 'com.microsoft.VSCode', 'return-invalid-metadata');
+        focusCode();
+        const opening = request('uri', { uri: uri(1, appA) });
+        await pause(250); focusApp(appB);
+        await opening;
+        assert.equal(front(), appB, 'user switching to another app must win over return');
+        await check(1, 'return-user-switched-app');
+        focusCode();
+        await request('uri', { uri: 'vscode://ethansk.better-git-vscode/open-worktree?path=%2Fdoes-not-exist-bgv&returnTo=' + appA });
+        assert.equal(front(), 'com.microsoft.VSCode', 'failed worktree must not return');
+        await request('open', { repo: 0 });
+        assert.equal(front(), 'com.microsoft.VSCode', 'palette command must not return');
+        console.log('PASS return-failed-worktree-and-ordinary-command');
+        await request('config', { settings: { worktreeLinkReturnFocus: false, worktreeLinkReturnApp: '' } });
+    } else {
     // Native keyboard input exercises the mouse protocol's readiness/clear/release
     // command path. Physical mouse hardware itself is outside this harness.
     await key('F20', 'F20', 131, 7);
@@ -232,6 +278,7 @@ try {
         await key('F16', 'F16', 127);
         await check(2, `${source}-previous-undo`, 'b.txt');
         assert.deepEqual(git(roots[2], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged.txt']);
+    }
     }
     for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
         assert.equal(fs.readFileSync(path.join(repo, file), 'utf8'), 'modified\n');

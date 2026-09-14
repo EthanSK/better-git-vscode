@@ -83,7 +83,17 @@ Exact mixed-state restoration remains paused until VS Code provides a dependable
 
 A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolute%2Fworktree` opens Source Control in the VS Code window receiving the link and opens one change from that exact worktree. Percent-encode the entire absolute path so spaces, plus signs, percent signs and other URL characters survive. VS Code can ask permission before handing the link to Better Git.
 
-Codex footer links can append `&returnTo=codex` to the inner URI before encoding it for the HTTPS redirect. On macOS, this returns the already-running Codex app to the front after a successful open, provided VS Code, Chrome or Codex is still active. Switching to another app cancels the focus return. It does not launch Codex or change the behaviour of links without this option.
+Worktree links can optionally return focus to another already-running app after Source Control has opened and the worktree expansion has finished. This feature is **macOS only and off by default**. In your VS Code User settings:
+
+```json
+"better-git-vscode.worktreeLinkReturnFocus": true,
+"better-git-vscode.worktreeLinkReturnApp": "com.openai.codex"
+```
+
+Use another app's macOS bundle identifier to change the default. **Copy link to open worktree in Source Control** includes it as `returnTo` metadata in the inner URI, preserved through Microsoft's HTTPS redirect. A link can name a different app; links without metadata use your configured default. The original `returnTo=codex` spelling still works when the feature is enabled. These application settings cannot be enabled by a repository's workspace settings.
+
+Returning focus never launches an app. Invalid or duplicate destinations, failed worktree opens, and an unrelated app becoming active during the handoff skip the return. Turning the feature off keeps you in VS Code even when a link contains return metadata. Ordinary Source Control commands do not return focus.
+
 
 For chat clients that require HTTPS, encode the complete URI twice as the `url` value of `https://vscode.dev/redirect?url=...`. Microsoft's redirect forwards it to VS Code; the copied link uses this form.
 

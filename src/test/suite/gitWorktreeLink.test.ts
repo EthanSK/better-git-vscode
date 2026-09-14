@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as path from 'path';
-import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnsToCodex } from '../../gitWorktreeLink';
+import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from '../../gitWorktreeLink';
 
 const parse = (value: string) => {
     const outer = new URL(value);
@@ -8,16 +8,35 @@ const parse = (value: string) => {
     return parseWorktreeLink({ authority: uri.hostname, path: uri.pathname, query: uri.search.slice(1), fragment: uri.hash.slice(1) });
 };
 suite('Git worktree links', () => {
-    test('only an explicit, unambiguous Codex return on a valid link opts in', () => {
-        const base = { authority: 'ethansk.better-git-vscode', path: '/open-worktree', fragment: '' };
-        for (const suffix of ['', '&returnTo=chrome', '&returnTo=Codex', '&returnTo=codex&returnTo=codex', '&returnTo=codex&returnTo=other']) {
-            assert.strictEqual(worktreeLinkReturnsToCodex({ ...base, query: 'path=%2Ftmp%2Frepo' + suffix }), false);
-        }
-        assert.strictEqual(worktreeLinkReturnsToCodex({ ...base, query: 'path=relative&returnTo=codex' }), false);
-        const outer = new URL(createWorktreeLink(path.resolve('work + 100% # & 日本'), 'vscode', true));
+    test('published return settings default off and cannot be enabled by a workspace', () => {
+        const properties = require('../../../package.json').contributes.configuration.properties;
+        assert.strictEqual(properties['better-git-vscode.worktreeLinkReturnFocus'].default, false);
+        assert.strictEqual(properties['better-git-vscode.worktreeLinkReturnApp'].default, '');
+        assert.strictEqual(properties['better-git-vscode.worktreeLinkReturnFocus'].scope, 'application');
+        assert.strictEqual(properties['better-git-vscode.worktreeLinkReturnApp'].scope, 'application');
+    });
+
+    test('return focus defaults off even for explicit legacy Codex metadata', () => {
+        const link = { authority: 'ethansk.better-git-vscode', path: '/open-worktree', fragment: '', query: 'path=%2Ftmp%2Frepo&returnTo=codex' };
+        assert.strictEqual(worktreeLinkReturnApp(link, false, 'com.apple.TextEdit'), undefined);
+        assert.strictEqual(worktreeLinkReturnApp(link, true), 'com.openai.codex');
+    });
+    test('link app overrides the local fallback and survives both redirect encoding layers', () => {
+        const outer = new URL(createWorktreeLink(path.resolve('work + 100% # & 日本'), 'vscode', 'com.apple.TextEdit'));
         const inner = new URL(decodeURIComponent(outer.searchParams.get('url')!));
-        assert.strictEqual(worktreeLinkReturnsToCodex({ ...base, query: inner.search.slice(1) }), true);
+        const link = { authority: inner.hostname, path: inner.pathname, fragment: '', query: inner.search.slice(1) };
+        assert.strictEqual(worktreeLinkReturnApp(link, true, 'com.openai.codex'), 'com.apple.TextEdit');
         assert.strictEqual(parse(outer.href), path.resolve('work + 100% # & 日本'));
+        assert.strictEqual(new URL(decodeURIComponent(new URL(createWorktreeLink('/tmp/repo')).searchParams.get('url')!)).searchParams.has('returnTo'), false);
+    });
+    test('only missing metadata uses the configured app; invalid metadata never falls back', () => {
+        const base = { authority: 'ethansk.better-git-vscode', path: '/open-worktree', fragment: '', query: 'path=%2Ftmp%2Frepo' };
+        assert.strictEqual(worktreeLinkReturnApp(base, true, 'com.openai.codex'), 'com.openai.codex');
+        assert.strictEqual(worktreeLinkReturnApp(base, true), undefined);
+        for (const suffix of ['&returnTo=', '&returnTo=chrome', '&returnTo=Codex', '&returnTo=codex&returnTo=codex', '&returnTo=com.apple.TextEdit&returnTo=codex', '&returnTo=%2FApplications%2FCode.app', '&returnTo=app%3A%2F%2Fx', '&returnTo=com.apple.TextEdit%0A', '&returnTo=%24%28touch%20bad%29']) {
+            assert.strictEqual(worktreeLinkReturnApp({ ...base, query: base.query + suffix }, true, 'com.openai.codex'), undefined, suffix);
+        }
+        assert.strictEqual(worktreeLinkReturnApp({ ...base, query: 'path=relative&returnTo=codex' }, true), undefined);
     });
     test('preserves spaces, unicode, plus, percent and URL punctuation exactly once', () => {
         const root = path.resolve("work tree ) ' + 100% # ? & 日本 %2F");

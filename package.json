@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.78",
+  "version": "1.2.79",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -366,6 +366,20 @@
           "type": "boolean",
           "default": false,
           "description": "Log tall-hunk stepping decisions to the 'Better Git' output channel (View → Output → pick 'Better Git' from the dropdown). Each next/previous-change press logs the direction, viewport height, hunk extent, top/bottom visible lines, caret line, computed target, remaining lines, and the decision taken (stepped / advanced / reached-end). Off by default (no noise); turn on only when diagnosing a stepping issue."
+        },
+        "better-git-vscode.worktreeLinkReturnFocus": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "macOS only. After opening a Worktree link and expanding Source Control, bring the app named in the link back to front. Links without an app use Worktree Link Return App. Only brings an already-running app to front, never launches one. Off by default."
+        },
+        "better-git-vscode.worktreeLinkReturnApp": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9-]*(?:\\.[A-Za-z0-9][A-Za-z0-9-]*)+)?$",
+          "maxLength": 255,
+          "description": "macOS bundle identifier of the app to return to, for example com.openai.codex. Added to copied Worktree links when Worktree Link Return Focus is on, and used for incoming links that name no app. Leave empty for no fallback or app in copied links."
         }
       }
     },

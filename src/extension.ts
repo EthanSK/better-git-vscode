@@ -5,8 +5,8 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import { performance } from "perf_hooks";
-import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnsToCodex } from "./gitWorktreeLink";
-import { returnToCodex } from "./gitWorktreeFocus";
+import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
+import { returnToApp } from "./gitWorktreeFocus";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 import { StageTransactionStore, StoredStageTransaction } from "./stageTransactionStore";
@@ -863,12 +863,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     );
 
     // External links and the palette share one ordered, on-demand path. There
-    // are no startup scans, expansion loops, configuration writes or timers.
+    // are no startup scans, expansion loops or configuration writes.
     let worktreeLinkQueue: Promise<void> = Promise.resolve();
-    const openWorktree = (root?: vscode.Uri, restoreCodex = false): Promise<void> => {
+    const openWorktree = (root?: vscode.Uri, sourceLink?: vscode.Uri): Promise<void> => {
         const next = worktreeLinkQueue.then(async () => {
-            if (await openWorktreeInSourceControl(root) && restoreCodex) {
-                try { await returnToCodex(); }
+            if (await openWorktreeInSourceControl(root) && sourceLink) {
+                // Read after reveal so disabling the setting during a queued open wins.
+                // Application-scoped settings cannot be enabled by the opened repository.
+                const config = vscode.workspace.getConfiguration("better-git-vscode");
+                const destination = worktreeLinkReturnApp(sourceLink,
+                    config.get<boolean>("worktreeLinkReturnFocus", false),
+                    config.get<string>("worktreeLinkReturnApp", ""));
+                if (!destination) { return; }
+                try { await returnToApp(destination); }
                 catch (error) { debugLog("worktree-focus", String(error)); }
             }
         });
@@ -886,7 +893,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 void vscode.window.showErrorMessage("Better Git: This link does not contain a valid worktree path.");
                 return;
             }
-            await openWorktree(vscode.Uri.file(root), worktreeLinkReturnsToCodex(uri));
+            await openWorktree(vscode.Uri.file(root), uri);
         }
     });
     const copyWorktreeLinkCommand = vscode.commands.registerCommand(
@@ -897,7 +904,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 void vscode.window.showErrorMessage("Better Git: VS Code did not provide a local git worktree.");
                 return;
             }
-            await vscode.env.clipboard.writeText(createWorktreeLink(root.fsPath, vscode.env.uriScheme));
+            const config = vscode.workspace.getConfiguration("better-git-vscode");
+            const destination = config.get<boolean>("worktreeLinkReturnFocus", false)
+                ? config.get<string>("worktreeLinkReturnApp", "") : undefined;
+            await vscode.env.clipboard.writeText(createWorktreeLink(root.fsPath, vscode.env.uriScheme, destination));
         }
     );
 
