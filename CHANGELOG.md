@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.79] — optional return to the originating app
+
+- Add an off-by-default macOS setting to return focus after a Worktree link opens Source Control.
+- Include the configured app in copied links and accept another app through returnTo metadata. Links without metadata can use a configured fallback.
+- Keep failed opens, invalid destinations, ordinary commands and newer unrelated app selections from triggering a return.
+
 ## 1.2.78 — 2026-09-14
 
 - At the mouse hold threshold, run one navigation step in the opposite direction. Keep the original file receipt for release staging.
