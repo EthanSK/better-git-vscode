@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.78 — 2026-09-14
+
+- At the mouse hold threshold, run one navigation step in the opposite direction. Keep the original file receipt for release staging.
+- Ignore duplicate readiness signals and skip reversal when the initial navigation did not move.
+
 ## 1.2.77 — 2026-09-14
 
 - Restore the original file, selection and scroll position when a mouse navigation press reaches the stage-hold threshold. Release still stages the original file and advances.
