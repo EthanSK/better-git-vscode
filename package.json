@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.74",
+  "version": "1.2.76",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -661,6 +661,90 @@
         "key": "ctrl+z",
         "mac": "cmd+z",
         "when": "focusedView == workbench.scm && !inputFocus"
+      },
+      {
+        "command": "better-git-vscode.begin-mouse-navigation-hold",
+        "key": "ctrl+cmd+f13",
+        "mac": "ctrl+cmd+f13",
+        "args": {
+          "source": "corsair",
+          "direction": "next"
+        }
+      },
+      {
+        "command": "better-git-vscode.begin-mouse-navigation-hold",
+        "key": "ctrl+cmd+f17",
+        "mac": "ctrl+cmd+f17",
+        "args": {
+          "source": "corsair",
+          "direction": "previous"
+        }
+      },
+      {
+        "command": "better-git-vscode.finish-mouse-navigation-hold",
+        "key": "ctrl+cmd+f18",
+        "mac": "ctrl+cmd+f18",
+        "args": {
+          "source": "corsair",
+          "direction": "next"
+        }
+      },
+      {
+        "command": "better-git-vscode.finish-mouse-navigation-hold",
+        "key": "ctrl+cmd+f19",
+        "mac": "ctrl+cmd+f19",
+        "args": {
+          "source": "corsair",
+          "direction": "previous"
+        }
+      },
+      {
+        "command": "better-git-vscode.cancel-mouse-navigation-hold",
+        "key": "ctrl+cmd+f14",
+        "mac": "ctrl+cmd+f14",
+        "args": "corsair"
+      },
+      {
+        "command": "better-git-vscode.begin-mouse-navigation-hold",
+        "key": "cmd+shift+f13",
+        "mac": "cmd+shift+f13",
+        "args": {
+          "source": "razer",
+          "direction": "next"
+        }
+      },
+      {
+        "command": "better-git-vscode.begin-mouse-navigation-hold",
+        "key": "cmd+shift+f17",
+        "mac": "cmd+shift+f17",
+        "args": {
+          "source": "razer",
+          "direction": "previous"
+        }
+      },
+      {
+        "command": "better-git-vscode.finish-mouse-navigation-hold",
+        "key": "cmd+shift+f18",
+        "mac": "cmd+shift+f18",
+        "args": {
+          "source": "razer",
+          "direction": "next"
+        }
+      },
+      {
+        "command": "better-git-vscode.finish-mouse-navigation-hold",
+        "key": "cmd+shift+f19",
+        "mac": "cmd+shift+f19",
+        "args": {
+          "source": "razer",
+          "direction": "previous"
+        }
+      },
+      {
+        "command": "better-git-vscode.cancel-mouse-navigation-hold",
+        "key": "cmd+shift+f14",
+        "mac": "cmd+shift+f14",
+        "args": "razer"
       }
     ]
   },

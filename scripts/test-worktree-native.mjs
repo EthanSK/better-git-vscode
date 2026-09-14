@@ -64,6 +64,8 @@ fs.mkdirSync(path.join(profile, 'User'), { recursive: true });
 fs.writeFileSync(path.join(profile, 'User', 'keybindings.json'), JSON.stringify([
     { key: 'f18', command: 'better-git-vscode.stage-and-next-changed-file' },
     { key: 'f16', command: 'better-git-vscode.undo-last-stage-and-advance' },
+    { key: 'cmd+shift+f20', command: 'better-git-vscode.stage-hold-ready', args: 'razer' },
+    { key: 'cmd+shift+f15', command: 'better-git-vscode.stage-hold-clear', args: 'razer' },
 ]));
 const server = net.createServer();
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -200,6 +202,34 @@ try {
     await check(1, 'rapid-stage-and-next', 'd.txt');
     for (const file of ['c.txt', 'b.txt', 'a.txt']) { await key('F16', 'F16', 127); await check(1, `undo-to-${file}`, file); }
     assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged-late.txt', 'staged.txt']);
+    // Both source transports: navigation happens before release; release stages only the origin.
+    for (const [source, modifiers] of [['corsair', 6], ['razer', 12]]) {
+        await request('open', { repo: 2 });
+        await key('F13', 'F13', 124, modifiers);
+        await check(2, `${source}-button-down`, 'b.txt');
+        assert.deepEqual(git(roots[2], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged.txt']);
+        await key('F14', 'F14', 125, modifiers); // Short release cancels staging without another navigation.
+        await key('F13', 'F13', 124, modifiers);
+        await check(2, `${source}-hold-down`, 'c.txt');
+        await key('F20', 'F20', 131, source === 'corsair' ? 7 : 12);
+        await until(() => request('badge', { repo: 2, file: 'b.txt' }), state => state.value === '💥💥', 'origin readiness badge');
+        assert.equal((await request('state')).badge, '🔥🔥', 'destination must not look ready to stage');
+        await capture(`${source}-origin-ready`);
+        await pause(1100);
+        await key('F18', 'F18', 129, modifiers);
+        await key('F15', 'F15', 126, source === 'corsair' ? 7 : 12);
+        await until(() => git(roots[2], 'diff', '--cached', '--name-only'), names => names.includes('b.txt'), 'long release stages original');
+        await check(2, `${source}-hold-release`, 'c.txt');
+        await key('F16', 'F16', 127);
+        await check(2, `${source}-undo-origin`, 'b.txt');
+        await key('F17', 'F17', 128, modifiers);
+        await check(2, `${source}-previous-down`, 'a.txt');
+        await key('F19', 'F19', 130, modifiers);
+        await until(() => git(roots[2], 'diff', '--cached', '--name-only'), names => names.includes('b.txt'), 'previous release stages original');
+        await key('F16', 'F16', 127);
+        await check(2, `${source}-previous-undo`, 'b.txt');
+        assert.deepEqual(git(roots[2], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged.txt']);
+    }
     for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
         assert.equal(fs.readFileSync(path.join(repo, file), 'utf8'), 'modified\n');
     }

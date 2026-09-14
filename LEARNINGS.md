@@ -1,5 +1,17 @@
 # Learnings
 
+## Immediate mouse navigation with origin-owned release staging (2026-09-14)
+
+Button-down Next/Previous must capture the current unstaged file inside the existing navigation queue before moving. An opposite navigation is not an inverse at hunk boundaries, end-of-list or cross-file landings. The explicit begin/finish/cancel hold commands reuse the existing origin receipt and Undo-aware stage path, with a bounded 60-second hold lifetime; legacy late-click receipts keep their one-second deadline. Short release cancels the receipt; manual editor/group/focus changes invalidate it. A long release stages only the original URI and leaves an already-reached adjacent file selected. The readiness decoration belongs to that original URI, not the newly displayed file.
+
+Corsair uses Control-Command F13/F17 to begin, F18/F19 to finish, and F14 to cancel; Razer uses Command-Shift with those same keys. These avoid the Control-Shift-Option VoiceInk collision and preserve legacy transports. Existing Razer readiness F20/F15 user bindings must be seeded explicitly in isolated native tests; the manifest's older Hyper feedback defaults are not the live user bindings.
+
+Stage and Undo error notifications have no decision to await: fire them without awaiting dismissal so the serialized queues can process the next request. The real-host regression patches the Git repository API prototype, because getAPI returns different wrapper instances; patching one wrapper does not force the production stage to fail. Fixture filenames are unique to the new tests, preventing delayed document events from a prior file rewrite from invalidating a subsequent receipt.
+
+Verification: 18 focused real VS Code tests passed on the Mini, including both sources/directions, holds exceeding one second, duplicate releases, short cancellation, manual editor cancellation, single-file exhaustion, failed stage with its error notice open, legacy receipts and exact Undo. The native workbench harness passed 23 scenarios with both source shortcut streams, actual Git-index assertions and screenshots of the original-file readiness badge. The tested production JavaScript SHA-256 is 5f3a2e477af87ea3a9f07dc3af1565c327cc82ae72108f9e5f09789d2d721784. Physical mouse hardware remains untested; normal VS Code was not changed by the harness.
+
+Release: BetterGit 1.2.76 passed the original Marketplace verifier with exit zero and BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED; exact VSIX SHA-256 ade6820f7d729694298f4adfc9e10337e703133dd8d2bd234a1e90c7b20f98c8. Both real-host suites were repeated successfully against the exact packaged JavaScript without rebuilding on the Mini. Normal VS Code remains user-managed. The matching signed Agentic Mouse 1.0.201 (207) candidate is ready; installing the pair awaits the explicitly requested normal-VS-Code installation approval.
+
 ## Worktree collapse allowance increased to 500 ms (2026-09-14)
 
 **Trigger:** Ethan reported another expanded Staged Changes group after opening a Worktree link on 1.2.73, then requested a 500 ms delay. The installed JavaScript matched the released bundle. Read-only native inspection showed AIMVS13 with 331 staged and 395 unstaged entries; the exact failing click was not replayed in his normal window.

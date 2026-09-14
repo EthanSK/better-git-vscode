@@ -2178,6 +2178,99 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+
+	for (const source of ['corsair', 'razer']) {
+		for (const direction of ['next', 'previous']) {
+			test(`button-down hold ${source} ${direction} navigates before release and stages its origin after a long hold`, async () => {
+				write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+				await refreshUntil(() => isUntracked('hold_a.txt') && isUntracked('hold_b.txt'), 'hold pair');
+				const origin = direction === 'next' ? 'hold_a.txt' : 'hold_b.txt';
+				const destination = direction === 'next' ? 'hold_b.txt' : 'hold_a.txt';
+				await openPlainAt(origin, 0);
+				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+				assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri(destination).fsPath);
+				assert.strictEqual(git('diff --cached --name-only'), '', 'button-down must not stage');
+				await sleep(1100); // A real long hold must outlive the legacy one-second late-click window.
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+				assert.strictEqual(git('diff --cached --name-only'), origin);
+				assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri(destination).fsPath);
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+				assert.strictEqual(git('diff --cached --name-only'), origin, 'duplicate release must not stage destination');
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(git('diff --cached --name-only'), '');
+			});
+		}
+	}
+
+
+	test('button-down readiness respects a disabled badge on the captured original', async () => {
+		write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+		await refreshUntil(() => isUntracked('hold_a.txt') && isUntracked('hold_b.txt'), 'disabled badge pair');
+		await openPlainAt('hold_a.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previous = config.inspect<string>('currentFileBadge')?.globalValue;
+		try {
+			await config.update('currentFileBadge', '', vscode.ConfigurationTarget.Global);
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('hold_a.txt')), undefined);
+		} finally {
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', 'corsair');
+			await config.update('currentFileBadge', previous, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('button-down stage failure leaves subsequent navigation usable with the error notice open', async () => {
+		write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+		await refreshUntil(() => isUntracked('hold_a.txt') && isUntracked('hold_b.txt'), 'failure pair');
+		await openPlainAt('hold_a.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+		const repositoryPrototype = Object.getPrototypeOf(repo);
+		const originalAdd = repositoryPrototype.add;
+		repositoryPrototype.add = async () => { throw new Error('intentional isolated stage failure'); };
+		try {
+			await Promise.race([
+				vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+				sleep(2000).then(() => { throw new Error('stage queue waited for notification dismissal'); }),
+			]);
+		} finally { repositoryPrototype.add = originalAdd; }
+		assert.strictEqual(git('diff --cached --name-only'), '');
+		await vscode.commands.executeCommand('better-git-vscode.previous-scm-change');
+		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('hold_a.txt').fsPath);
+	});
+
+	test('button-down hold at the only file boundary stages once and closes the exhausted review', async () => {
+		write('hold_only.txt', 'only');
+		await refreshUntil(() => isUntracked('hold_only.txt'), 'only hold file');
+		await openPlainAt('hold_only.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+		await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), 'hold_only.txt');
+	});
+
+	test('button-down short release clears the origin and leaves navigation intact', async () => {
+		write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+		await refreshUntil(() => isUntracked('hold_a.txt') && isUntracked('hold_b.txt'), 'short hold pair');
+		await openPlainAt('hold_a.txt', 0);
+		await Promise.all([
+			vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+			vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', 'corsair'),
+			vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+		]);
+		assert.strictEqual(git('diff --cached --name-only'), '');
+		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('hold_b.txt').fsPath);
+	});
+
+	test('button-down hold rejects a manual editor switch before release', async () => {
+		for (const name of ['hold_a.txt', 'hold_b.txt', 'hold_c.txt']) { write(name, name); }
+		await refreshUntil(() => ['hold_a.txt', 'hold_b.txt', 'hold_c.txt'].every(isUntracked), 'hold cancellation files');
+		await openPlainAt('hold_a.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'razer', direction: 'next' });
+		await openPlainAt('hold_c.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'razer', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), '', 'manual editor choice cancels the old hold');
+	});
+
 	for (const source of ['corsair', 'razer']) {
 		for (const direction of ['next', 'previous']) {
 			test(`late mouse stage pins the origin after ${source} ${direction} has crossed files`, async () => {

@@ -8,6 +8,17 @@ import * as vscode from 'vscode';
 suite('Extension Test Suite', () => {
 	vscode.window.showInformationMessage('Start all tests.');
 
+	test('button-down hold transports stay source-specific and cannot trigger the VoiceInk modifier chord', () => {
+		const manifest = vscode.extensions.getExtension('EthanSK.better-git-vscode')!.packageJSON;
+		for (const [source, modifiers] of [['corsair', 'ctrl+cmd'], ['razer', 'cmd+shift']]) {
+			for (const [phase, key, direction] of [['begin', 'f13', 'next'], ['begin', 'f17', 'previous'], ['finish', 'f18', 'next'], ['finish', 'f19', 'previous']]) {
+				const binding = manifest.contributes.keybindings.find((item: any) => item.key === `${modifiers}+${key}`);
+				assert.strictEqual(binding?.command, `better-git-vscode.${phase}-mouse-navigation-hold`);
+				assert.deepStrictEqual(binding?.args, { source, direction });
+			}
+		}
+	});
+
 	test('ships and registers the complete Better Git VS Code identity and namespace', async () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');

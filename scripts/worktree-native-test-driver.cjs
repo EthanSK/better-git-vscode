@@ -21,7 +21,8 @@ exports.run = async () => {
    previous=request.id; busy=true;
    try {
     let value;
-    if(request.action==='open') value=await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control',vscode.Uri.file(roots[request.repo]));
+    if(request.action==='badge') value=api.getReviewDecorationBadge(vscode.Uri.file(path.join(roots[request.repo],request.file)));
+    else if(request.action==='open') value=await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control',vscode.Uri.file(roots[request.repo]));
     else if(request.action==='plain') value=await vscode.commands.executeCommand('vscode.open',vscode.Uri.file(path.join(roots[request.repo],'a.txt')));
     else if(request.action==='refresh') value=await git.getRepository(vscode.Uri.file(roots[request.repo])).status();
     else if(request.action==='command') value=await vscode.commands.executeCommand(request.command,...(request.args??[]));
