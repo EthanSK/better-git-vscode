@@ -213,7 +213,8 @@ try {
         await check(2, `${source}-hold-down`, 'c.txt');
         await key('F20', 'F20', 131, source === 'corsair' ? 7 : 12);
         await until(() => request('badge', { repo: 2, file: 'b.txt' }), state => state.value === '💥💥', 'origin readiness badge');
-        assert.equal((await request('state')).badge, '🔥🔥', 'destination must not look ready to stage');
+        await check(2, `${source}-threshold-restores-origin`, 'b.txt');
+        assert.equal((await request('state')).badge, '💥💥', 'the original view must be ready while held');
         await capture(`${source}-origin-ready`);
         await pause(1100);
         await key('F18', 'F18', 129, modifiers);
@@ -224,6 +225,8 @@ try {
         await check(2, `${source}-undo-origin`, 'b.txt');
         await key('F17', 'F17', 128, modifiers);
         await check(2, `${source}-previous-down`, 'a.txt');
+        await key('F20', 'F20', 131, source === 'corsair' ? 7 : 12);
+        await check(2, `${source}-previous-threshold-restores-origin`, 'b.txt');
         await key('F19', 'F19', 130, modifiers);
         await until(() => git(roots[2], 'diff', '--cached', '--name-only'), names => names.includes('b.txt'), 'previous release stages original');
         await key('F16', 'F16', 127);

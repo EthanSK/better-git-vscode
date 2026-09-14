@@ -81,11 +81,22 @@ const debugLog = (tag: string, message: string): void => {
 let lastNavDirection: "next" | "previous" = "next";
 
 type MouseReviewSource = "corsair" | "razer";
+type MouseHoldRequest = { active: boolean };
+type MouseReviewView = {
+    input: unknown;
+    preview: boolean;
+    column: vscode.ViewColumn;
+    editors: { uri: string; selections: readonly vscode.Selection[]; top?: vscode.Position }[];
+};
+const mouseHoldRequests = new Map<MouseReviewSource, MouseHoldRequest>();
+let latestMouseHoldRequest: MouseHoldRequest | undefined;
 const mouseNavigationOrigins = new Map<MouseReviewSource, {
     change: FileChange;
     direction: "next" | "previous";
     requestedAt: number;
     held?: boolean;
+    holdRequest?: MouseHoldRequest;
+    view?: MouseReviewView;
 }>(); // A late stage press belongs to the file left by this mouse, never the newly displayed file. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
 const isMouseReviewSource = (source: unknown): source is MouseReviewSource => source === "corsair" || source === "razer";
 
@@ -691,7 +702,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         vscode.commands.registerCommand("better-git-vscode.finish-mouse-navigation-hold", (args: unknown) => stageMouseNavigationOrigin(args, true)),
         vscode.commands.registerCommand("better-git-vscode.cancel-mouse-navigation-hold", (source: unknown) => {
             if (!isMouseReviewSource(source)) { return; }
-            return serializeChangeNavigation(async () => { mouseNavigationOrigins.delete(source); });
+            const request = mouseHoldRequests.get(source);
+            if (request) { request.active = false; }
+            return serializeChangeNavigation(async () => {
+                if (mouseNavigationOrigins.get(source)?.holdRequest === request) { mouseNavigationOrigins.delete(source); }
+                if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
+            });
         }),
     ];
 
@@ -1105,15 +1121,30 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (affected.length) { reviewDecoEmitter.fire(affected); }
     };
     const stageHoldReadyCommand = vscode.commands.registerCommand("better-git-vscode.stage-hold-ready", (source: unknown) => {
-        if (!isMouseReviewSource(source) || !vscode.window.state.focused || !currentReviewUri
-            || currentReviewTab !== vscode.window.tabGroups.activeTabGroup.activeTab) { return; } // A queued signal after an editor switch must not mark the previous file ready. No async lookup or Git mutation belongs in this feedback-only command. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
-        const origin = mouseNavigationOrigins.get(source);
-        const target = origin?.held ? origin.change.uri : currentReviewUri;
-        stageHoldReadySources.set(source, target);
-        reviewDecoEmitter.fire([target]);
+        if (!isMouseReviewSource(source)) { return; }
+        // Capture input ownership now, even while button-down navigation is still queued.
+        const request = mouseHoldRequests.get(source);
+        return serializeChangeNavigation(async check => {
+            if (!vscode.window.state.focused) { return; }
+            const origin = mouseNavigationOrigins.get(source);
+            if (request) {
+                if (!request.active || request !== latestMouseHoldRequest || origin?.holdRequest !== request) { return; }
+                await restoreMouseReviewView(origin, check);
+                await refreshReviewDecoration();
+                check();
+                // Release/cancel may arrive while the editor was opening. Never re-light a completed hold.
+                if (!request.active || request !== latestMouseHoldRequest) { return; }
+            } else if (!currentReviewUri || currentReviewTab !== vscode.window.tabGroups.activeTabGroup.activeTab) { return; }
+            const target = origin?.held ? origin.change.uri : currentReviewUri;
+            if (target) { stageHoldReadySources.set(source, target); reviewDecoEmitter.fire([target]); }
+        });
     });
     const stageHoldClearCommand = vscode.commands.registerCommand("better-git-vscode.stage-hold-clear", (source: unknown) => {
-        if (isMouseReviewSource(source)) { clearStageHoldFeedback(source); }
+        if (isMouseReviewSource(source)) {
+            const request = mouseHoldRequests.get(source);
+            if (request) { request.active = false; }
+            clearStageHoldFeedback(source);
+        }
     });
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
         onDidChangeFileDecorations: reviewDecoEmitter.event,
@@ -1274,7 +1305,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         ...mouseHoldCommands,
         stageHoldReadyCommand, stageHoldClearCommand,
         vscode.window.onDidChangeWindowState(state => {
-            if (!state.focused) { mouseNavigationOrigins.clear(); clearStageHoldFeedback(); }
+            if (!state.focused) { invalidateChangeNavigation(); clearStageHoldFeedback(); }
         }),
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,
@@ -3514,6 +3545,9 @@ let navigationOwnTabChange = false;
 const invalidateChangeNavigation = (): void => {
     changeNavigationGeneration++;
     mouseNavigationOrigins.clear();
+    mouseHoldRequests.forEach(request => { request.active = false; });
+    mouseHoldRequests.clear();
+    latestMouseHoldRequest = undefined;
 };
 
 // Observe transitions, not just the final URI: switching away and back also abandons the old burst.
@@ -3574,14 +3608,78 @@ const serializeChangeNavigation = (operation: (check: NavigationCheckpoint) => P
     return run;
 };
 
+// Keep view restoration tied to the captured editor, never an opposite navigation guess.
+const captureMouseReviewView = (): MouseReviewView | undefined => {
+    const group = vscode.window.tabGroups.activeTabGroup;
+    const tab = group.activeTab;
+    if (!tab) { return undefined; }
+    const input = tab.input;
+    const uris = input instanceof vscode.TabInputTextDiff ? [input.original.toString(), input.modified.toString()]
+        : input instanceof vscode.TabInputText ? [input.uri.toString()] : [];
+    return { input, preview: tab.isPreview, column: group.viewColumn,
+        editors: vscode.window.visibleTextEditors.filter(editor =>
+            (editor.viewColumn === undefined || editor.viewColumn === group.viewColumn) && uris.includes(editor.document.uri.toString())
+        ).map(editor => ({ uri: editor.document.uri.toString(), selections: [...editor.selections], top: editor.visibleRanges[0]?.start })) };
+};
+
+const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mouseNavigationOrigins.get>>, check: NavigationCheckpoint): Promise<void> => {
+    const view = origin.view;
+    if (!view) { return; }
+    check();
+    const sameInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input === view.input;
+    if (!sameInput) {
+        navigationOwnTabChange = true;
+        try {
+            const options = { viewColumn: view.column, preview: view.preview };
+            if (view.input instanceof vscode.TabInputTextDiff) {
+                await vscode.commands.executeCommand("vscode.diff", view.input.original, view.input.modified, undefined, options);
+            } else if (view.input instanceof vscode.TabInputText) {
+                await vscode.window.showTextDocument(view.input.uri, options);
+            } else {
+                await openChangeEntry(origin.change);
+            }
+        } finally { observeNavigationTab(); navigationOwnTabChange = false; }
+    }
+    check();
+    const shown = await currentReviewFileUriAsync();
+    check();
+    if (shown?.toString() !== origin.change.uri.toString()) { invalidateChangeNavigation(); return; }
+    for (const saved of view.editors) {
+        const editor = vscode.window.visibleTextEditors.find(candidate =>
+            (candidate.viewColumn === undefined || candidate.viewColumn === view.column) && candidate.document.uri.toString() === saved.uri);
+        if (!editor) { continue; }
+        editor.selections = saved.selections.map(selection => new vscode.Selection(
+            editor.document.validatePosition(selection.anchor), editor.document.validatePosition(selection.active)));
+        if (saved.top) {
+            // AtTop reserves surrounding/sticky lines above its target. Offset that context so
+            // restoring a saved viewport does not drift upward by five lines on every hold.
+            const config = vscode.workspace.getConfiguration("editor", editor.document);
+            const padding = Math.max(config.get<number>("cursorSurroundingLines", 0),
+                config.get<boolean>("stickyScroll.enabled", true) ? config.get<number>("stickyScroll.maxLineCount", 5) : 0);
+            const top = editor.document.validatePosition(new vscode.Position(saved.top.line + padding, saved.top.character));
+            await revealRangeAndWaitForViewport(editor, new vscode.Range(top, top), vscode.TextEditorRevealType.AtTop);
+            check();
+        }
+    }
+};
+
 // Capture inside the existing navigation queue, before moving; a rapid late press queues behind capture,
 // while its deadline uses input arrival, not renderer/Git latency. Ordinary keyboard navigation clears it.
 const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unknown, held = false): Promise<void> => {
     const requestedAt = performance.now();
+    observeNavigationTab();
+    const holdRequest = held && isMouseReviewSource(source) ? { active: true } : undefined;
+    latestMouseHoldRequest = holdRequest;
+    if (isMouseReviewSource(source)) {
+        const previous = mouseHoldRequests.get(source);
+        if (previous) { previous.active = false; }
+        if (holdRequest) { mouseHoldRequests.set(source, holdRequest); } else { mouseHoldRequests.delete(source); }
+    }
     return serializeChangeNavigation(async (check) => {
         if (isMouseReviewSource(source)) {
             mouseNavigationOrigins.delete(source);
             const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+            const view = held ? captureMouseReviewView() : undefined;
             const active = await getActiveChange();
             const uri = await getActiveFileUri();
             check();
@@ -3590,7 +3688,7 @@ const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unk
                 check();
                 const change = matches.find(candidate => !candidate.staged);
                 if (change && (active.staged === false || matches.length === 1) && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {
-                    mouseNavigationOrigins.set(source, { change, direction, requestedAt, held });
+                    mouseNavigationOrigins.set(source, { change, direction, requestedAt, held, holdRequest, view });
                 }
             }
         } else {
@@ -3607,10 +3705,13 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
     if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) { return Promise.resolve(); }
     const { source, direction } = args;
     if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) { return Promise.resolve(); }
+    const request = held ? mouseHoldRequests.get(source) : undefined;
+    if (request) { request.active = false; }
     return serializeChangeNavigation(check => runStageCommand(async () => {
         const origin = mouseNavigationOrigins.get(source);
         mouseNavigationOrigins.delete(source);
-        if (!origin || origin.direction !== direction || requestedAt < origin.requestedAt || origin.held !== held || requestedAt - origin.requestedAt >= (held ? 60_000 : 1000)) { return; }
+        if (held && mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
+        if (!origin || origin.direction !== direction || requestedAt < origin.requestedAt || origin.held !== held || origin.holdRequest !== request || requestedAt - origin.requestedAt >= (held ? 60_000 : 1000)) { return; }
         const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
         const repo = git?.getRepository(origin.change.uri);
         if (!repo) { return; } // A closed repository must not redirect the captured file to the first workspace repo.
@@ -3805,8 +3906,14 @@ const goToPreviousDiffOnce = async (check: NavigationCheckpoint) => {
 
 // Thin queued wrappers are the single public/shared path used by direct keyboard commands and smart mouse
 // navigation alike. Keeping the queue here (rather than in keybindings) covers every entry point identically.
-const goToNextDiff = (): Promise<void> => serializeChangeNavigation(goToNextDiffOnce);
-const goToPreviousDiff = (): Promise<void> => serializeChangeNavigation(goToPreviousDiffOnce);
+const ordinaryChangeNavigation = (step: typeof goToNextDiffOnce): Promise<void> => {
+    mouseHoldRequests.forEach(request => { request.active = false; });
+    latestMouseHoldRequest = undefined;
+    mouseHoldRequests.clear();
+    return serializeChangeNavigation(async check => { mouseNavigationOrigins.clear(); await step(check); });
+};
+const goToNextDiff = (): Promise<void> => ordinaryChangeNavigation(goToNextDiffOnce);
+const goToPreviousDiff = (): Promise<void> => ordinaryChangeNavigation(goToPreviousDiffOnce);
 
 const goToFirstOrNextFile = async () => {
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath (see goToNextDiff).
