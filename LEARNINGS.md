@@ -1,5 +1,16 @@
 # Learnings
 
+
+## Worktree presentation batch and native regression coverage (2026-09-14)
+
+**Trigger:** A Worktree link intermittently left Staged Changes expanded on first opening/switching, while repeating the command collapsed it. Native inspection on unmodified VS Code 1.137.0 observed this on the 1.2.72 production bundle; the 31 focused integration tests still passed because their command traces do not inspect group expansion.
+
+**Change:** The explicit worktree-open path now allows 150 ms after showing SCM and refreshing the target repository, before the existing reveal/focus/recursive-collapse sequence. VS Code's ExtHostSCM batches resource updates for 100 ms, and SCMViewPane queues its reveal and refresh work without returning a completion promise from its focus action. This presentation allowance lets the pending batch arrive before collapse; it adds no delay to mouse staging, navigation, Undo, or startup and does not use a renderer connection or repeated recollapse. It is a bounded allowance, not an acknowledgment of native rendering completion.
+
+**Verification:** The final JavaScript bundle passed 31 focused real-host tests and the opt-in native workbench harness on the Mini using unmodified VS Code 1.137.0. The harness checks actual SCM rows on a new repository's first open, an existing repository's first/repeat open, worktree switching, same-editor reopening with SCM hidden, and a switch after staged resources change. Native input verifies the readiness badge, release, advancement, two rapid stages and three exact Undos, preserving pre-existing staged additions and working contents. Screenshots were visually inspected. The intermittent original build also passed some fresh runs; do not describe this harness as a deterministic failing-baseline reproducer or claim that every possible renderer delay was tested. Physical mouse hardware is not driven by this harness.
+
+**Test guard:** Run `BGV_VSCODE_EXECUTABLE_PATH=/path/to/isolated/Code node scripts/test-worktree-native.mjs` on the Mini. It creates its own profile, fixture and debug port; its only native activation targets the process it launched. Check readiness through the badge and focused-window state, not merely a sent F20. Ignore SCM sticky-header clones with no aria-level when counting repositories. Test-only CDP and artifacts never ship in the extension.
+
 Per-repo institutional memory for fixes. Every entry below is a real bug we hit + how we solved it. Check this file BEFORE attempting a same-looking fix.
 
 Maintained by the `learnings` skill — see `~/.claude/skills/learnings/skill.md`.

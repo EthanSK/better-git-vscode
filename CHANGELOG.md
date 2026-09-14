@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.73] — settle Source Control before worktree collapse
+
+- Allow VS Code’s pending Source Control update to arrive before collapsing the linked worktree’s Staged Changes group. Keep this presentation wait confined to opening a worktree.
+- Add opt-in native checks for first and repeated opens, switching repositories, a hidden Source Control view, staging readiness, rapid stages and three Undos.
+
 ## [1.2.72] — return to Codex after a Worktree link
 
 - Support `returnTo=codex` on Worktree links. On macOS, return the already-running Codex app to the front after the worktree opens, so Chrome's redirect does not cover it.

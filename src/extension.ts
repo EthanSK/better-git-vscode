@@ -1745,6 +1745,11 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         // along with clean repositories and Auto Reveal off, rather than collapsing their target.
         if (autoReveal && !target.staged && target.status !== GitStatus.DELETED) {
             await executeScmTreeCommand("manual", "workbench.view.scm");
+            // status() resolves before ExtHostSCM's 100 ms resource-state batch reaches the
+            // workbench. Collapsing during that refresh discards a collapsed repository's
+            // groups; Auto Reveal then recreates Staged Changes in its default expanded state.
+            // Let this one presentation batch leave the host before revealing/collapsing.
+            await new Promise(resolve => setTimeout(resolve, 150));
             // Reveal first so native SCM focus belongs to this resource instead of a commit input
             // or Graph. A recursive collapse must precede repository-header collapse: refreshing
             // a collapsed repository can discard its groups before they can be closed.
