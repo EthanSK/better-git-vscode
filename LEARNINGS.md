@@ -1,5 +1,14 @@
 # Learnings
 
+## Restore the review view at the stage-hold threshold (2026-09-14)
+
+Use the existing stage-hold-ready signal to restore the captured original tab, selections and viewport before release. Keep restoration and release staging in the navigation queue. Capture each hold token at command arrival, deactivate it immediately on release/cancel, and compare it with the newest hold before restoring. Clear keyboard-superseded tokens at input arrival, not later inside the queue, or a subsequently queued mouse hold loses its ownership. Finishing consumes its own captured token even if a newer hold has arrived.
+
+A diff editor can report an undefined viewColumn; match its original/modified URI as well as the active group. Reopening a diff without explicitly restoring its selections otherwise returns to the changed hunk. VS Code AtTop reserves max(cursorSurroundingLines, enabled stickyScroll.maxLineCount) above the requested target; compensate that context when restoring a saved top line. Use the existing bounded viewport-settling helper so subsequent queued navigation cannot observe a half-finished scroll. Wrapped/folded editor geometry and pixel scroll offsets are not exposed as exact saved view state by the public extension API.
+
+Verification: the exact packaged production JavaScript passed 27 focused real VS Code tests on the Mini, including both mice/directions, within-file selection/viewport return, reopening a diff at its previous selection/viewport, queued quick taps, overlapping releases, cross-source and keyboard ownership, stage errors and Undo. The default 44 unit tests and lint passed. The native workbench harness passed 27 scenarios, including both source shortcut streams and directions, actual Git-index contents, release and Undo; screenshots show the original b.txt selected with the readiness badge before release. Physical mouse input remains a separate acceptance boundary. Tested production JavaScript SHA-256: ffd9937597c932d24c4d6d7a7e70c3b63fcca791e54fb9e0b9034c51ec089113.
+
+
 ## Immediate mouse navigation with origin-owned release staging (2026-09-14)
 
 Button-down Next/Previous must capture the current unstaged file inside the existing navigation queue before moving. An opposite navigation is not an inverse at hunk boundaries, end-of-list or cross-file landings. The explicit begin/finish/cancel hold commands reuse the existing origin receipt and Undo-aware stage path, with a bounded 60-second hold lifetime; legacy late-click receipts keep their one-second deadline. Short release cancels the receipt; manual editor/group/focus changes invalidate it. A long release stages only the original URI and leaves an already-reached adjacent file selected. The readiness decoration belongs to that original URI, not the newly displayed file.

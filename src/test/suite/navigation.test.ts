@@ -2190,6 +2190,10 @@ suite('SCM change navigation E2E', () => {
 				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
 				assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri(destination).fsPath);
 				assert.strictEqual(git('diff --cached --name-only'), '', 'button-down must not stage');
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+                assert.strictEqual(activeTabPath(), wsUri(origin).path, 'hold threshold must return to original file');
+                assert.strictEqual(git('diff --cached --name-only'), '', 'threshold must not stage');
+                assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(origin)), '💥💥');
 				await sleep(1100); // A real long hold must outlive the legacy one-second late-click window.
 				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
 				assert.strictEqual(git('diff --cached --name-only'), origin);
@@ -2202,6 +2206,123 @@ suite('SCM change navigation E2E', () => {
 		}
 	}
 
+
+    for (const source of ['corsair', 'razer']) {
+        for (const direction of ['next', 'previous']) {
+            test(`hold threshold restores ${source} ${direction} cursor, selection and scroll within a file`, async () => {
+                write('hold_view.txt', lines(160, 'view'));
+                await refreshUntil(() => isUntracked('hold_view.txt'), 'hold view');
+                await vscode.window.showTextDocument(wsUri('hold_view.txt'), { preview: false });
+                const editor = vscode.window.activeTextEditor!;
+                editor.selection = new vscode.Selection(60, 2, 61, 4);
+                editor.revealRange(new vscode.Range(50, 0, 50, 0), vscode.TextEditorRevealType.AtTop);
+                await sleep(100);
+                const selection = editor.selection;
+                const top = editor.visibleRanges[0].start.line;
+                await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+                assert.notStrictEqual(editor.selection.active.line, selection.active.line);
+                await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+                await sleep(100);
+                assert.deepStrictEqual(editor.selection, selection);
+                assert.strictEqual(editor.visibleRanges[0].start.line, top);
+                assert.strictEqual(git('diff --cached --name-only'), '');
+                await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', source);
+                await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+                assert.strictEqual(git('diff --cached --name-only'), 'hold_view.txt');
+            });
+        }
+    }
+
+    test('hold threshold restores a diff editor after crossing files', async () => {
+        const content = lines(260, 'tall_e').split('\n');
+        content[110] = 'changed line';
+        write('committed/tall_e.txt', content.join('\n'));
+        write('zz_after.txt', 'next');
+        await refreshUntil(() => inWorkingTree('committed/tall_e.txt', 5) && isUntracked('zz_after.txt'), 'diff hold files');
+        const editor = await openWorkingDiffAt('committed/tall_e.txt', 240);
+        editor.selection = new vscode.Selection(259, 2, 259, 4);
+        await sleep(150);
+        const selection = editor.selection;
+        const top = editor.visibleRanges[0].start.line;
+        const source = 'corsair'; const direction = 'next';
+        await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+        assert.strictEqual(activeTabPath(), wsUri('zz_after.txt').path);
+        await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+        await sleep(300);
+        assert.ok(vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff);
+        const restored = visibleEditorFor(wsUri('committed/tall_e.txt'))!;
+        assert.deepStrictEqual(restored.selection, selection);
+        assert.strictEqual(restored.visibleRanges[0].start.line, top);
+        assert.strictEqual(git('diff --cached --name-only'), '');
+        await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+        assert.strictEqual(git('diff --cached --name-only'), 'committed/tall_e.txt');
+        assert.strictEqual(activeTabPath(), wsUri('zz_after.txt').path);
+    });
+
+    test('hold threshold queued behind quick taps cannot rewind or lose navigation', async () => {
+        for (const name of ['hold_fast_a.txt', 'hold_fast_b.txt', 'hold_fast_c.txt']) { write(name, name); }
+        await refreshUntil(() => ['hold_fast_a.txt', 'hold_fast_b.txt', 'hold_fast_c.txt'].every(isUntracked), 'fast hold files');
+        await openPlainAt('hold_fast_a.txt', 0);
+        await Promise.all([
+            vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+            vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair'),
+            vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', 'corsair'),
+            vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', 'corsair'),
+            vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+            vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', 'corsair'),
+        ]);
+        assert.strictEqual(activeTabPath(), wsUri('hold_fast_c.txt').path);
+        assert.strictEqual(git('diff --cached --name-only'), '');
+    });
+
+    test('hold threshold and two queued long releases stage each original once in order', async () => {
+        for (const name of ['hold_burst_a.txt', 'hold_burst_b.txt', 'hold_burst_c.txt']) { write(name, name); }
+        await refreshUntil(() => ['hold_burst_a.txt', 'hold_burst_b.txt', 'hold_burst_c.txt'].every(isUntracked), 'burst hold files');
+        await openPlainAt('hold_burst_a.txt', 0);
+        await Promise.all([
+            vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+            vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair'),
+            vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+            vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+            vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair'),
+            vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+        ]);
+        assert.strictEqual(activeTabPath(), wsUri('hold_burst_c.txt').path);
+        assert.deepStrictEqual(git('diff --cached --name-only').split('\n'), ['hold_burst_a.txt', 'hold_burst_b.txt']);
+        await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+        assert.strictEqual(git('diff --cached --name-only'), 'hold_burst_a.txt');
+    });
+
+    test('hold threshold keeps a new mouse hold queued after keyboard navigation', async () => {
+        for (const name of ['hold_keys_a.txt', 'hold_keys_b.txt', 'hold_keys_c.txt']) { write(name, name); }
+        await refreshUntil(() => ['hold_keys_a.txt', 'hold_keys_b.txt', 'hold_keys_c.txt'].every(isUntracked), 'keyboard then hold files');
+        await openPlainAt('hold_keys_a.txt', 0);
+        const source = 'corsair'; const direction = 'next';
+        await Promise.all([
+            vscode.commands.executeCommand('better-git-vscode.next-scm-change'),
+            vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction }),
+        ]);
+        assert.strictEqual(activeTabPath(), wsUri('hold_keys_c.txt').path);
+        await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+        assert.strictEqual(activeTabPath(), wsUri('hold_keys_b.txt').path);
+        await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+        assert.strictEqual(git('diff --cached --name-only'), 'hold_keys_b.txt');
+    });
+
+    test('hold threshold cannot rewind a later other-mouse or keyboard navigation', async () => {
+        for (const name of ['hold_other_a.txt', 'hold_other_b.txt', 'hold_other_c.txt']) { write(name, name); }
+        await refreshUntil(() => ['hold_other_a.txt', 'hold_other_b.txt', 'hold_other_c.txt'].every(isUntracked), 'other hold files');
+        await openPlainAt('hold_other_a.txt', 0);
+        await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+        await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'razer', direction: 'next' });
+        await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+        assert.strictEqual(activeTabPath(), wsUri('hold_other_c.txt').path);
+        await vscode.commands.executeCommand('better-git-vscode.previous-scm-change');
+        await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'razer');
+        await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'razer', direction: 'next' });
+        assert.strictEqual(activeTabPath(), wsUri('hold_other_b.txt').path);
+        assert.strictEqual(git('diff --cached --name-only'), '');
+    });
 
 	test('button-down readiness respects a disabled badge on the captured original', async () => {
 		write('hold_a.txt', 'first'); write('hold_b.txt', 'second');

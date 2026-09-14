@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.77 — 2026-09-14
+
+- Restore the original file, selection and scroll position when a mouse navigation press reaches the stage-hold threshold. Release still stages the original file and advances.
+- Keep quick presses immediate and prevent cancelled or superseded holds from rewinding later navigation.
+
 ## [1.2.74] — allow more time before worktree collapse
 
 - Increase the Worktree-link presentation wait from 150 ms to 500 ms before collapsing Staged Changes.
