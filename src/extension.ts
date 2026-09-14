@@ -85,6 +85,7 @@ const mouseNavigationOrigins = new Map<MouseReviewSource, {
     change: FileChange;
     direction: "next" | "previous";
     requestedAt: number;
+    held?: boolean;
 }>(); // A late stage press belongs to the file left by this mouse, never the newly displayed file. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
 const isMouseReviewSource = (source: unknown): source is MouseReviewSource => source === "corsair" || source === "razer";
 
@@ -155,7 +156,7 @@ const runStageCommand = async (operation: () => Promise<void>): Promise<void> =>
         const message = isTransientGitIndexLockError(error)
             ? "Better Git: Git's index stayed busy, so nothing was staged. Try the action again after the other Git operation finishes."
             : `Better Git: Stage action failed${detail ? ` — ${detail}` : "."}`;
-        await vscode.window.showErrorMessage(message);
+        void vscode.window.showErrorMessage(message);
     }
 };
 
@@ -314,7 +315,7 @@ const executeUndoCommand = async (): Promise<void> => {
         const message = isTransientGitIndexLockError(error)
             ? "Better Git: Git's index stayed busy, so the saved stage was not undone. Try again after the other Git operation finishes."
             : `Better Git: The saved stage could not be undone${detail ? ` — ${detail}` : "."}`;
-        await vscode.window.showErrorMessage(message);
+        void vscode.window.showErrorMessage(message);
     }
 };
 
@@ -675,6 +676,24 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const stageBeforeMouseNavigation = vscode.commands.registerCommand(
         "better-git-vscode.stage-before-mouse-navigation", stageMouseNavigationOrigin
     );
+
+    // Physical holds capture before the immediate navigation and commit that exact origin on release.
+    // A reverse navigation is not an inverse at file boundaries or within tall hunks.
+    const mouseHoldCommands = [
+        vscode.commands.registerCommand("better-git-vscode.begin-mouse-navigation-hold", (args: unknown) => {
+            if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) { return; }
+            const { source, direction } = args;
+            if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) { return; }
+            clearStageHoldFeedback();
+            lastNavDirection = direction;
+            return navigateWithMouseOrigin(direction, source, true);
+        }),
+        vscode.commands.registerCommand("better-git-vscode.finish-mouse-navigation-hold", (args: unknown) => stageMouseNavigationOrigin(args, true)),
+        vscode.commands.registerCommand("better-git-vscode.cancel-mouse-navigation-hold", (source: unknown) => {
+            if (!isMouseReviewSource(source)) { return; }
+            return serializeChangeNavigation(async () => { mouseNavigationOrigins.delete(source); });
+        }),
+    ];
 
     let disposable3 = vscode.commands.registerCommand("better-git-vscode.next-changed-file", async () => {
         lastNavDirection = "next";
@@ -1079,17 +1098,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const reviewDecoEmitter = new vscode.EventEmitter<vscode.Uri[]>();
     let currentReviewUri: vscode.Uri | undefined; // file: URI of the file currently shown in a review view
     let currentReviewTab: vscode.Tab | undefined;
-    const stageHoldReadySources = new Set<MouseReviewSource>();
+    const stageHoldReadySources = new Map<MouseReviewSource, vscode.Uri>();
     const clearStageHoldFeedback = (source?: MouseReviewSource) => {
-        const wasReady = stageHoldReadySources.size > 0;
+        const affected = [...stageHoldReadySources.values()];
         if (source) { stageHoldReadySources.delete(source); } else { stageHoldReadySources.clear(); }
-        if (wasReady !== (stageHoldReadySources.size > 0) && currentReviewUri) { reviewDecoEmitter.fire([currentReviewUri]); }
+        if (affected.length) { reviewDecoEmitter.fire(affected); }
     };
     const stageHoldReadyCommand = vscode.commands.registerCommand("better-git-vscode.stage-hold-ready", (source: unknown) => {
         if (!isMouseReviewSource(source) || !vscode.window.state.focused || !currentReviewUri
             || currentReviewTab !== vscode.window.tabGroups.activeTabGroup.activeTab) { return; } // A queued signal after an editor switch must not mark the previous file ready. No async lookup or Git mutation belongs in this feedback-only command. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
-        stageHoldReadySources.add(source);
-        reviewDecoEmitter.fire([currentReviewUri]);
+        const origin = mouseNavigationOrigins.get(source);
+        const target = origin?.held ? origin.change.uri : currentReviewUri;
+        stageHoldReadySources.set(source, target);
+        reviewDecoEmitter.fire([target]);
     });
     const stageHoldClearCommand = vscode.commands.registerCommand("better-git-vscode.stage-hold-clear", (source: unknown) => {
         if (isMouseReviewSource(source)) { clearStageHoldFeedback(source); }
@@ -1097,6 +1118,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
         onDidChangeFileDecorations: reviewDecoEmitter.event,
         provideFileDecoration(uri) {
+            if ([...stageHoldReadySources.values()].some(target => target.path.toLowerCase() === uri.path.toLowerCase())
+                && vscode.workspace.getConfiguration("better-git-vscode").get<string>("currentFileBadge", "🔥🔥")) {
+                return { badge: "💥💥", tooltip: "Release to stage", color: new vscode.ThemeColor("charts.orange"), propagate: false };
+            }
             if (currentReviewUri && uri.path.toLowerCase() === currentReviewUri.path.toLowerCase()) {
                 // Badge text is configurable (default a colorful emoji for maximum visibility). The Source
                 // Control panel ignores decoration `color` (its renderer forces colors:false), so the emoji's
@@ -1107,9 +1132,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 if (!badgeSetting) {
                     return undefined; // empty setting => badge disabled
                 }
-                if (stageHoldReadySources.size > 0) {
-                    return { badge: "💥💥", tooltip: "Release to stage", color: new vscode.ThemeColor("charts.orange"), propagate: false }; // Readiness is temporary, not a staged-file marker; release, Undo, and focus/editor changes restore the configured badge. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
-                }
+
                 // VS Code caps the badge at 2 GRAPHEMES and drops the whole decoration if it's longer, so take
                 // the first two graphemes. Intl.Segmenter keeps multi-codepoint emoji intact — a naive
                 // slice(0,2) would cut a two-emoji badge like "🔥🔥" down to one (each emoji is 2 UTF-16 units).
@@ -1248,6 +1271,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         disposable16, // add-current-worktree-to-workspace (v1.2.14)
         undoLastStageDisposable,
         stageBeforeMouseNavigation,
+        ...mouseHoldCommands,
         stageHoldReadyCommand, stageHoldClearCommand,
         vscode.window.onDidChangeWindowState(state => {
             if (!state.focused) { mouseNavigationOrigins.clear(); clearStageHoldFeedback(); }
@@ -3552,7 +3576,7 @@ const serializeChangeNavigation = (operation: (check: NavigationCheckpoint) => P
 
 // Capture inside the existing navigation queue, before moving; a rapid late press queues behind capture,
 // while its deadline uses input arrival, not renderer/Git latency. Ordinary keyboard navigation clears it.
-const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unknown): Promise<void> => {
+const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unknown, held = false): Promise<void> => {
     const requestedAt = performance.now();
     return serializeChangeNavigation(async (check) => {
         if (isMouseReviewSource(source)) {
@@ -3566,7 +3590,7 @@ const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unk
                 check();
                 const change = matches.find(candidate => !candidate.staged);
                 if (change && (active.staged === false || matches.length === 1) && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {
-                    mouseNavigationOrigins.set(source, { change, direction, requestedAt });
+                    mouseNavigationOrigins.set(source, { change, direction, requestedAt, held });
                 }
             }
         } else {
@@ -3578,7 +3602,7 @@ const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unk
 
 // Do not navigate back to discover the old file: that changes review state and stages the wrong file when
 // navigation settles before a slow press. Consume the exact source receipt once, or do nothing. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
-const stageMouseNavigationOrigin = (args: unknown): Promise<void> => {
+const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> => {
     const requestedAt = performance.now();
     if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) { return Promise.resolve(); }
     const { source, direction } = args;
@@ -3586,7 +3610,7 @@ const stageMouseNavigationOrigin = (args: unknown): Promise<void> => {
     return serializeChangeNavigation(check => runStageCommand(async () => {
         const origin = mouseNavigationOrigins.get(source);
         mouseNavigationOrigins.delete(source);
-        if (!origin || origin.direction !== direction || requestedAt < origin.requestedAt || requestedAt - origin.requestedAt >= 1000) { return; }
+        if (!origin || origin.direction !== direction || requestedAt < origin.requestedAt || origin.held !== held || requestedAt - origin.requestedAt >= (held ? 60_000 : 1000)) { return; }
         const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
         const repo = git?.getRepository(origin.change.uri);
         if (!repo) { return; } // A closed repository must not redirect the captured file to the first workspace repo.
