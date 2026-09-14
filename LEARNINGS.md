@@ -1,5 +1,13 @@
 # Learnings
 
+## Reverse the initial mouse step at the hold threshold (2026-09-14)
+
+Ethan reported that 1.2.77 did not return as expected and explicitly requested the opposite navigation step. The installed bundle matched the released 1.2.77 artifact; additional insertion-heavy diff cases passed on that version, so the reported failure was not reproduced and its root cause is unconfirmed. This request supersedes the snapshot-restoration behavior described below.
+
+Version 1.2.78 runs the opposite internal navigation operation once at readiness: Next becomes Previous, and Previous becomes Next. It retains the existing serialized queue and hold-token ownership, ignores duplicate readiness, and skips reversal when the initial view did not move. The original-file receipt remains the authority for release staging; an opposite navigation is not an exact inverse for arbitrary cursor selections or every hunk/file boundary, so it must never select the file to stage. Tests compare the threshold behavior with ordinary opposite navigation rather than promising restoration of an arbitrary selection or pixel viewport.
+
+Verification: 44 non-GUI tests, lint, production build and 27 focused real VS Code integration cases passed. The exact production bundle also passed all 27 native workbench scenarios on the Mini, including both source shortcut streams, both directions, release, actual Git-index contents and Undo. Production JavaScript SHA-256: 59677c10858a46ab578950089c467f7bea8ef36582428b41c3f147b9004c11b7. Physical mouse acceptance remains separate; normal VS Code is user-managed.
+
 ## Restore the review view at the stage-hold threshold (2026-09-14)
 
 Use the existing stage-hold-ready signal to restore the captured original tab, selections and viewport before release. Keep restoration and release staging in the navigation queue. Capture each hold token at command arrival, deactivate it immediately on release/cancel, and compare it with the newest hold before restoring. Clear keyboard-superseded tokens at input arrival, not later inside the queue, or a subsequently queued mouse hold loses its ownership. Finishing consumes its own captured token even if a newer hold has arrived.
