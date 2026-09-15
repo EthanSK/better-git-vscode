@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 suite('Extension Test Suite', () => {
 	vscode.window.showInformationMessage('Start all tests.');
 
-	test('button-down hold transports stay source-specific and cannot trigger the VoiceInk modifier chord', () => {
+	test('mouse hold transports stay source-specific and cannot trigger the VoiceInk modifier chord', () => {
 		const manifest = vscode.extensions.getExtension('EthanSK.better-git-vscode')!.packageJSON;
 		for (const [source, modifiers] of [['corsair', 'ctrl+cmd'], ['razer', 'cmd+shift']]) {
 			for (const [phase, key, direction] of [['begin', 'f13', 'next'], ['begin', 'f17', 'previous'], ['finish', 'f18', 'next'], ['finish', 'f19', 'previous']]) {
@@ -16,7 +16,16 @@ suite('Extension Test Suite', () => {
 				assert.strictEqual(binding?.command, `better-git-vscode.${phase}-mouse-navigation-hold`);
 				assert.deepStrictEqual(binding?.args, { source, direction });
 			}
+			const feedbackModifiers = source === 'corsair' ? 'ctrl+alt+cmd' : modifiers;
+			for (const [command, key] of [['stage-hold-ready', 'f20'], ['stage-hold-clear', 'f15']]) {
+				const binding = manifest.contributes.keybindings.find((item: any) => item.key === `${feedbackModifiers}+${key}`);
+				assert.strictEqual(binding?.command, `better-git-vscode.${command}`);
+				assert.strictEqual(binding?.args, source);
+			}
 		}
+		assert.ok(!manifest.contributes.keybindings.some((item: any) =>
+			item.args === 'razer' && /^ctrl\+alt\+cmd\+shift\+f(?:15|20)$/.test(item.key)),
+			'Razer readiness must not pass through the VoiceInk Control+Shift+Option chord');
 	});
 
 	test('mouse debug notifications are explicit and off by default', () => {
