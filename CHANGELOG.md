@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.85] — make adjacent mouse cancellation atomic
+
+- Give each mouse a source-tagged F16 cancel chord so holding 8+7 or 5+4 cancels the active review gesture as one command.
+- Consume a late source-tagged cancel without turning it into an unrelated staging Undo. Keep bare F16 exact Undo unchanged.
+- Preserve the 200 ms release-only hold behavior: short release navigates once and long release stages then advances once.
+
 ## [1.2.84] — decide mouse holds on release
 
 - Keep the review file, cursor and viewport still while Next or Previous is held. A short button-up navigates once; a long button-up stages the current change and advances once.

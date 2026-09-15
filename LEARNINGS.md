@@ -1,5 +1,15 @@
 # Learnings
 
+## Make adjacent mouse cancellation one source-owned command (2026-09-16)
+
+**Trigger:** After the release-only hold change, Ethan reported that Corsair 8+7 and 5+4 no longer cancelled the held review gesture reliably.
+
+**Cause:** The physical chord crossed three VS Code keybinding commands: source-tagged F14 registered a possible short release, bare F16 reinterpreted Undo as hold cancellation, and F15 committed or cleared the transaction. That ordering depended on three separate shortcut dispatches even though the adjacent chord is one semantic action.
+
+**Change:** Version 1.2.85 adds source-tagged modified-F16 bindings for Corsair and Razer. The tagged command atomically cancels only that mouse's active hold and is consumed if stale; it can never fall through to ordinary staging Undo. Bare F16 keeps its exact Undo behavior. Agentic Mouse sets its local hold state to consumed before emitting the tagged F16, so the later physical release cannot race a stage command. The 200 ms release-only short and long paths are unchanged.
+
+**Verification:** The 48 non-GUI tests, TypeScript compilation, lint and production build passed. An isolated real VS Code 1.132.0 host on the Mini passed nine focused cases: both mice and directions retain release-only long-hold staging; the existing ready-hold bare-F16 cancel remains intact; and the new source-tagged adjacent cancel preserves the file, Git index and earlier Undo receipt, consumes the later release and stale tagged input, then leaves ordinary bare-F16 Undo working. Marketplace and installed-runtime checks remain pending.
+
 ## Decide physical mouse holds at release (2026-09-15)
 
 **Trigger:** Ethan recognized that button-up already determines whether a physical Next/Previous press was short or long. He wanted the editor to remain on the change being reviewed throughout the hold, then perform ordinary navigation on a short release or ordinary Stage + navigation on a long release. The exact-view restoration system must remain available behind a disabled feature flag.
