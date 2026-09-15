@@ -19,6 +19,19 @@ suite('Extension Test Suite', () => {
 		}
 	});
 
+	test('mouse debug notifications are explicit and off by default', () => {
+		const manifest = vscode.extensions.getExtension('EthanSK.better-git-vscode')!.packageJSON;
+		const settings = manifest.contributes?.configuration?.properties;
+		const logging = settings?.['better-git-vscode.debugLogging'];
+		const notifications = settings?.['better-git-vscode.debugNotifications'];
+		assert.strictEqual(logging?.default, false);
+		assert.ok(String(logging?.description).includes('mouse hold phases'));
+		assert.strictEqual(notifications?.type, 'boolean');
+		assert.strictEqual(notifications?.default, false, 'physical-input toasts must remain opt-in');
+		assert.ok(String(notifications?.description).includes('each mouse hold phase'));
+		assert.ok(!/\bwhether\b/i.test(`${logging?.description} ${notifications?.description}`));
+	});
+
 	test('ships and registers the complete Better Git VS Code identity and namespace', async () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');
