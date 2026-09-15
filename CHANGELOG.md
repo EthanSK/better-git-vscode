@@ -2,8 +2,8 @@
 
 ## [1.2.83] — deliver the delayed mouse-hold restore
 
-- Match Razer's safe Command+Shift readiness transport so the 500 ms hold signal reaches Better Git without passing through VoiceInk's Control+Shift+Option shortcut.
-- Pair with Agentic Mouse's corrected 500 ms hold threshold, which now emits readiness after changing the internal hold state instead of suppressing the same event.
+- Match Razer's safe Command+Shift readiness transport so the hold signal reaches Better Git without passing through VoiceInk's Control+Shift+Option shortcut.
+- Pair with Agentic Mouse's corrected 200 ms hold threshold, which now emits readiness after changing the internal hold state instead of suppressing the same event.
 
 ## [1.2.82] — cancel active mouse holds and expose their trace
 
