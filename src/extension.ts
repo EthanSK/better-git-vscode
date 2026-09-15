@@ -804,9 +804,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
 
     let undoLastStageDisposable = vscode.commands.registerCommand(
         "better-git-vscode.undo-last-stage-and-advance",
-        () => {
-            const cancelledHold = cancelLatestMouseNavigationHold();
+        (source?: unknown) => {
+            if (source !== undefined && !isMouseReviewSource(source)) {
+                mouseDebug("Cancel chord ignored, unknown mouse source.");
+                return;
+            }
+            const cancelledHold = cancelMouseNavigationHold(source);
             if (cancelledHold) { return cancelledHold; }
+            // A source-tagged F16 belongs only to an adjacent mouse chord. If its hold already ended,
+            // consume the stale input instead of turning it into an unrelated staging Undo.
+            if (source !== undefined) {
+                mouseDebug(`${mouseSourceLabel(source)} cancel chord ignored, no hold in progress.`);
+                return;
+            }
             clearStageHoldFeedback();
             return runUndoCommand();
         }
@@ -3945,16 +3955,18 @@ const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mous
 // Agentic Mouse sends the existing exact-Undo action when the adjacent cancel cell is pressed during a hold.
 // While a hold is active, consume that action as a gesture cancel: restore the captured view, retain the Git
 // index and delete the release receipt. With no active hold, the same command keeps its normal exact Undo role.
-const cancelLatestMouseNavigationHold = (): Promise<void> | undefined => {
-    const request = latestMouseHoldRequest;
+const cancelMouseNavigationHold = (source?: MouseReviewSource): Promise<void> | undefined => {
+    const request = source ? mouseHoldRequests.get(source) : latestMouseHoldRequest;
     if (!request?.active) { return undefined; }
-    const owner = [...mouseHoldRequests.entries()].find(([, candidate]) => candidate === request);
+    const owner = source
+        ? ([source, request] as const)
+        : [...mouseHoldRequests.entries()].find(([, candidate]) => candidate === request);
     if (!owner) { return undefined; }
-    const [source] = owner;
+    const [ownerSource] = owner;
     request.active = false; // Readiness arriving behind this input must not relight or stage the hold.
-    clearStageHoldFeedbackRequest(source);
+    clearStageHoldFeedbackRequest(ownerSource);
     return serializeChangeNavigation(async check => {
-        const origin = mouseNavigationOrigins.get(source);
+        const origin = mouseNavigationOrigins.get(ownerSource);
         let restored = false;
         let stayedStill = false;
         if (origin?.holdRequest === request) {
@@ -3965,16 +3977,16 @@ const cancelLatestMouseNavigationHold = (): Promise<void> | undefined => {
             }
             requestCurrentHunkOverviewMarkerRefresh();
         }
-        if (mouseNavigationOrigins.get(source)?.holdRequest === request) { mouseNavigationOrigins.delete(source); }
-        if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
+        if (mouseNavigationOrigins.get(ownerSource)?.holdRequest === request) { mouseNavigationOrigins.delete(ownerSource); }
+        if (mouseHoldRequests.get(ownerSource) === request) { mouseHoldRequests.delete(ownerSource); }
         if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
-        clearStageHoldFeedbackRequest(source);
+        clearStageHoldFeedbackRequest(ownerSource);
         const direction = origin?.direction;
         mouseDebug(direction && restored
-            ? `${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)} cancel chord received; pre-press view restored. Release will do nothing.`
+            ? `${mouseSourceLabel(ownerSource)} ${mouseDirectionLabel(direction)} cancel chord received; pre-press view restored. Release will do nothing.`
             : direction && stayedStill
-                ? `${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)} cancel chord received; review view stayed still. Release will do nothing.`
-                : `${mouseSourceLabel(source)} cancel chord received; no review view was restored. Release will do nothing.`);
+                ? `${mouseSourceLabel(ownerSource)} ${mouseDirectionLabel(direction)} cancel chord received; review view stayed still. Release will do nothing.`
+                : `${mouseSourceLabel(ownerSource)} cancel chord received; no review view was restored. Release will do nothing.`);
     });
 };
 

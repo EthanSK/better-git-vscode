@@ -2335,6 +2335,39 @@ suite('SCM change navigation E2E', () => {
 
 	for (const source of ['corsair', 'razer']) {
 		for (const direction of ['next', 'previous']) {
+			test(`source-tagged adjacent chord atomically cancels a release-only ${source} ${direction} hold`, async () => {
+				const config = vscode.workspace.getConfiguration('better-git-vscode');
+				const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+				try {
+					write('cancel_history.txt', 'history'); write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+					await refreshUntil(() => ['cancel_history.txt', 'hold_a.txt', 'hold_b.txt'].every(isUntracked), 'source-tagged cancel files');
+					await openPlainAt('cancel_history.txt', 0);
+					await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+					const origin = direction === 'next' ? 'hold_a.txt' : 'hold_b.txt';
+					await openPlainAt(origin, 0);
+
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', source);
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', source);
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(activeTabPath(), wsUri(origin).path, 'cancel chord and later release must leave the review file still');
+					assert.strictEqual(git('diff --cached --name-only'), 'cancel_history.txt', 'cancel chord must preserve earlier stage history');
+
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', source);
+					assert.strictEqual(git('diff --cached --name-only'), 'cancel_history.txt', 'stale source-tagged F16 must not become an ordinary Undo');
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+					assert.strictEqual(git('diff --cached --name-only'), '', 'bare F16 must retain exact Undo behavior');
+				} finally {
+					await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+				}
+			});
+		}
+	}
+
+	for (const source of ['corsair', 'razer']) {
+		for (const direction of ['next', 'previous']) {
 			test(`button-down hold ${source} ${direction} navigates before release and stages its origin after a long hold`, async () => {
 				write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
 				await refreshUntil(() => isUntracked('hold_a.txt') && isUntracked('hold_b.txt'), 'hold pair');
