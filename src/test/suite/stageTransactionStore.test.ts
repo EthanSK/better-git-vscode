@@ -77,6 +77,28 @@ suite("StageTransactionStore", () => {
         assert.strictEqual(history[history.length - 1].afterIndexTree, "tree-4");
     });
 
+    test("stores one multi-file stage as one undo entry and preserves its paths when enriched", async () => {
+        const store = new StageTransactionStore(receiptPath);
+        const uris = [
+            "file:///tmp/example-worktree/a.ts",
+            "file:///tmp/example-worktree/b.ts",
+            "file:///tmp/example-worktree/c.ts",
+        ];
+        const observed = await store.append(receipt(0));
+        const enriched = await store.enrichLatestForRepository(
+            observed.repoRoot,
+            observed.headTree,
+            observed.afterIndexTree,
+            { kind: "betterGitStage", uri: uris[0], uris }
+        );
+
+        assert.strictEqual(enriched, true);
+        const history = await store.loadAll();
+        assert.strictEqual(history.length, 1);
+        assert.strictEqual(history[0].kind, "betterGitStage");
+        assert.deepStrictEqual(history[0].uris, uris);
+    });
+
     test("compacts an old 100-entry history on first read and does not rewrite unchanged state", async () => {
         const entries = Array.from({ length: 100 }, (_, sequence) => receipt(sequence));
         const baseline = { repoRoot: entries[0].repoRoot, snapshot: { headTree: "head-tree", indexTree: "tree-100" } };

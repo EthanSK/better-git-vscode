@@ -2305,6 +2305,90 @@ suite('SCM change navigation E2E', () => {
 		}
 	}
 
+	test('stage-ready wheel selects a contiguous range and one Undo restores the whole batch', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			for (const name of ['batch_a.txt', 'batch_b.txt', 'batch_c.txt', 'batch_d.txt', 'batch_existing.txt']) {
+				write(name, name);
+			}
+			await refreshUntil(
+				() => ['batch_a.txt', 'batch_b.txt', 'batch_c.txt', 'batch_d.txt', 'batch_existing.txt'].every(isUntracked),
+				'batch selection files'
+			);
+			await repo.add([wsUri('batch_existing.txt').fsPath]);
+			await refreshUntil(() => inIndex('batch_existing.txt'), 'pre-existing staged file');
+			await openPlainAt('batch_b.txt', 0);
+
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('batch_c.txt')), undefined, 'wheel must be inert before readiness');
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			for (const name of ['batch_b.txt', 'batch_c.txt', 'batch_d.txt']) {
+				assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(name)), '💥💥', `${name} must be selected`);
+			}
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'up');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('batch_d.txt')), undefined, 'reverse wheel must contract the range');
+
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			assert.deepStrictEqual(git('diff --cached --name-only').split('\n'), [
+				'batch_b.txt', 'batch_c.txt', 'batch_existing.txt'
+			]);
+			assert.strictEqual(activeTabPath(), wsUri('batch_d.txt').path, 'release must land after the staged range');
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), 'batch_existing.txt', 'one Undo must restore the full batch and keep older staged work');
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('stage-ready wheel can grow above the anchor and ignores another mouse source', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			for (const name of ['range_a.txt', 'range_b.txt', 'range_c.txt', 'range_d.txt']) { write(name, name); }
+			await refreshUntil(() => ['range_a.txt', 'range_b.txt', 'range_c.txt', 'range_d.txt'].every(isUntracked), 'upward range files');
+			await openPlainAt('range_c.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'razer', direction: 'previous' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'razer');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'up');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('range_b.txt')), undefined, 'other source must not own the hold');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'razer', 'up');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'razer', 'up');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('range_a.txt')), '💥💥');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('range_b.txt')), '💥💥');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('range_c.txt')), '💥💥');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'razer', direction: 'previous' });
+			assert.deepStrictEqual(git('diff --cached --name-only').split('\n'), ['range_a.txt', 'range_b.txt', 'range_c.txt']);
+			assert.strictEqual(activeTabPath(), wsUri('range_d.txt').path, 'previous direction must use the remaining boundary fallback');
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('cancel clears a multi-file wheel selection and consumes its later release', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			for (const name of ['range_cancel_a.txt', 'range_cancel_b.txt']) { write(name, name); }
+			await refreshUntil(() => ['range_cancel_a.txt', 'range_cancel_b.txt'].every(isUntracked), 'cancelled range files');
+			await openPlainAt('range_cancel_a.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			assert.strictEqual(git('diff --cached --name-only'), '');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('range_cancel_a.txt')), '🔥🔥');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('range_cancel_b.txt')), undefined);
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('release-only exact Undo cancels a ready hold without moving or consuming earlier stage history', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
