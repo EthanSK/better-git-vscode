@@ -19,6 +19,7 @@ export interface StoredStageTransaction {
     beforeIndexTree: string;
     afterIndexTree: string;
     uri?: string;
+    uris?: string[];
     recordedAt: string;
 }
 
@@ -56,6 +57,11 @@ const isStoredStageTransaction = (value: unknown): value is StoredStageTransacti
         typeof receipt.beforeIndexTree === "string" && receipt.beforeIndexTree.length > 0 &&
         typeof receipt.afterIndexTree === "string" && receipt.afterIndexTree.length > 0 &&
         (receipt.uri === undefined || (typeof receipt.uri === "string" && receipt.uri.length > 0)) &&
+        (receipt.uris === undefined || (
+            Array.isArray(receipt.uris) && receipt.uris.length > 0 &&
+            receipt.uris.every(uri => typeof uri === "string" && uri.length > 0) &&
+            new Set(receipt.uris).size === receipt.uris.length
+        )) &&
         typeof receipt.recordedAt === "string" && receipt.recordedAt.length > 0
     );
 };
@@ -118,10 +124,12 @@ export class StageTransactionStore {
                         ? "betterGitStage"
                         : "observedIndexChange",
                     uri: receipt.uri ?? latestRepositoryReceipt.uri,
+                    uris: receipt.uris ?? latestRepositoryReceipt.uris,
                 };
                 if (
                     mergedReceipt.kind !== latestRepositoryReceipt.kind ||
-                    mergedReceipt.uri !== latestRepositoryReceipt.uri
+                    mergedReceipt.uri !== latestRepositoryReceipt.uri ||
+                    JSON.stringify(mergedReceipt.uris) !== JSON.stringify(latestRepositoryReceipt.uris)
                 ) {
                     history[latestRepositoryIndex] = mergedReceipt;
                 }
@@ -159,7 +167,7 @@ export class StageTransactionStore {
         repoRoot: string,
         headTree: string,
         afterIndexTree: string,
-        details: Pick<StoredStageTransaction, "kind" | "uri">
+        details: Pick<StoredStageTransaction, "kind" | "uri" | "uris">
     ): Promise<boolean> {
         return this.update(async (state) => {
             const history = state.entries;
@@ -176,6 +184,7 @@ export class StageTransactionStore {
                 ...receipt,
                 kind: details.kind,
                 uri: details.uri ?? receipt.uri,
+                uris: details.uris ?? receipt.uris,
             };
             return true;
         });
@@ -207,7 +216,7 @@ export class StageTransactionStore {
         repoRoot: string,
         readSnapshot: () => Promise<IndexSnapshot>,
         fallback: IndexSnapshot | undefined,
-        details?: Pick<StoredStageTransaction, "kind" | "uri">,
+        details?: Pick<StoredStageTransaction, "kind" | "uri" | "uris">,
         suppressed = false
     ): Promise<IndexSnapshot> {
         return this.update(async (state) => {

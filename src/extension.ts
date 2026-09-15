@@ -14,6 +14,12 @@ import { StageTransactionObserver } from "./stageTransactionObserver";
 import { readIndexSnapshot, readStageTransactionPaths, restoreStageTransaction } from "./gitStageUndo";
 import { extractFileDiffSection } from "./gitDiffSection";
 import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./gitIndexRetry";
+import {
+    createMouseStageSelection,
+    MouseStageSelection,
+    moveMouseStageSelection,
+    selectedMouseStageItems,
+} from "./mouseStageSelection";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -111,6 +117,7 @@ let requestCurrentHunkOverviewMarkerRefresh: () => void = () => undefined;
 
 type MouseReviewSource = "corsair" | "razer";
 type MouseHoldRequest = { active: boolean; shortReleasePending?: boolean };
+type ActiveMouseStageSelection = MouseStageSelection<FileChange> & { request?: MouseHoldRequest };
 type MouseReviewView = {
     input: unknown;
     preview: boolean;
@@ -120,6 +127,12 @@ type MouseReviewView = {
 const mouseHoldRequests = new Map<MouseReviewSource, MouseHoldRequest>();
 let latestMouseHoldRequest: MouseHoldRequest | undefined;
 let clearStageHoldFeedbackRequest: (source?: MouseReviewSource) => void = () => undefined;
+let adjustStageHoldSelectionRequest: (
+    source: MouseReviewSource, direction: "up" | "down"
+) => Promise<void> = async () => undefined;
+let takeStageHoldSelectionRequest: (
+    source: MouseReviewSource, request: MouseHoldRequest
+) => readonly FileChange[] | undefined = () => undefined;
 const mouseNavigationOrigins = new Map<MouseReviewSource, {
     change: FileChange;
     direction: "next" | "previous";
@@ -221,17 +234,25 @@ const showStageAndAdvanceStatusBarEnabled = (): boolean =>
 // chokepoint (stageThroughExtension) so EVERY stage path the extension performs updates the indicator —
 // a future stage path physically cannot bypass it as long as it stages via that helper. We show the
 // basename only (the bar must stay compact) and put the full workspace-relative path in the tooltip.
-const recordLastStaged = (uri: vscode.Uri): void => {
+const recordLastStagedBatch = (uris: readonly vscode.Uri[]): void => {
+    const uri = uris[0];
+    if (!uri) { return; }
     lastStagedUri = uri; // always remember it, even if the bar is currently hidden by the setting
     if (!lastStagedStatusBarItem || !showLastStagedEnabled()) {
         return; // item not created yet (pre-activate) or feature disabled -> never show
     }
-    const basename = uri.path.split("/").pop() ?? uri.fsPath; // bar text: just the file name, keep it short
-    const relPath = vscode.workspace.asRelativePath(uri); // tooltip: workspace-relative full path for context
-    lastStagedStatusBarItem.text = `$(check) Staged: ${basename}`; // $(check) renders VS Code's codicon checkmark
-    lastStagedStatusBarItem.tooltip = `${relPath}\nLast file staged via Better Git — click to reopen its diff`;
+    if (uris.length > 1) {
+        lastStagedStatusBarItem.text = `$(check) Staged: ${uris.length} files`;
+        lastStagedStatusBarItem.tooltip = `${uris.map(candidate => vscode.workspace.asRelativePath(candidate)).join("\n")}\nClick to open the first diff.`;
+    } else {
+        const basename = uri.path.split("/").pop() ?? uri.fsPath; // bar text: just the file name, keep it short
+        const relPath = vscode.workspace.asRelativePath(uri); // tooltip: workspace-relative full path for context
+        lastStagedStatusBarItem.text = `$(check) Staged: ${basename}`; // $(check) renders VS Code's codicon checkmark
+        lastStagedStatusBarItem.tooltip = `${relPath}\nLast file staged via Better Git — click to reopen its diff`;
+    }
     lastStagedStatusBarItem.show(); // persists for the rest of the session (the whole point: a lasting record)
 };
+const recordLastStaged = (uri: vscode.Uri): void => recordLastStagedBatch([uri]);
 
 // THE SINGLE STAGE CHOKEPOINT. Every place the extension stages a file routes through here: it runs the
 // actual `git add` (same as clicking the + in Source Control) and ONLY records the last-staged file if the
@@ -239,7 +260,8 @@ const recordLastStaged = (uri: vscode.Uri): void => {
 // nothing to stage) never updates the indicator — so the bar never shows a file that wasn't actually
 // staged. Capture the staged URI here, BEFORE callers advance the active editor, so we record the file we
 // staged rather than whatever the editor switches to after the jump.
-const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> => {
+const stageBatchThroughExtension = async (repo: any, uris: readonly vscode.Uri[]): Promise<void> => {
+    if (uris.length === 0) { return; }
     const repoRoot = String(repo.rootUri?.fsPath ?? "");
     let receiptCaptureError: unknown;
     if (repoRoot) {
@@ -251,12 +273,13 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
             receiptCaptureError = error;
         }
     }
-    await runWithTransientGitIndexRetry(() => repo.add([uri.fsPath]));
+    await runWithTransientGitIndexRetry(() => repo.add(uris.map(uri => uri.fsPath)));
     if (repoRoot && !receiptCaptureError) {
         try {
             await stageTransactionObserver?.observe(repoRoot, {
                 kind: "betterGitStage",
-                uri: uri.toString(),
+                uri: uris[0].toString(),
+                uris: uris.map(uri => uri.toString()),
             });
         } catch (error) {
             receiptCaptureError = error;
@@ -270,11 +293,13 @@ const stageThroughExtension = async (repo: any, uri: vscode.Uri): Promise<void> 
         // This informational toast has no decision to wait for. Awaiting dismissal strands a successfully
         // staged file (and later queued releases) instead of advancing when an exact Undo snapshot is unavailable.
         void vscode.window.showWarningMessage(
-            `Better Git: The file was staged, but its exact undo receipt could not be saved${detail ? ` — ${detail}` : "."}`
+            `Better Git: Staged ${uris.length === 1 ? path.basename(uris[0].fsPath) : `${uris.length} files`}, but couldn't save the Undo details${detail ? ` — ${detail}` : "."}`
         );
     }
-    recordLastStaged(uri); // success -> update the status bar with the file we just staged
+    recordLastStagedBatch(uris); // success -> update the status bar with the files we just staged
 };
+const stageThroughExtension = (repo: any, uri: vscode.Uri): Promise<void> =>
+    stageBatchThroughExtension(repo, [uri]);
 
 // Undo the latest observed stage/index transaction from a bounded persistent
 // LIFO history, and only while HEAD and the index are still byte-for-byte the
@@ -326,7 +351,7 @@ const undoLastStageTransaction = async (): Promise<void> => {
     lastStagedStatusBarItem?.hide();
     if (previousTransaction?.kind === "betterGitStage" && previousTransaction.uri) {
         try {
-            recordLastStaged(vscode.Uri.parse(previousTransaction.uri));
+            recordLastStagedBatch((previousTransaction.uris ?? [previousTransaction.uri]).map(uri => vscode.Uri.parse(uri)));
         } catch {
             // The exact undo has succeeded; stale presentation data is optional.
         }
@@ -339,9 +364,10 @@ const undoLastStageTransaction = async (): Promise<void> => {
     } catch (error) {
         console.warn("Better Git: Could not reveal the restored stage transaction", error);
     }
-    const subject = transaction.uri
-        ? ` for ${path.basename(vscode.Uri.parse(transaction.uri).fsPath)}`
-        : "";
+    const stagedUris = transaction.uris ?? (transaction.uri ? [transaction.uri] : []);
+    const subject = stagedUris.length > 1
+        ? ` for ${stagedUris.length} files`
+        : transaction.uri ? ` for ${path.basename(vscode.Uri.parse(transaction.uri).fsPath)}` : "";
     const remaining = remainingHistory.length === 0
         ? ""
         : ` ${remainingHistory.length} earlier ${remainingHistory.length === 1 ? "undo remains" : "undos remain"}.`;
@@ -961,6 +987,16 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     );
     const worktreeLinkHandler = vscode.window.registerUriHandler({
         async handleUri(uri) {
+            const selectionMatch = /^\/mouse-stage-selection\/(up|down)$/.exec(uri.path);
+            if (selectionMatch) {
+                const source = new URLSearchParams(uri.query).get("source");
+                if (isMouseReviewSource(source)) {
+                    await adjustStageHoldSelectionRequest(source, selectionMatch[1] as "up" | "down");
+                } else {
+                    mouseDebug("Stage selection wheel ignored, unknown mouse source.");
+                }
+                return;
+            }
             const root = parseWorktreeLink(uri);
             if (!root) {
                 void vscode.window.showErrorMessage("Better Git: This link does not contain a valid worktree path.");
@@ -1199,17 +1235,50 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const reviewDecoEmitter = new vscode.EventEmitter<vscode.Uri[]>();
     let currentReviewUri: vscode.Uri | undefined; // file: URI of the file currently shown in a review view
     let currentReviewTab: vscode.Tab | undefined;
-    const stageHoldReadySources = new Map<MouseReviewSource, vscode.Uri>();
+    const stageHoldSelections = new Map<MouseReviewSource, ActiveMouseStageSelection>();
+    const selectionUris = (selection: ActiveMouseStageSelection | undefined): vscode.Uri[] =>
+        selection ? selectedMouseStageItems(selection).map(change => change.uri) : [];
     const clearStageHoldFeedback = (source?: MouseReviewSource) => {
-        const affected = [...stageHoldReadySources.values()];
-        if (source) { stageHoldReadySources.delete(source); } else { stageHoldReadySources.clear(); }
+        const affected = source
+            ? selectionUris(stageHoldSelections.get(source))
+            : [...stageHoldSelections.values()].flatMap(selectionUris);
+        if (source) { stageHoldSelections.delete(source); } else { stageHoldSelections.clear(); }
         if (affected.length) { reviewDecoEmitter.fire(affected); }
     };
     clearStageHoldFeedbackRequest = clearStageHoldFeedback;
+    takeStageHoldSelectionRequest = (source, request) => {
+        const selection = stageHoldSelections.get(source);
+        if (!selection || selection.request !== request) { return undefined; }
+        const selected = selectedMouseStageItems(selection);
+        stageHoldSelections.delete(source);
+        reviewDecoEmitter.fire(selected.map(change => change.uri));
+        return selected;
+    };
+    adjustStageHoldSelectionRequest = (source, direction) => serializeChangeNavigation(async () => {
+        const request = mouseHoldRequests.get(source);
+        const origin = mouseNavigationOrigins.get(source);
+        const selection = stageHoldSelections.get(source);
+        if (!vscode.window.state.focused) {
+            mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, VS Code is not focused.`);
+            return;
+        }
+        if (!request?.active || request !== latestMouseHoldRequest || origin?.holdRequest !== request || selection?.request !== request) {
+            mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, no stage-ready hold is active.`);
+            return;
+        }
+        const before = selectionUris(selection);
+        const moved = { ...moveMouseStageSelection(selection, direction === "up" ? -1 : 1), request };
+        stageHoldSelections.set(source, moved);
+        const after = selectionUris(moved);
+        reviewDecoEmitter.fire([...before, ...after]);
+        mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected.`);
+    });
     context.subscriptions.push(new vscode.Disposable(() => {
         if (clearStageHoldFeedbackRequest === clearStageHoldFeedback) {
             clearStageHoldFeedbackRequest = () => undefined;
         }
+        adjustStageHoldSelectionRequest = async () => undefined;
+        takeStageHoldSelectionRequest = () => undefined;
         betterGitOutputChannel?.dispose();
         betterGitOutputChannel = undefined;
     }));
@@ -1260,8 +1329,16 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
             const target = origin?.held ? origin.change.uri : currentReviewUri;
             if (target) {
-                stageHoldReadySources.set(source, target);
-                reviewDecoEmitter.fire([target]);
+                const changes = distinctUnstagedChanges(await getFileChanges(target));
+                const anchorIndex = changes.findIndex(change => change.uri.toString() === target.toString());
+                const selection = createMouseStageSelection(changes, anchorIndex);
+                if (!selection) {
+                    mouseDebug(`${mouseSourceLabel(source)} hold threshold ignored, review item is no longer unstaged.`);
+                    return;
+                }
+                const previous = selectionUris(stageHoldSelections.get(source));
+                stageHoldSelections.set(source, { ...selection, request });
+                reviewDecoEmitter.fire([...previous, target]);
                 const direction = origin?.direction;
                 mouseDebug(direction
                     ? origin?.navigateOnButtonDown
@@ -1297,12 +1374,31 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
         });
     });
+    const stageHoldAdjustCommand = vscode.commands.registerCommand(
+        "better-git-vscode.adjust-mouse-stage-selection",
+        (source: unknown, direction: unknown) => {
+            if (!isMouseReviewSource(source) || (direction !== "up" && direction !== "down")) {
+                mouseDebug("Stage selection wheel ignored, invalid arguments.");
+                return;
+            }
+            return adjustStageHoldSelectionRequest(source, direction);
+        }
+    );
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
         onDidChangeFileDecorations: reviewDecoEmitter.event,
         provideFileDecoration(uri) {
-            if ([...stageHoldReadySources.values()].some(target => target.path.toLowerCase() === uri.path.toLowerCase())
-                && vscode.workspace.getConfiguration("better-git-vscode").get<string>("currentFileBadge", "🔥🔥")) {
-                return { badge: "💥💥", tooltip: "Release to stage", color: new vscode.ThemeColor("charts.orange"), propagate: false };
+            const activeSelection = [...stageHoldSelections.values()].find(selection =>
+                selectedMouseStageItems(selection).some(change => change.uri.path.toLowerCase() === uri.path.toLowerCase()));
+            if (activeSelection && vscode.workspace.getConfiguration("better-git-vscode").get<string>("currentFileBadge", "🔥🔥")) {
+                const count = selectedMouseStageItems(activeSelection).length;
+                return {
+                    badge: "💥💥",
+                    tooltip: count === 1
+                        ? "Release to stage. Scroll to select more files."
+                        : `Release to stage ${count} files. Scroll to change the selection.`,
+                    color: new vscode.ThemeColor("charts.orange"),
+                    propagate: false,
+                };
             }
             if (currentReviewUri && uri.path.toLowerCase() === currentReviewUri.path.toLowerCase()) {
                 // Badge text is configurable (default a colorful emoji for maximum visibility). The Source
@@ -1565,7 +1661,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         undoLastStageDisposable,
         stageBeforeMouseNavigation,
         ...mouseHoldCommands,
-        stageHoldReadyCommand, stageHoldClearCommand,
+        stageHoldReadyCommand, stageHoldClearCommand, stageHoldAdjustCommand,
         vscode.window.onDidChangeWindowState(state => {
             if (!state.focused) { invalidateChangeNavigation(); clearStageHoldFeedback(); }
         }),
@@ -4049,6 +4145,7 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         return Promise.resolve();
     }
     const request = held ? mouseHoldRequests.get(source) : undefined;
+    const heldSelection = request ? takeStageHoldSelectionRequest(source, request) : undefined;
     if (request) { request.active = false; }
     return serializeChangeNavigation(check => runStageCommand(async () => {
         const origin = mouseNavigationOrigins.get(source);
@@ -4064,16 +4161,27 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
         const repo = git?.getRepository(origin.change.uri);
         if (!repo) { mouseDebug(`${label} release ignored, repository is no longer open.`); return; } // A closed repository must not redirect the captured file to the first workspace repo.
-        const stillUnstaged = (await getFileChanges(origin.change.uri)).some(change => !change.staged && change.uri.toString() === origin.change.uri.toString());
-        if (!stillUnstaged) { mouseDebug(`${label} release ignored, original item is no longer unstaged.`); return; }
+        const selected = heldSelection?.length ? heldSelection : [origin.change];
+        const liveUnstaged = new Set(distinctUnstagedChanges(await getFileChanges(origin.change.uri))
+            .map(change => change.uri.toString()));
+        if (selected.some(change => !liveUnstaged.has(change.uri.toString()))) {
+            mouseDebug(`${label} release ignored, selected items are no longer unstaged.`);
+            return;
+        }
         const shown = await getActiveFileUri();
         check();
-        if (shown?.toString() === origin.change.uri.toString()) {
+        if (selected.length > 1 && shown?.toString() === origin.change.uri.toString()) {
+            await stageSelectedFilesAndAdvance(direction, selected, check);
+        } else if (selected.length > 1) {
+            await stageBatchThroughExtension(repo, selected.map(change => change.uri));
+        } else if (shown?.toString() === origin.change.uri.toString()) {
             await stageCurrentFileAndAdvance(direction, origin.change, check);
         } else {
             await stageThroughExtension(repo, origin.change.uri); // Navigation already crossed files: stage the origin without a second jump.
         }
-        mouseDebug(`${label} release staged ${path.basename(origin.change.uri.fsPath)}.`);
+        mouseDebug(selected.length > 1
+            ? `${label} release staged ${selected.length} files.`
+            : `${label} release staged ${path.basename(origin.change.uri.fsPath)}.`);
     }));
 };
 
@@ -4308,6 +4416,67 @@ const stageCurrentFile = async () => {
         // records it in the last-staged status bar. No advance here — this command stays on the file.
         await stageThroughExtension(activeRepo, currentUri);
     }
+};
+
+const distinctUnstagedChanges = (changes: readonly FileChange[]): FileChange[] => {
+    const seen = new Set<string>();
+    return changes.filter(change => {
+        const key = change.uri.toString();
+        if (change.staged || seen.has(key)) { return false; }
+        seen.add(key);
+        return true;
+    });
+};
+
+const stageSelectedFilesAndAdvance = async (
+    direction: "next" | "previous",
+    selected: readonly FileChange[],
+    check: NavigationCheckpoint = noNavigationCheckpoint
+): Promise<boolean> => {
+    if (selected.length < 2) { return false; }
+    const selectedKeys = selected.map(change => change.uri.toString());
+    const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+    const repo = git?.getRepository(selected[0].uri);
+    if (!repo || selected.some(change => git.getRepository(change.uri) !== repo)) { return false; }
+
+    const current = distinctUnstagedChanges(await getFileChanges(selected[0].uri));
+    check();
+    const indexByUri = new Map(current.map((change, index) => [change.uri.toString(), index]));
+    const indices = selectedKeys.map(key => indexByUri.get(key));
+    if (indices.some(index => index === undefined)) {
+        void vscode.window.showWarningMessage("Better Git: Files changed before release, so nothing was staged.");
+        return true;
+    }
+    const numericIndices = indices as number[];
+    const first = Math.min(...numericIndices);
+    const last = Math.max(...numericIndices);
+    const liveRange = current.slice(first, last + 1).map(change => change.uri.toString());
+    if (liveRange.length !== selectedKeys.length || liveRange.some((key, index) => key !== selectedKeys[index])) {
+        void vscode.window.showWarningMessage("Better Git: Files changed before release, so nothing was staged.");
+        return true;
+    }
+
+    const target = direction === "next"
+        ? current[last + 1] ?? current[first - 1]
+        : current[first - 1] ?? current[last + 1];
+    await stageBatchThroughExtension(repo, selected.map(change => change.uri));
+    check();
+
+    if (!target) {
+        navigationOwnTabChange = true;
+        try {
+            await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+        } finally {
+            observeNavigationTab();
+            navigationOwnTabChange = false;
+        }
+        invalidateChangeNavigation();
+        return true;
+    }
+    const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
+    await openNavigationTarget(target, check, !isPreview);
+    if (direction === "previous") { await landChangeForBackwardReview(target, check); }
+    return true;
 };
 
 // Stages the current file, then opens the adjacent unstaged file in `direction`. Shared by both

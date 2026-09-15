@@ -4,6 +4,7 @@ import { IndexSnapshot, RestoreResult } from "./gitStageUndo";
 export interface StageTransactionDetails {
     kind: "betterGitStage" | "observedIndexChange";
     uri?: string;
+    uris?: string[];
 }
 
 /// Observes exact Git-index tree transitions instead of assuming that staging

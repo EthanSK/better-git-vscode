@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.86] — stage a held mouse range
+
+- After a mouse hold becomes ready to stage, use each wheel step to expand or contract a contiguous file selection above or below the held file.
+- Stage the selected files together on release, then advance past the selected range. Keep short presses, single-file holds and adjacent cancellation unchanged.
+- Save the complete batch as one exact Undo transaction. One Undo restores every file in the batch while preserving older staged work and the three-transaction history limit.
+
 ## [1.2.85] — make adjacent mouse cancellation atomic
 
 - Give each mouse a source-tagged F16 cancel chord so holding 8+7 or 5+4 cancels the active review gesture as one command.
