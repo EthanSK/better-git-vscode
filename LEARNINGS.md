@@ -1,5 +1,15 @@
 # Learnings
 
+## Highlight only the Better Git-selected hunk in the overview ruler (2026-09-15)
+
+**Trigger:** Ethan wanted the currently selected diff hunk to stand out from the ordinary red and green hunk marks in the editor's overview ruler.
+
+**Constraint:** VS Code exposes supported editor decorations with an overview-ruler colour and lane, but it does not expose a stable API for recolouring one of the diff editor's own native markers. Overlay a decoration for the current hunk instead of patching the workbench or changing every diff colour.
+
+**Change:** Version 1.2.81 paints the exact modified-side hunk selected by Better Git with the theme's `editorOverviewRuler.findMatchForeground` colour in the full overview-ruler lane. The marker reuses the existing parsed Git hunk geometry, spans multi-line hunks, follows forward, reverse and cross-file navigation, and clears after leaving the diff, editing the document or moving the cursor manually. Refreshes run after navigation and coalesce to the latest tab and cursor so the visible jump is never delayed and stale asynchronous Git results cannot repaint an old editor.
+
+**Verification:** The 48 non-GUI tests, TypeScript compilation, lint and production build passed. An isolated VS Code 1.137.0 host on the Mini verified a three-line marker, movement to another hunk, reverse movement, cross-file movement, a deletion-only marker, movement from that deletion to a replacement, and clearing after leaving diff review. A 17-case focused run against the exact production JavaScript repeated the marker cases and every mouse-hold restoration regression; its SHA-256 is `92df53cb9acb427cd2bf25187619dfa23d9d65474a635118548ecf057b094a6e`. The Mini's headless WindowServer could not produce a screenshot (`could not create image from display`), so the actual colour rendering remains a visual acceptance boundary after Marketplace installation; the supported decoration range and theme token were exercised by the real extension host.
+
 ## Restore the exact pre-press review view for mouse holds (2026-09-15)
 
 **Trigger:** Ethan clarified that when a held Next/Previous press becomes ready to stage, the visible jump caused by button-down must be undone exactly: return to the tab, cursor selection and viewport from before the press so the file about to be staged remains visible.
@@ -9,6 +19,8 @@
 **Change:** Version 1.2.80 restores the captured tab input, every captured visible-editor selection and the captured viewport at hold readiness. The readiness command remains serialized behind button-down navigation, so even an immediately queued readiness signal waits for the initial navigation and then restores the earlier snapshot. Do not add a guessed delay or use reverse navigation. Release still stages the original receipt and advances in the requested direction; short release remains immediate navigation.
 
 **Verification:** The 48 non-GUI tests, TypeScript compilation, lint and production build passed. On isolated VS Code 1.137.0 on the Mini, 12 focused real-host cases passed for Corsair and Razer, both directions, exact within-file selection/viewport restoration, insertion-heavy diffs, crossing files, an immediately queued readiness signal, rapid cancellation, overlapping holds and later user navigation. The native workbench harness passed all 27 checks, including both transports and directions, readiness restoring the original file, release staging only that origin, advancement and Undo. Physical HID input remains a separate acceptance boundary.
+
+**Release:** PR #139 merged as `e76f947231f13fc46c2477880078dbd9888f271c`. Version 1.2.80 passed the required verifier with `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED identity=EthanSK.better-git-vscode version=1.2.80 sha256=09c699e188956cc9e4b40bd4a81cc0204f4226fabcf3c44c948af0c07ff962fb`. The first upload request ended with a socket hang-up and left the authenticated version query, verification log and package URL absent; retrying the same tested VSIX succeeded. Ethan's normal installation was updated through the Marketplace identifier and retained `source=gallery`, Marketplace UUID `939b51df-f995-4799-88fa-ae47815cabb2`, `pinned=false` and its explicit automatic-update entry. Its installed production bundle matched the tested SHA-256 `d739f429524befb49850be3ce1941bd27ff9e58ff1af033df5e942d4fea7a056`. The extension host was not restarted while Ethan was actively staging files; 1.2.81 supersedes that pending activation.
 
 ## Marketplace association during local updates (2026-09-15)
 

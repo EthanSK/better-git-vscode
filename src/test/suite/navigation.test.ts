@@ -117,6 +117,8 @@ suite('SCM change navigation E2E', () => {
 		whenReviewDecorationSettled(): Promise<void>;
 		getCurrentReviewUri(): string | undefined;
 		getReviewDecorationBadge(uri: vscode.Uri): string | vscode.ThemeIcon | undefined;
+		whenCurrentHunkOverviewMarkerSettled(): Promise<void>;
+		getCurrentHunkOverviewMarker(): { uri: string; start: number; end: number } | undefined;
 	};
 	let baseSha: string; // the base commit every test resets to
 
@@ -1529,9 +1531,12 @@ suite('SCM change navigation E2E', () => {
 	// ────────────────────────────────────────────────────────────────────────────────────────
 
 	test('MODIFIED file: next/previous do HUNK navigation, never the 5-line step', async () => {
-		// Two well-separated single-line edits -> hunks starting at 0-based lines 4 and 24.
+		// Two well-separated edits -> hunks starting at 0-based lines 4 and 24. The first spans three lines so
+		// the overview-ruler assertion proves the marker covers the hunk rather than only the caret line.
 		const content = lines(40, 'mod_a').split('\n');
 		content[4] = 'mod_a line 5 EDITED';
+		content[5] = 'mod_a line 6 EDITED';
+		content[6] = 'mod_a line 7 EDITED';
 		content[24] = 'mod_a line 25 EDITED';
 		write('committed/mod_a.txt', content.join('\n') + '\n');
 		// A second modified file so the run-out-of-hunks fall-through has a deterministic landing target.
@@ -1563,20 +1568,51 @@ suite('SCM change navigation E2E', () => {
 		await nextChange();
 		const afterFirst = await expectCursorAt('committed/mod_a.txt', 4);
 		assert.notStrictEqual(afterFirst.selection.active.line, 5, 'cursor moved by the 5-line step on a MODIFIED file — v1.2.0 regression is back');
+		await extensionApi.whenCurrentHunkOverviewMarkerSettled();
+		assert.deepStrictEqual(
+			extensionApi.getCurrentHunkOverviewMarker(),
+			{ uri: wsUri('committed/mod_a.txt').toString(), start: 4, end: 6 },
+			'the overview ruler must identify the exact first hunk Better Git selected'
+		);
 
 		// Second hunk: line 24 (a 5-line step from 4 would be 9).
 		await nextChange();
 		await expectCursorAt('committed/mod_a.txt', 24);
-
+		await extensionApi.whenCurrentHunkOverviewMarkerSettled();
+		assert.deepStrictEqual(
+			extensionApi.getCurrentHunkOverviewMarker(),
+			{ uri: wsUri('committed/mod_a.txt').toString(), start: 24, end: 24 },
+			'the overview-ruler marker must move with the next selected hunk'
+		);
 		// Previous goes BACK to the first hunk (a 5-line step back from 24 would be 19).
 		await previousChange();
 		await expectCursorAt('committed/mod_a.txt', 4);
+		await extensionApi.whenCurrentHunkOverviewMarkerSettled();
+		assert.deepStrictEqual(
+			extensionApi.getCurrentHunkOverviewMarker(),
+			{ uri: wsUri('committed/mod_a.txt').toString(), start: 4, end: 6 },
+			'the overview-ruler marker must follow reverse navigation too'
+		);
 
 		// Run past the last hunk -> falls through to the next changed FILE (mod_d), as always.
 		await nextChange(); // back to 24
 		await expectCursorAt('committed/mod_a.txt', 24);
 		await nextChange(); // out of hunks
 		await expectActiveTab('committed/mod_d.txt');
+		await extensionApi.whenCurrentHunkOverviewMarkerSettled();
+		assert.deepStrictEqual(
+			extensionApi.getCurrentHunkOverviewMarker(),
+			{ uri: wsUri('committed/mod_d.txt').toString(), start: 3, end: 3 },
+			'the marker must follow cross-file navigation without repainting the old editor'
+		);
+
+		await vscode.window.showTextDocument(wsUri('committed/tall_e.txt'), { preview: true });
+		await extensionApi.whenCurrentHunkOverviewMarkerSettled();
+		assert.strictEqual(
+			extensionApi.getCurrentHunkOverviewMarker(),
+			undefined,
+			'leaving a diff review must clear the marker'
+		);
 	});
 
 	test('mouse spam: 120 Next presses and 80 Previous presses stay exact in one new file', async function () {
@@ -1731,8 +1767,20 @@ suite('SCM change navigation E2E', () => {
 		await openWorkingDiffAt(rel, 105);
 		await nextChange();
 		await expectCursorAt(rel, nativeDeletionLine);
+		await extensionApi.whenCurrentHunkOverviewMarkerSettled();
+		assert.deepStrictEqual(
+			extensionApi.getCurrentHunkOverviewMarker(),
+			{ uri: wsUri(rel).toString(), start: nativeDeletionLine, end: nativeDeletionLine },
+			'a deleted-only hunk must receive a one-line overview-ruler marker on the modified side'
+		);
 		await nextChange();
 		await expectCursorAt(rel, 117);
+		await extensionApi.whenCurrentHunkOverviewMarkerSettled();
+		assert.deepStrictEqual(
+			extensionApi.getCurrentHunkOverviewMarker(),
+			{ uri: wsUri(rel).toString(), start: 117, end: 117 },
+			'the marker must move from a deleted-only stop to the following replacement hunk'
+		);
 	});
 
 	test('visible-hunk handoff preserves Ignore Trim Whitespace navigation', async () => {

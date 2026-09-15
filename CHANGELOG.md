@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.81] — highlight the current hunk in the overview ruler
+
+- Overlay the hunk selected by Better Git with the theme's orange/yellow find-match colour in the editor overview ruler, while leaving every other change red or green.
+- Move the marker with Next/Previous navigation, span the complete selected hunk, follow cross-file navigation, and clear it when review ends or the user moves the cursor manually.
+- Compute the marker asynchronously and coalesce rapid refreshes so painting it does not delay navigation.
+
 ## [1.2.80] — exact mouse-hold view restoration
 
 - Restore the exact tab, cursor selection and scroll position captured before a mouse Next/Previous press when its hold becomes ready to stage.
