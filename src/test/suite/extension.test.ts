@@ -41,6 +41,18 @@ suite('Extension Test Suite', () => {
 		assert.ok(!/\bwhether\b/i.test(`${logging?.description} ${notifications?.description}`));
 	});
 
+	test('mouse holds default to release-only navigation while preserving the button-down experiment', () => {
+		const manifest = vscode.extensions.getExtension('EthanSK.better-git-vscode')!.packageJSON;
+		const setting = manifest.contributes?.configuration?.properties?.[
+			'better-git-vscode.experimentalMouseHoldNavigateOnButtonDown'
+		];
+		assert.strictEqual(setting?.type, 'boolean');
+		assert.strictEqual(setting?.default, false, 'physical holds must leave the review still until button-up');
+		assert.strictEqual(setting?.scope, 'application');
+		assert.ok(String(setting?.description).includes('until release'));
+		assert.ok(String(setting?.description).includes('button-down'));
+	});
+
 	test('ships and registers the complete Better Git VS Code identity and namespace', async () => {
 		const extension = vscode.extensions.getExtension('EthanSK.better-git-vscode');
 		assert.ok(extension, 'Better Git VS Code extension manifest was not loaded by the extension test host');

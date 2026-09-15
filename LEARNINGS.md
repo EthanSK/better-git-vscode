@@ -1,5 +1,15 @@
 # Learnings
 
+## Decide physical mouse holds at release (2026-09-15)
+
+**Trigger:** Ethan recognized that button-up already determines whether a physical Next/Previous press was short or long. He wanted the editor to remain on the change being reviewed throughout the hold, then perform ordinary navigation on a short release or ordinary Stage + navigation on a long release. The exact-view restoration system must remain available behind a disabled feature flag.
+
+**History:** The release-based Agentic Mouse path used before Better Git 1.2.76 already classified duration from monotonic button-down and button-up timestamps captured on its socket receive queue. It did not intentionally wait after button-up. Better Git 1.2.76 deliberately moved navigation to button-down to make the initial press visible sooner; that decision created the later need to restore the captured tab, selection and viewport at hold readiness.
+
+**Change:** `experimentalMouseHoldNavigateOnButtonDown` is application-scoped and defaults false. In the default path, begin captures the exact unstaged origin without navigating, readiness only changes the stage-ready decoration, short release becomes one Next/Previous at the existing F15 transaction boundary, and long release stages the captured current change through the ordinary Stage + Next/Previous path. The adjacent F16 action can cancel a pending short release before that boundary, leaving the editor and index unchanged and preserving an older exact-Undo receipt. Enabling the experiment retains button-down navigation and exact readiness restoration.
+
+**Verification:** TypeScript compilation, lint, the 48 non-GUI tests and the production build passed. A focused isolated VS Code 1.137.0 host on the Mac mini passed 10 release-only cases covering both mice and both directions, button-down/readiness file-selection-cursor-viewport stillness, short release, long Stage + navigation, duplicate release, ready-state decoration and cancel preserving an earlier exact-Undo receipt. The complete isolated host then passed all 202 cases, including the preserved button-down restoration mode, worktree-linked staging, rapid release ordering and the three-entry Undo cap.
+
 ## Deliver the delayed hold-readiness event across both mice (2026-09-15)
 
 **Trigger:** Physical Corsair testing on 1.2.82 showed button-down navigation and release staging, but the view never returned while the button was held. Ethan asked for the return to happen after a clear 500 ms hold.

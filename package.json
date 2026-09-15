@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.83",
+  "version": "1.2.84",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -371,6 +371,12 @@
           "type": "boolean",
           "default": false,
           "description": "Show a notification for each mouse hold phase Better Git registers, and write the same detail to the Better Git output channel. For testing a mouse setup. Off by default."
+        },
+        "better-git-vscode.experimentalMouseHoldNavigateOnButtonDown": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Experimental. Move on mouse button-down, then restore the original review view when a hold becomes ready to stage. Off keeps the review view still until release decides between navigation and staging."
         },
         "better-git-vscode.worktreeLinkReturnFocus": {
           "type": "boolean",

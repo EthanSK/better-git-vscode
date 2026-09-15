@@ -123,6 +123,7 @@ suite('SCM change navigation E2E', () => {
 		clearMouseDebugTrace(): void;
 	};
 	let baseSha: string; // the base commit every test resets to
+	let previousMouseHoldNavigateOnButtonDown: boolean | undefined;
 
 	// Run a git command inside the fixture. All command strings are hardcoded test constants.
 	const git = (cmd: string) => execSync(`git ${cmd}`, { cwd: ws, stdio: 'pipe' }).toString().trim();
@@ -333,6 +334,20 @@ suite('SCM change navigation E2E', () => {
 		// Make sure OUR extension is active before the first executeCommand (onStartupFinished usually
 		// beats us here, but don't rely on the race).
 		extensionApi = await vscode.extensions.getExtension<any>('EthanSK.better-git-vscode')!.activate();
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		previousMouseHoldNavigateOnButtonDown = config.inspect<boolean>(
+			'experimentalMouseHoldNavigateOnButtonDown'
+		)?.globalValue;
+		// Existing button-down coverage remains a regression suite for the preserved experimental path.
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+	});
+
+	suiteTeardown(async () => {
+		await vscode.workspace.getConfiguration('better-git-vscode').update(
+			'experimentalMouseHoldNavigateOnButtonDown',
+			previousMouseHoldNavigateOnButtonDown,
+			vscode.ConfigurationTarget.Global
+		);
 	});
 
 	// Every test starts from a pristine base commit + empty editor area, so tests are order-independent
@@ -2228,6 +2243,95 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	for (const source of ['corsair', 'razer']) {
+		for (const direction of ['next', 'previous']) {
+			test(`release-only hold ${source} ${direction} stays still until release and stages its origin after a long hold`, async () => {
+				const config = vscode.workspace.getConfiguration('better-git-vscode');
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+				try {
+					write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+					await refreshUntil(() => isUntracked('hold_a.txt') && isUntracked('hold_b.txt'), 'release-only hold pair');
+					const origin = direction === 'next' ? 'hold_a.txt' : 'hold_b.txt';
+					const destination = direction === 'next' ? 'hold_b.txt' : 'hold_a.txt';
+					const editor = await openPlainAt(origin, 0);
+					const selection = editor.selection;
+					const top = editor.visibleRanges[0]?.start.line;
+
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(activeTabPath(), wsUri(origin).path, 'button-down must leave the review file still');
+					assert.deepStrictEqual(editor.selection, selection, 'button-down must leave the cursor still');
+					assert.strictEqual(editor.visibleRanges[0]?.start.line, top, 'button-down must leave the viewport still');
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					assert.strictEqual(activeTabPath(), wsUri(origin).path, 'hold readiness must leave the review file still');
+					assert.strictEqual(git('diff --cached --name-only'), '', 'hold readiness must not stage');
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(origin)), '💥💥');
+
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(git('diff --cached --name-only'), origin);
+					assert.strictEqual(activeTabPath(), wsUri(destination).path, 'long release must perform one Stage + navigation');
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(git('diff --cached --name-only'), origin, 'duplicate release must not stage destination');
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+					assert.strictEqual(git('diff --cached --name-only'), '');
+				} finally {
+					await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+				}
+			});
+
+			test(`release-only short ${source} ${direction} performs exactly one navigation on button-up`, async () => {
+				const config = vscode.workspace.getConfiguration('better-git-vscode');
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+				try {
+					write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+					await refreshUntil(() => isUntracked('hold_a.txt') && isUntracked('hold_b.txt'), 'release-only short pair');
+					const origin = direction === 'next' ? 'hold_a.txt' : 'hold_b.txt';
+					const destination = direction === 'next' ? 'hold_b.txt' : 'hold_a.txt';
+					await openPlainAt(origin, 0);
+
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(activeTabPath(), wsUri(origin).path);
+					await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', source);
+					assert.strictEqual(activeTabPath(), wsUri(origin).path, 'short release registration must stay still until its boundary');
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', source);
+					assert.strictEqual(activeTabPath(), wsUri(destination).path, 'short button-up sequence must navigate immediately');
+					assert.strictEqual(git('diff --cached --name-only'), '', 'short release must not stage');
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(activeTabPath(), wsUri(destination).path, 'later long-release transport must be inert');
+					assert.strictEqual(git('diff --cached --name-only'), '');
+				} finally {
+					await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+				}
+			});
+		}
+	}
+
+	test('release-only exact Undo cancels a ready hold without moving or consuming earlier stage history', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			write('cancel_history.txt', 'history'); write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+			await refreshUntil(() => ['cancel_history.txt', 'hold_a.txt', 'hold_b.txt'].every(isUntracked), 'release-only cancel files');
+			await openPlainAt('cancel_history.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+			assert.strictEqual(git('diff --cached --name-only'), 'cancel_history.txt');
+			await openPlainAt('hold_a.txt', 0);
+
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(activeTabPath(), wsUri('hold_a.txt').path, 'cancel chord must leave the review file still');
+			assert.strictEqual(git('diff --cached --name-only'), 'cancel_history.txt', 'cancel chord must preserve earlier stage history');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', 'corsair');
+			assert.strictEqual(activeTabPath(), wsUri('hold_a.txt').path, 'release after cancel must stay inert');
+			assert.strictEqual(git('diff --cached --name-only'), 'cancel_history.txt');
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '', 'ordinary Undo must still consume the earlier receipt');
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
 
 	for (const source of ['corsair', 'razer']) {
 		for (const direction of ['next', 'previous']) {

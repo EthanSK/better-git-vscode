@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.84] — decide mouse holds on release
+
+- Keep the review file, cursor and viewport still while Next or Previous is held. A short button-up navigates once; a long button-up stages the current change and advances once.
+- Preserve the previous button-down navigation and exact-view restoration system behind an application-scoped experimental setting that is off by default.
+- Use the existing release boundary so the adjacent cancel chord can consume a short release without moving the review or invoking ordinary Undo.
+
 ## [1.2.83] — deliver the delayed mouse-hold restore
 
 - Match Razer's safe Command+Shift readiness transport so the hold signal reaches Better Git without passing through VoiceInk's Control+Shift+Option shortcut.
