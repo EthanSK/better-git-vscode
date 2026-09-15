@@ -1,5 +1,15 @@
 # Learnings
 
+## Marketplace association during local updates (2026-09-15)
+
+**Trigger:** Ethan asked to update his local Better Git when changes are finished while preserving the Marketplace connection, and to make this the default from now on.
+
+**Verified behavior:** VS Code supports installation/update by Marketplace identifier. Its documentation says installing a local VSIX disables that extension's automatic updates by default. Prefer `code --install-extension ethansk.better-git-vscode --force` after the mandatory release verifier succeeds, without an `@version` suffix. Check installed metadata and effective automatic-update state; do not infer Marketplace association from a version label alone. Do not uninstall/reinstall an already-correct copy.
+
+**Evidence:** The normal VS Code 1.137.0 installation already contained Better Git 1.2.79 with `source=gallery`, `pinned=false`, Marketplace UUID `939b51df-f995-4799-88fa-ae47815cabb2`, and an explicit per-extension auto-update entry. Its installed `dist/extension.js` SHA-256 matched the tested and Marketplace-verified production bundle (`a94ae2493f6d8c4c944fd150d0fcfa9bbf5fb122db67dfcd4438d1a6594f1c70`). No reinstall or restart was needed for this documentation change; this checks installed files, not the active extension host. Earlier entries describing user-managed installs are historical and superseded by the current policy.
+
+Sources: [VS Code extension installation and automatic updates](https://code.visualstudio.com/docs/configure/extensions/extension-marketplace#install-from-a-vsix), [VS Code CLI](https://code.visualstudio.com/docs/configure/command-line#working-with-extensions), and the installed VS Code CLI help.
+
 Per-repo institutional memory for fixes. Every entry below is a real bug we hit + how we solved it. Check this file BEFORE attempting a same-looking fix.
 
 Maintained by the `learnings` skill — see `~/.claude/skills/learnings/skill.md`.
@@ -22,9 +32,9 @@ Each entry looks like:
 ## Release installation policy
 
 - Every completed Better Git VS Code code change requested by Ethan—features, fixes, and maintenance—must be released to the Marketplace and have its exact version-specific gallery package downloaded and verified by default, unless he explicitly says not to release that change. "Done" never means stopping at local implementation, tests, a commit, a PR, or a locally packaged VSIX.
-- Release work must **not install, uninstall, update, reload, or restart** Better Git VS Code in Ethan's normal VS Code. Ethan will install Marketplace updates himself after they appear.
-- Test only in isolated Extension Development Hosts. A release is complete only when Marketplace publication succeeds, the exact version-specific gallery package is downloadable and valid, the authenticated publisher API marks that exact version `Validated`, and a public Gallery query with `ExcludeNonValidated` returns it as the latest version. The local installed version is not a release gate.
-- Do not run `code --install-extension`, `code --uninstall-extension`, or any equivalent normal-VS-Code mutation unless Ethan explicitly asks for that installation action in the current task. Permission to code, test, publish, or "release" does not imply permission to install.
+- Follow `AGENTS.md` Local updates after release. Ethan's 2026-09-15 request replaces the former user-managed-install restriction: update the local extension through its Marketplace identifier after the release gate passes.
+- Test only in isolated Extension Development Hosts. A release is complete only when Marketplace publication succeeds, the exact version-specific gallery package is downloadable and valid, the authenticated publisher API marks that exact version `Validated`, and a public Gallery query with `ExcludeNonValidated` returns it as the latest version. Local installation and safe activation are separate completion steps after the Marketplace release gate.
+- Use the Marketplace identifier without an explicit version pin for normal updates; verify gallery association and automatic updates afterward. Preserve live work, and distinguish installed files from activation in the running extension host.
 - Marketplace upload, package download, validation, and VS Code update visibility are separate states. A direct version-specific VSIX can already be downloadable while the version is still unvalidated and hidden from VS Code. Poll both the publisher validation flag and the validated-only public query; never call the release complete or ask Ethan to refresh repeatedly before both pass. Remote verification must never touch Ethan's installed extension while waiting.
 
 ## Entries
@@ -88,6 +98,16 @@ Each entry looks like:
 **Fix:** v1.2.51 captures the repository's pre-stage and post-stage index tree IDs around the single `stageThroughExtension` chokepoint. `undo-last-stage-and-advance` restores the exact pre-stage tree only when the current index still equals the captured post-stage tree; any intervening index change makes the command refuse safely. Agentic Mouse maps its VS Code wildcard single press to F18 and rapid double press to the new F16 command.
 **Commit:** 16f3d1000e0acdabd6889e44d2fc75eb0317452a (PR #91, squash-merged as ccaf7b26a39193f0012327813f8b16fd1fa00920; published as v1.2.51).
 **Guard:** 49/49 real extension-host tests passed. Coverage restores a partially staged file to its exact prior staged/working split, proves that a later independent index change prevents the undo, and pins the command manifest. TypeScript, webpack, ESLint, and packaging passed. The required verifier printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` after authenticated validation, public Gallery visibility, exact download, and byte comparison for VSIX SHA-256 `da367816e0fbdf011f56b253abddc831dd3da7ef7f14a9fca1d04a929baab77b`. Normal VS Code was not installed, updated, reloaded, or restarted by release work.
+---
+
+---
+**Date:** 2026-08-09T19:23:18Z
+**Trigger:** Ethan 2026-08-09: “double clicks not working ... to go to next change”; clarified that this meant the physical Logitech G502 thumb buttons, not the visible diff-editor toolbar arrow.
+**Symptom:** Better Git's commands and F13 transport still worked, but the G502 thumb-button single/double-click layer produced no VS Code navigation or stage-and-advance action.
+**Root cause:** The installed Better Git v1.2.50 was healthy. A 6 August Corsair migration removed the complete Karabiner rule `G502 thumb buttons in VS Code: single-click=navigate, double-click=stage+advance (back=next, fwd=previous)` while adding Corsair mappings, despite the task's requirement to preserve the existing G502 layer. It also removed the F19 user keybinding needed by the G502 forward-button double-click. G HUB's VS Code application profile is intentionally disabled; the active Desktop profile already emits Mouse Button 4/5 at 2,750 DPI and must not be enabled blindly because its saved VS Code profile uses 800 DPI.
+**Fix:** Restored the exact historical four-manipulator Karabiner rule additively and restored F19 → `better-git-vscode.stage-and-previous-changed-file`; preserved all current Corsair rules and kept G HUB on Desktop: Default with the VS Code profile disabled.
+**Commit:** none (live input configuration repair; no extension product code changed).
+**Guard:** Validate the Karabiner JSON, require exactly four manipulators for the named G502 rule, retain F13/F17/F18/F19 user bindings, and prove the physical G502 event path before claiming end-to-end acceptance. Synthetic F13 proved the extension command path only; it did not prove physical mouse transport.
 ---
 
 ---
@@ -269,6 +289,16 @@ Each entry looks like:
 **Fix:** v1.2.34 makes auto mode presentation-aware: both the hunk start and the final visual segment of its end must be visible before ordinary hunk-to-hunk navigation may proceed. A bottom-stranded landing is lifted immediately; if its tail remains hidden, caret-owned Next/Previous stepping continues until the exact edge is presented. A positive fixed `hunkStagingThreshold` keeps its explicit line-count semantics.
 **Commit:** e01066ab4999e53118dd45c15ea7d633b5c6693d (PR #61, squash-merged; published as v1.2.34).
 **Guard:** A real Extension Development Host regression measures its current viewport, creates a hunk shorter than that raw line count but with its start visible and tail hidden below a prior hunk, then requires Better Git to present it or remain inside it on the following press rather than open the next file. The full real-host suite passed 37/37 against VS Code 1.129, followed by TypeScript, webpack, ESLint, `git diff --check`, production archive/manifest inspection, and VSIX packaging. The required verifier exited zero and printed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` after authenticated publisher validation, public VS Code visibility, and an exact byte-for-byte Gallery download at SHA-256 `00f255e4fcb366e6937d0c055b55f217f41bbe9a54f00f66f568769c35a494b5`. Normal VS Code remained on v1.2.33 and was not installed, updated, reloaded, or restarted.
+---
+
+---
+**Date:** 2026-07-17T13:14:27Z
+**Trigger:** Ethan 2026-07-17: “are the github issues about it not restoring the previous state on reload? collapsed state? is there no workaround research and investigate”
+**Symptom:** In pure VS Code 1.129, the main Source Control **Changes** tree records a mixed repository/resource-group state in `scm.viewState2`, but a restart opens every discovered repository and group and then overwrites the saved state as all-expanded. Ethan needs the prior mixed state, not automatic collapse-all.
+**Root cause:** The exact behavior was reported in `microsoft/vscode#102831` and `#106196` and closed as fixed after `#89145` / PR `#89313`. PR `#197349` later migrated Changes to `AsyncDataTree`. Current `scm.viewState2` stores only expanded IDs, while `SCMViewPane.collapseByDefault` defaults repositories, resource groups, and resource folders to expanded; an ID omitted because it was collapsed therefore reopens on a fresh tree. Current open `#270454` and PR `#305267` cover only resource-group auto-reveal, while `#322318` / PR `#322319` affect the separate **Source Control Repositories** view. After confirming there was no existing exact open issue for the full Changes-tree cold-start regression, filed `microsoft/vscode#326345` with the isolated VS Code 1.129 reproduction, regression history, current-code mechanism, and workaround boundary. Extensions still have only collapse-all/expand-all commands and no public per-node API.
+**Fix:** Investigation only; do not restore Better Git's removed `list.*` row walking. The supported partial workaround is **Source Control: View & Sort → Repositories** visibility selection, persisted in `scm:view:visibleRepositories`. VS Code 1.129 restored exactly two visible repositories out of eight across restart in both explicit multi-root and fast `git.detectWorktrees` fixtures. It hides other headers instead of leaving them collapsed and is not fully reliable for slow discovery: open `#271554` and PRs `#307887` / `#320526` document worktrees arriving after VS Code's five-second loading cutoff and becoming visible again. The proper upstream fix is view-state-aware collapse defaults plus stable cross-launch tree identities.
+**Commit:** none (research, upstream issue filing, and durable documentation only; no extension product code changed).
+**Guard:** The eight-auto-detected-worktree seed/restart run kept `scm:view:visibleRepositories.visible` exactly `[6,7]`, printed `VSCODE_SCM_VISIBLE_REPOSITORIES_PERSISTED`, and visually showed only `linked-worktree-6` and `linked-worktree-7` in exact isolated windows `w28636` and `w28644`, both at `48,48,1500x1100` on `Built-in Retina Display`. Reports and screenshots are under the task's `scm-visibility-workaround` evidence directory. Normal VS Code and Better Git's installed settings/version were untouched. GitHub readback confirmed `microsoft/vscode#326345` publicly open under `EthanSK` with the intended title and complete body, and with no immediate bot closure or follow-up request.
 ---
 
 ---
@@ -714,3 +744,17 @@ Each entry looks like:
 **Commit:** c1cb4fb
 **Guard:** openChangeEntry has explicit status branches + thorough comment; CHANGELOG 0.8.1 entry
 ---
+
+
+---
+**Date:** 2026-09-14
+**Trigger:** Ethan asked whether the Codex browser tab left by a Worktree link can close after opening VS Code.
+**Symptom:** The external VS Code handoff succeeds but its Codex browser tab remains open.
+**Root cause:** The current Microsoft `vscode.dev/redirect?url=...` endpoint is an HTTP 302 with plain redirect text; Better Git cannot add page JavaScript to that response. A dummy request also reproduced the extra `&url=` query copy in the final `vscode:` URI. These findings do not establish the complete cause of Codex retaining the tab.
+**Fix:** Investigation only; no runtime or link change. A custom landing page is not a verified fix: direct-click and delayed `window.close()` calls both left an isolated agent-created Codex browser tab open. A script-created-child attempt produced no child page to test. The installed Codex source does include a native close event handler, so do not claim all native tab closure is impossible.
+**Guard:** Verify the actual user-clicked external-app handoff before shipping or promising auto-close; keep agent-created-tab results distinct from that acceptance test. Evidence: `~/.codex/outputs/better-git-collapse-staged/tab-close-investigation/findings.md`, fixture telemetry, HTTP response and same-task browser AX/screenshot. Browser close restrictions: `https://developer.mozilla.org/en-US/docs/Web/API/Window/close`.
+---
+
+**2026-09-14 follow-up — native close command:** Codex package 26.707.72221 has an internal `browser-sidebar-command` / `close-tab` action that passes the exact conversation/tab/storage IDs to `closePage`. Its installed deep-link navigation switch and the official Commands reference expose no equivalent close-tab URL route. The agent's `Tab.close()` works during a running turn (verified by the prior isolated-tab cleanup), but a normal Worktree link click does not invoke agent tools. Do not conflate native close support with an available automatic click handler; an external bridge remains unimplemented and unverified. Evidence: the tab-close investigation artifact above and `https://learn.chatgpt.com/docs/reference/commands#deep-links`.
+
+**2026-09-14 correction — native user tabs and active application:** A normal in-app HTML tab did close itself with `window.close()`; Ethan saw the open/close and the fixture logged the attempt without its later remained callback. Do not generalize agent-created-tab failure to ordinary chat-clicked tabs. The running application is ChatGPT.app 26.908.40834; earlier Codex.app 26.707.72221 source checks inspected an inactive older installation. A direct-URI prototype closed on a 900 ms timer although Ethan reported no visible VS Code open, so that was not successful end-to-end evidence. The revised diagnostic uses the existing Microsoft HTTPS route with auto-close disabled and an optional test-only removal of `returnTo=codex` so focus restoration cannot disguise whether VS Code opened. Browser security policy refused an automated reload of the launch page; further launch acceptance is a direct user test, not alternate automated browser control.
