@@ -1,0 +1,209 @@
+{
+  "schema_version": 7,
+  "owner": "user",
+  "authorizes_work": false,
+  "title": "Outstanding items",
+  "task_id": "01a088ba-cab6-7c70-8413-6505410966c1",
+  "revision": 33,
+  "created_at": "2026-09-14T15:04:07Z",
+  "updated_at": "2026-09-15T20:04:34Z",
+  "latest_unanswered_suggestion": null,
+  "items": [
+    {
+      "id": "OI-1",
+      "dateAdded": "2026-09-14T15:05:13Z",
+      "priority": "P2",
+      "title": "Fix repeated worktree launches before closing the tab",
+      "status": "dropped",
+      "completed": true,
+      "position": 0,
+      "group": "Outstanding for you",
+      "state_text": "dropped",
+      "details_markdown": "",
+      "explanation": "You confirmed the original Worktree link works and asked to leave it as that. Keep the original Microsoft redirect link. The custom HTML and auto-close experiment is cancelled, its localhost server is stopped, and no custom launcher was published.",
+      "provenance": "agent-added",
+      "capture_reason": "you asked to close the browser tab after opening the worktree in VS Code",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-14T16:37:46Z"
+      },
+      "completed_at": "2026-09-14T16:37:46Z",
+      "completed_session_id": null
+    },
+    {
+      "id": "OI-2",
+      "dateAdded": "2026-09-14T15:05:14Z",
+      "priority": "P2",
+      "title": "Fix Staged Changes collapse when switching worktrees",
+      "status": "verified",
+      "completed": true,
+      "position": 1,
+      "group": "Outstanding for you",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Increase the Worktree-link presentation wait from 150 ms to the requested 500 ms. Version 1.2.74 passed 44 non-GUI tests, lint, production packaging and all 11 native scenarios on isolated VS Code 1.137.0 on the Mini, including 331 staged and 395 unstaged entries. The exact VSIX passed the mandatory Marketplace release gate. The wait remains a bounded allowance rather than a render acknowledgement; retrying the original normal-window case after the user applies the update is tracked separately.",
+      "provenance": "agent-added",
+      "capture_reason": "you reported that Staged Changes sometimes stays expanded when the link switches worktrees",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-14T17:25:52Z"
+      },
+      "completed_at": "2026-09-14T17:25:52Z",
+      "completed_session_id": null
+    },
+    {
+      "id": "OI-3",
+      "dateAdded": "2026-09-14T15:09:07Z",
+      "priority": "P2",
+      "title": "Publish the public dev-skill Worktree instructions",
+      "status": "waiting-on-you",
+      "completed": false,
+      "position": 2,
+      "group": "Outstanding for you",
+      "state_text": "waiting-on-you",
+      "details_markdown": "",
+      "explanation": "Publish the prepared AIMVS dev-skill Worktree instructions after the required AIMVS manual staging and landing check. The instructions use the original Microsoft redirect link; the cancelled custom HTML and auto-close experiment will not be included.",
+      "provenance": "agent-added",
+      "capture_reason": "you asked to add Worktree link setup instructions to the public dev skill page",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-14T16:33:07Z"
+      },
+      "completed_at": null,
+      "completed_session_id": null
+    },
+    {
+      "id": "OI-4",
+      "dateAdded": "2026-09-14T17:25:52Z",
+      "priority": "P2",
+      "title": "Check Worktree collapse and return to Codex",
+      "status": "waiting-on-you",
+      "completed": false,
+      "position": 1,
+      "group": "Outstanding for you",
+      "state_text": "waiting-on-you",
+      "details_markdown": "",
+      "explanation": "Click a Worktree link and check that Staged Changes collapses before focus returns to Codex. Better Git 1.2.79 is already installed with intact Marketplace metadata and automatic updates enabled; its bundle matches the verified release. Your return preference is already enabled. The exact build passed 15 native cases; the original normal-window case remains a separate physical check.",
+      "provenance": "agent-added",
+      "capture_reason": "you reported another expanded Staged Changes group and requested a 500 ms delay",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-14T23:04:43Z"
+      },
+      "completed_at": null,
+      "completed_session_id": null
+    },
+    {
+      "id": "OI-5",
+      "dateAdded": "2026-09-14T22:29:41Z",
+      "priority": "P2",
+      "title": "Add optional return to the originating app",
+      "status": "verified",
+      "completed": true,
+      "position": 2,
+      "group": "Outstanding for you",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Released Better Git 1.2.79 with an off-by-default macOS return-focus setting and configurable app metadata. Copied links carry the configured app; incoming metadata overrides the fallback, and old links without metadata can use it. Saved your two User settings to enable return to Codex. All 48 non-GUI and 15 native cases passed; the exact VSIX passed the mandatory Marketplace gate. The installed 1.2.79 bundle and Marketplace association were verified on 2026-09-15.",
+      "provenance": "agent-added",
+      "capture_reason": "you asked for configurable origin metadata, return to Codex for you, and off by default for other users",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-14T23:04:43Z"
+      },
+      "completed_at": "2026-09-14T22:42:39Z",
+      "completed_session_id": null
+    },
+    {
+      "id": "OI-6",
+      "dateAdded": "2026-09-14T22:29:41Z",
+      "priority": "P2",
+      "title": "Identify personal defaults that affect other Better Git users",
+      "status": "verified",
+      "completed": true,
+      "position": 3,
+      "group": "Outstanding for you",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Audited the current public defaults and runtime. Actual effects are navigation shortcut overrides, three shared staging Undo entries, the fire badge and status controls, automatic workspace additions on Explorer reveal, and tall-hunk/new-file stepping. Settings already exist for most of these; the Undo cap is fixed. Dvorak, startup collapse, mouse hardware setup and AI generation do not automatically impose that personal workflow on ordinary users. No unrelated default was changed.",
+      "provenance": "agent-added",
+      "capture_reason": "you asked which personal Better Git features have an actual effect on other users",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-14T22:37:54Z"
+      },
+      "completed_at": "2026-09-14T22:37:54Z",
+      "completed_session_id": null
+    },
+    {
+      "id": "OI-7",
+      "dateAdded": "2026-09-14T23:05:17Z",
+      "priority": "P2",
+      "title": "Update local Better Git while preserving Marketplace updates",
+      "status": "verified",
+      "completed": true,
+      "position": 4,
+      "group": "Outstanding for you",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Make local Marketplace updates part of finishing Better Git changes after release verification. Updated the project instructions and learnings, replacing the old user-managed installation restriction. Verified that 1.2.79 is already gallery-installed, unpinned, explicitly auto-updating, and byte-identical to the verified production bundle; no reinstall was needed.",
+      "provenance": "agent-added",
+      "capture_reason": "you asked to update Better Git locally after future changes without breaking its Marketplace connection",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-14T23:05:17Z"
+      },
+      "completed_at": "2026-09-14T23:05:17Z",
+      "completed_session_id": null
+    },
+    {
+      "id": "OI-8",
+      "dateAdded": "2026-09-15T17:42:18Z",
+      "priority": "P2",
+      "title": "Verify the 200 ms mouse hold",
+      "status": "verified",
+      "completed": true,
+      "position": 0,
+      "group": "Outstanding for you",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Ethan physically confirmed that the repaired mouse hold works at the reduced 200 ms threshold. Better Git 1.2.83 is Marketplace-verified and installed with its Gallery association intact; Agentic Mouse 1.0.208 build 214 is installed with the corrected readiness transport. During a hold, the exact pre-press view returns; release stages the original change and retains the ordinary Stage + Next/Previous final state. Debug logging and notifications are off.",
+      "provenance": "agent-added",
+      "capture_reason": "you reported that holding mouse Next or Previous did not restore the exact pre-press review view",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-15T19:27:43Z"
+      },
+      "completed_at": "2026-09-15T19:27:43Z",
+      "completed_session_id": "01a088ba-cab6-7c70-8413-6505410966c1"
+    },
+    {
+      "id": "OI-9",
+      "dateAdded": "2026-09-15T20:00:38Z",
+      "priority": "P2",
+      "title": "Physically verify release-only mouse holds",
+      "status": "verified",
+      "completed": true,
+      "position": 0,
+      "group": "Outstanding for you",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Ethan restarted the extension host and physically confirmed the release-only mouse hold behavior works. Better Git 1.2.84 keeps the editor still while held, decides the gesture from the button-up stream, and retains the previous button-down navigation plus exact-view restoration system behind the disabled experimental feature flag. Better Git 1.2.84 is Marketplace-verified and Gallery-installed; Agentic Mouse 1.0.210 build 216 is signed, installed and running with the normalized 200 ms stream.",
+      "provenance": "agent-added",
+      "capture_reason": "you asked to replace button-down navigation and restoration with release-only classification while retaining the old system behind a disabled flag",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-09-15T20:04:34Z"
+      },
+      "completed_at": "2026-09-15T20:04:34Z",
+      "completed_session_id": "01a088ba-cab6-7c70-8413-6505410966c1"
+    }
+  ],
+  "sections": [],
+  "source": {
+    "kind": "project-task-json",
+    "status": "canonical",
+    "project_storage_enabled": true,
+    "project_root": "/Users/ethansarif-kattan/Projects/better-git-vscode"
+  }
+}
