@@ -4437,7 +4437,11 @@ const stageSelectedFilesAndAdvance = async (
     const selectedKeys = selected.map(change => change.uri.toString());
     const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
     const repo = git?.getRepository(selected[0].uri);
-    if (!repo || selected.some(change => git.getRepository(change.uri) !== repo)) { return false; }
+    const repoRoot = String(repo?.rootUri?.fsPath ?? "");
+    if (!repoRoot || selected.some(change => {
+        const relative = path.relative(repoRoot, change.uri.fsPath);
+        return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+    })) { return false; }
 
     const current = distinctUnstagedChanges(await getFileChanges(selected[0].uri));
     check();
