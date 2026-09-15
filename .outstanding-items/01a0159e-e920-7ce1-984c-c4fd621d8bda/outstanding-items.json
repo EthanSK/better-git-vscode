@@ -1,0 +1,96 @@
+{
+  "schema_version": 6,
+  "owner": "user",
+  "authorizes_work": false,
+  "title": "Bind Cmd-Z to undo staging",
+  "task_id": "01a0159e-e920-7ce1-984c-c4fd621d8bda",
+  "revision": 6,
+  "created_at": "2026-08-18T16:35:59Z",
+  "updated_at": "2026-08-18T17:52:18Z",
+  "latest_unanswered_suggestion": null,
+  "items": [
+    {
+      "id": "OI-1",
+      "priority": "P2",
+      "title": "Bind Cmd-Z to undo the latest stage in Source Control",
+      "status": "verified",
+      "completed": true,
+      "position": 0,
+      "group": "Done",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Bind Cmd-Z and Ctrl-Z only in the Source Control Changes list, preserve text undo, test the exact index restore, and publish v1.2.55. Verified by the 63-test VS Code host run and the Marketplace exact-package gate.",
+      "provenance": "agent-added",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-08-18T16:36:22Z"
+      },
+      "completed_at": "2026-08-18T16:36:22Z",
+      "completed_session_id": "01a0159e-e920-7ce1-984c-c4fd621d8bda"
+    },
+    {
+      "id": "OI-2",
+      "priority": "P2",
+      "title": "Update Better Git VS Code to v1.2.55",
+      "status": "verified",
+      "completed": true,
+      "position": 2,
+      "group": "Now",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Update Better Git VS Code to v1.2.55. The installed-extension readback now confirms v1.2.55 is present in normal VS Code.",
+      "provenance": "agent-added",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-08-18T17:12:12Z"
+      },
+      "completed_at": "2026-08-18T17:12:12Z",
+      "completed_session_id": "01a0159e-e920-7ce1-984c-c4fd621d8bda"
+    },
+    {
+      "id": "OI-3",
+      "priority": "P2",
+      "title": "Fix immediate Cmd-Z stage-undo timing race",
+      "status": "verified",
+      "completed": true,
+      "position": 1,
+      "group": "Reliability",
+      "state_text": "verified",
+      "details_markdown": "",
+      "explanation": "Fix immediate Cmd-Z stage undo so receipt reads wait behind already-notified Git-index observations. Verified by the deterministic blocked-snapshot regression, the immediate built-in-stage host path, 64 passing host tests, and the exact Marketplace package gate.",
+      "provenance": "agent-added",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-08-18T17:52:17Z"
+      },
+      "completed_at": "2026-08-18T17:52:17Z",
+      "completed_session_id": "01a0159e-e920-7ce1-984c-c4fd621d8bda"
+    },
+    {
+      "id": "OI-4",
+      "priority": "P2",
+      "title": "Update Better Git VS Code to v1.2.56",
+      "status": "waiting-on-you",
+      "completed": false,
+      "position": 0,
+      "group": "Now",
+      "state_text": "waiting-on-you",
+      "details_markdown": "",
+      "explanation": "Update Better Git VS Code from Marketplace when convenient so normal VS Code picks up the immediate Cmd-Z reliability fix; release work deliberately left the installed v1.2.55 unchanged.",
+      "provenance": "agent-added",
+      "order_intent": {
+        "kind": "automatic",
+        "relevance_updated_at": "2026-08-18T17:52:18Z"
+      },
+      "completed_at": null,
+      "completed_session_id": null
+    }
+  ],
+  "sections": [],
+  "source": {
+    "kind": "project-task-json",
+    "status": "canonical",
+    "project_storage_enabled": true,
+    "project_root": "/Users/ethansarif-kattan/Projects/better-git-vscode"
+  }
+}
