@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.80] — exact mouse-hold view restoration
+
+- Restore the exact tab, cursor selection and scroll position captured before a mouse Next/Previous press when its hold becomes ready to stage.
+- Keep immediate short-press navigation and release-to-stage unchanged. Restoration waits in the existing navigation queue instead of using an opposite navigation guess or a fixed delay.
+
 ## [1.2.79] — optional return to the originating app
 
 - Add an off-by-default macOS setting to return focus after a Worktree link opens Source Control.

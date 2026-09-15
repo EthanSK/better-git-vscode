@@ -2209,7 +2209,7 @@ suite('SCM change navigation E2E', () => {
 
     for (const source of ['corsair', 'razer']) {
         for (const direction of ['next', 'previous']) {
-            test(`hold threshold matches opposite navigation for ${source} ${direction} within a file`, async () => {
+            test(`hold threshold restores ${source} ${direction} cursor, selection and scroll within a file`, async () => {
                 write('hold_view.txt', lines(160, 'view'));
                 await refreshUntil(() => isUntracked('hold_view.txt'), 'hold view');
                 await vscode.window.showTextDocument(wsUri('hold_view.txt'), { preview: false });
@@ -2217,23 +2217,17 @@ suite('SCM change navigation E2E', () => {
                 editor.selection = new vscode.Selection(60, 2, 61, 4);
                 editor.revealRange(new vscode.Range(50, 0, 50, 0), vscode.TextEditorRevealType.AtTop);
                 await sleep(100);
-                const originalSelection = editor.selection;
-                await vscode.commands.executeCommand(`better-git-vscode.${direction}-scm-change`);
-                await vscode.commands.executeCommand(`better-git-vscode.${direction === 'next' ? 'previous' : 'next'}-scm-change`);
-                await sleep(100);
                 const selection = editor.selection;
                 const top = editor.visibleRanges[0].start.line;
-                editor.selection = originalSelection;
-                editor.revealRange(new vscode.Range(50, 0, 50, 0), vscode.TextEditorRevealType.AtTop);
-                await sleep(100);
                 await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
-                assert.notStrictEqual(editor.selection.active.line, originalSelection.active.line);
+                assert.notStrictEqual(editor.selection.active.line, selection.active.line);
                 await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
                 await sleep(100);
                 assert.deepStrictEqual(editor.selection, selection);
                 assert.strictEqual(editor.visibleRanges[0].start.line, top);
                 await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
-                assert.deepStrictEqual(editor.selection, selection, 'duplicate readiness must not reverse twice');
+                assert.deepStrictEqual(editor.selection, selection, 'duplicate readiness must preserve the captured selection');
+                assert.strictEqual(editor.visibleRanges[0].start.line, top, 'duplicate readiness must preserve the captured viewport');
                 assert.strictEqual(git('diff --cached --name-only'), '');
                 await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', source);
                 await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
@@ -2261,7 +2255,7 @@ suite('SCM change navigation E2E', () => {
         });
     }
 
-    test('hold threshold matches opposite navigation after crossing files', async () => {
+    test('hold threshold restores a diff editor after crossing files', async () => {
         const content = lines(260, 'tall_e').split('\n');
         content[110] = 'changed line';
         write('committed/tall_e.txt', content.join('\n'));
@@ -2270,15 +2264,8 @@ suite('SCM change navigation E2E', () => {
         const editor = await openWorkingDiffAt('committed/tall_e.txt', 240);
         editor.selection = new vscode.Selection(259, 2, 259, 4);
         await sleep(150);
-        await vscode.commands.executeCommand('better-git-vscode.next-scm-change');
-        await vscode.commands.executeCommand('better-git-vscode.previous-scm-change');
-        await sleep(150);
-        const oppositeEditor = visibleEditorFor(wsUri('committed/tall_e.txt'))!;
-        const selection = oppositeEditor.selection;
-        const top = oppositeEditor.visibleRanges[0].start.line;
-        const reset = await openWorkingDiffAt('committed/tall_e.txt', 240);
-        reset.selection = new vscode.Selection(259, 2, 259, 4);
-        await sleep(150);
+        const selection = editor.selection;
+        const top = editor.visibleRanges[0].start.line;
         const source = 'corsair'; const direction = 'next';
         await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
         assert.strictEqual(activeTabPath(), wsUri('zz_after.txt').path);
@@ -2292,6 +2279,26 @@ suite('SCM change navigation E2E', () => {
         await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
         assert.strictEqual(git('diff --cached --name-only'), 'committed/tall_e.txt');
         assert.strictEqual(activeTabPath(), wsUri('zz_after.txt').path);
+    });
+
+    test('hold readiness queued immediately after button-down restores the pre-press view', async () => {
+        for (const name of ['hold_race_a.txt', 'hold_race_b.txt']) { write(name, lines(320, name)); }
+        await refreshUntil(() => isUntracked('hold_race_a.txt') && isUntracked('hold_race_b.txt'), 'hold race pair');
+        const editor = await vscode.window.showTextDocument(wsUri('hold_race_a.txt'), { preview: false });
+        editor.selection = new vscode.Selection(70, 3, 72, 5);
+        editor.revealRange(new vscode.Range(55, 0, 55, 0), vscode.TextEditorRevealType.AtTop);
+        await sleep(100);
+        const selection = editor.selection;
+        const top = editor.visibleRanges[0].start.line;
+        await Promise.all([
+            vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' }),
+            vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair'),
+        ]);
+        const restored = visibleEditorFor(wsUri('hold_race_a.txt'))!;
+        assert.strictEqual(activeTabPath(), wsUri('hold_race_a.txt').path);
+        assert.deepStrictEqual(restored.selection, selection);
+        assert.strictEqual(restored.visibleRanges[0].start.line, top);
+        await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', 'corsair');
     });
 
     test('hold threshold queued behind quick taps cannot rewind or lose navigation', async () => {

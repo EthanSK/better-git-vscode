@@ -1,5 +1,15 @@
 # Learnings
 
+## Restore the exact pre-press review view for mouse holds (2026-09-15)
+
+**Trigger:** Ethan clarified that when a held Next/Previous press becomes ready to stage, the visible jump caused by button-down must be undone exactly: return to the tab, cursor selection and viewport from before the press so the file about to be staged remains visible.
+
+**Cause:** Version 1.2.78 replaced the captured-view restoration with one navigation command in the opposite direction. Opposite navigation is not an inverse across file boundaries, hunk geometry, arbitrary selections or viewport motion, so it could land somewhere other than the pre-press view even though the correct original file receipt was still retained for staging.
+
+**Change:** Version 1.2.80 restores the captured tab input, every captured visible-editor selection and the captured viewport at hold readiness. The readiness command remains serialized behind button-down navigation, so even an immediately queued readiness signal waits for the initial navigation and then restores the earlier snapshot. Do not add a guessed delay or use reverse navigation. Release still stages the original receipt and advances in the requested direction; short release remains immediate navigation.
+
+**Verification:** The 48 non-GUI tests, TypeScript compilation, lint and production build passed. On isolated VS Code 1.137.0 on the Mini, 12 focused real-host cases passed for Corsair and Razer, both directions, exact within-file selection/viewport restoration, insertion-heavy diffs, crossing files, an immediately queued readiness signal, rapid cancellation, overlapping holds and later user navigation. The native workbench harness passed all 27 checks, including both transports and directions, readiness restoring the original file, release staging only that origin, advancement and Undo. Physical HID input remains a separate acceptance boundary.
+
 ## Marketplace association during local updates (2026-09-15)
 
 **Trigger:** Ethan asked to update his local Better Git when changes are finished while preserving the Marketplace connection, and to make this the default from now on.
