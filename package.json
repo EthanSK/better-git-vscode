@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.82",
+  "version": "1.2.83",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -477,14 +477,14 @@
       },
       {
         "command": "better-git-vscode.stage-hold-ready",
-        "key": "ctrl+alt+cmd+shift+f20",
-        "mac": "ctrl+alt+cmd+shift+f20",
+        "key": "cmd+shift+f20",
+        "mac": "cmd+shift+f20",
         "args": "razer"
       },
       {
         "command": "better-git-vscode.stage-hold-clear",
-        "key": "ctrl+alt+cmd+shift+f15",
-        "mac": "ctrl+alt+cmd+shift+f15",
+        "key": "cmd+shift+f15",
+        "mac": "cmd+shift+f15",
         "args": "razer"
       },
       {

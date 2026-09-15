@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.83] — deliver the delayed mouse-hold restore
+
+- Match Razer's safe Command+Shift readiness transport so the 500 ms hold signal reaches Better Git without passing through VoiceInk's Control+Shift+Option shortcut.
+- Pair with Agentic Mouse's corrected 500 ms hold threshold, which now emits readiness after changing the internal hold state instead of suppressing the same event.
+
 ## [1.2.82] — cancel active mouse holds and expose their trace
 
 - Treat the Agentic Mouse exact-Undo action as a hold cancel while Next/Previous is still pressed: restore the exact pre-press view, preserve the Git index, and consume the later release. Keep ordinary exact Undo unchanged when no hold is active.

@@ -1,5 +1,13 @@
 # Learnings
 
+## Deliver the delayed hold-readiness event across both mice (2026-09-15)
+
+**Trigger:** Physical Corsair testing on 1.2.82 showed button-down navigation and release staging, but the view never returned while the button was held. Ethan asked for the return to happen after a clear 500 ms hold.
+
+**Cause:** Agentic Mouse's Karabiner template set its hold state to `2` and then conditioned the F20 readiness output on already seeing state `2` in the same `to_if_held_down` output list. Karabiner evaluated that condition before the preceding state mutation took effect, suppressing F20 even though the later long-release path observed state `2` and staged. Separately, Better Git's manifest still expected Razer readiness on the old Hyper chord while Agentic Mouse deliberately uses Command+Shift to avoid briefly completing VoiceInk's Control+Shift+Option shortcut.
+
+**Change:** Agentic Mouse owns the physical 500 ms threshold and emits F20 unconditionally once `to_if_held_down` fires, while retaining its focus, mode and session guards. Better Git 1.2.83 binds Razer F20/F15 readiness and clear phases to the same safe Command+Shift transport used for its begin/finish/cancel phases. Corsair retains Control+Option+Command. Better Git continues to restore the captured tab, cursor, selection and viewport rather than guessing an opposite navigation step.
+
 ## Cancel an active mouse hold without consuming Undo (2026-09-15)
 
 **Trigger:** Ethan wanted the adjacent Agentic Mouse cell to cancel a held Next/Previous gesture completely, restoring the view from before button-down and making the later button release do nothing. He also needed enough temporary diagnostics to see every hold phase reaching Better Git and a stronger current-hunk marker.
