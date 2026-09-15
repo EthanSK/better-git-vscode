@@ -1,5 +1,15 @@
 # Learnings
 
+## Cancel an active mouse hold without consuming Undo (2026-09-15)
+
+**Trigger:** Ethan wanted the adjacent Agentic Mouse cell to cancel a held Next/Previous gesture completely, restoring the view from before button-down and making the later button release do nothing. He also needed enough temporary diagnostics to see every hold phase reaching Better Git and a stronger current-hunk marker.
+
+**Input contract:** Agentic Mouse already consumes the adjacent-cell gesture and emits Better Git's bare F16 exact-Undo command. While Better Git owns an active hold, treat that F16 as a gesture cancel; otherwise keep its existing exact-Undo behavior. Do not repurpose the source-specific F14 short-release command: a short release intentionally keeps the navigation performed on button-down.
+
+**Change:** Version 1.2.82 deactivates the hold synchronously when F16 arrives, queues exact captured-view restoration behind any unfinished button-down navigation, clears readiness feedback and deletes the origin receipt. A delayed readiness or release then fails closed without staging or consuming an earlier Undo receipt. `debugLogging` now uses a persistent VS Code log output channel and includes source-tagged button-down, threshold, clear, cancel, release, staging and ignored-event reasons. The separate `debugNotifications` setting shows the same mouse phases as temporary toasts; both public defaults remain off. The current-hunk overview-ruler overlay is opaque bright yellow in dark themes and strong purple in light themes.
+
+**Verification:** The 48 non-GUI tests, TypeScript compilation, lint and production build passed. The complete isolated extension-host suite passed all 192 cases on the Mini, including four cancel combinations, preservation of an earlier Undo receipt, stale readiness/release handling, all exact-view restoration races, the current-hunk range and deletion-only marker, worktree opening, staged-group collapse and the three-entry Undo cap. The exact MacBook production JavaScript then passed 26 focused extension-host cases and a 35-check native workbench run; its SHA-256 is `6c7ee295c797a57e1a6cb2b53838673ecafc77d8259b26aeaec78e06d9a561a3`. The native run delivered the real F-key bindings for Corsair and Razer, proved F16 cancels a ready hold, proved the later physical-release command is a no-op, then repeated successful release staging and ordinary Undo. Physical HID timing and the rendered yellow/purple colour remain user acceptance boundaries after Marketplace installation.
+
 ## Highlight only the Better Git-selected hunk in the overview ruler (2026-09-15)
 
 **Trigger:** Ethan wanted the currently selected diff hunk to stand out from the ordinary red and green hunk marks in the editor's overview ruler.

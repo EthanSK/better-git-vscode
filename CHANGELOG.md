@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.82] — cancel active mouse holds and expose their trace
+
+- Treat the Agentic Mouse exact-Undo action as a hold cancel while Next/Previous is still pressed: restore the exact pre-press view, preserve the Git index, and consume the later release. Keep ordinary exact Undo unchanged when no hold is active.
+- Log source-tagged button-down, readiness, clear, cancel, release, staging and ignored-event reasons in a persistent Better Git log output channel. Add an off-by-default notification switch for temporarily showing each phase in VS Code.
+- Make the current-hunk overview-ruler marker opaque bright yellow in dark themes and purple in light themes so it stands out clearly from native red/green diff marks.
+
 ## [1.2.81] — highlight the current hunk in the overview ruler
 
 - Overlay the hunk selected by Better Git with the theme's orange/yellow find-match colour in the editor overview ruler, while leaving every other change red or green.

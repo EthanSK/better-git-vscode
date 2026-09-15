@@ -119,6 +119,8 @@ suite('SCM change navigation E2E', () => {
 		getReviewDecorationBadge(uri: vscode.Uri): string | vscode.ThemeIcon | undefined;
 		whenCurrentHunkOverviewMarkerSettled(): Promise<void>;
 		getCurrentHunkOverviewMarker(): { uri: string; start: number; end: number } | undefined;
+		getMouseDebugTrace(): string[];
+		clearMouseDebugTrace(): void;
 	};
 	let baseSha: string; // the base commit every test resets to
 
@@ -2253,6 +2255,65 @@ suite('SCM change navigation E2E', () => {
 			});
 		}
 	}
+
+	for (const source of ['corsair', 'razer']) {
+		for (const direction of ['next', 'previous']) {
+			test(`exact Undo cancels an active ${source} ${direction} hold and consumes its later release`, async () => {
+				write('hold_cancel_a.txt', 'first'); write('hold_cancel_b.txt', 'second');
+				await refreshUntil(() => isUntracked('hold_cancel_a.txt') && isUntracked('hold_cancel_b.txt'), 'hold cancel pair');
+				const origin = direction === 'next' ? 'hold_cancel_a.txt' : 'hold_cancel_b.txt';
+				const destination = direction === 'next' ? 'hold_cancel_b.txt' : 'hold_cancel_a.txt';
+				await openPlainAt(origin, 0);
+				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+				assert.strictEqual(activeTabPath(), wsUri(destination).path);
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(activeTabPath(), wsUri(origin).path, 'cancel chord must restore the pre-press file');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'cancel chord must not stage or undo the index');
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+				assert.strictEqual(activeTabPath(), wsUri(origin).path, 'stale readiness/release must not move after cancellation');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'release after cancel must do nothing');
+			});
+		}
+	}
+
+	test('hold cancel preserves an earlier Undo receipt and ordinary Undo still consumes it afterwards', async () => {
+		write('cancel_history.txt', 'history'); write('hold_cancel_a.txt', 'first'); write('hold_cancel_b.txt', 'second');
+		await refreshUntil(() => ['cancel_history.txt', 'hold_cancel_a.txt', 'hold_cancel_b.txt'].every(isUntracked), 'cancel history files');
+		await openPlainAt('cancel_history.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+		assert.strictEqual(git('diff --cached --name-only'), 'cancel_history.txt');
+		await openPlainAt('hold_cancel_a.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), 'cancel_history.txt', 'hold cancel must preserve the previous stage and receipt');
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		assert.strictEqual(git('diff --cached --name-only'), '', 'the next ordinary Undo must still restore the earlier stage');
+	});
+
+	test('mouse debug trace records button-down, readiness, cancel and ignored release phases', async () => {
+		write('hold_debug_a.txt', 'first'); write('hold_debug_b.txt', 'second');
+		await refreshUntil(() => isUntracked('hold_debug_a.txt') && isUntracked('hold_debug_b.txt'), 'hold debug pair');
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousLogging = config.inspect<boolean>('debugLogging')?.globalValue;
+		try {
+			await config.update('debugLogging', true, vscode.ConfigurationTarget.Global);
+			extensionApi.clearMouseDebugTrace();
+			await openPlainAt('hold_debug_a.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			const trace = extensionApi.getMouseDebugTrace();
+			assert.ok(trace.includes('Corsair Next button down.'));
+			assert.ok(trace.includes('Corsair Next hold threshold reached; pre-press view restored. Release will stage.'));
+			assert.ok(trace.includes('Corsair Next cancel chord received; pre-press view restored. Release will do nothing.'));
+			assert.ok(trace.includes('Corsair Next release ignored, no press in progress.'));
+		} finally {
+			await config.update('debugLogging', previousLogging, vscode.ConfigurationTarget.Global);
+		}
+	});
 
 
     for (const source of ['corsair', 'razer']) {

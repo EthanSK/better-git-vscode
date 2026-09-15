@@ -31,12 +31,24 @@ import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./g
 // Gated behind the `better-git-vscode.debugLogging` setting (default false) so it's silent for normal use and
 // only writes when Ethan flips it on to diagnose something. The channel itself is created lazily on first log
 // (so we don't allocate an Output channel for users who never enable logging) and reused thereafter.
-let betterGitOutputChannel: vscode.OutputChannel | undefined;
+let betterGitOutputChannel: vscode.LogOutputChannel | undefined;
 
 // True only when the user has turned on verbose logging. Read live (not cached) so toggling the setting takes
 // effect on the very next press without a reload.
 const debugLoggingEnabled = (): boolean =>
     vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("debugLogging", false);
+
+const debugNotificationsEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("debugNotifications", false);
+
+const appendDebugLog = (tag: string, message: string): void => {
+    if (!betterGitOutputChannel) {
+        // A log output channel is persisted with the VS Code window logs, so a physical gesture can be
+        // diagnosed after the toast has disappeared instead of relying on screenshots or memory.
+        betterGitOutputChannel = vscode.window.createOutputChannel("Better Git", { log: true });
+    }
+    betterGitOutputChannel.info(`[${tag}] ${message}`);
+};
 
 // Append one timestamped line to the "Better Git" output channel, but ONLY when debug logging is enabled.
 // Lazily creates the channel on first use. Never throws (logging must never break navigation) — a failure to
@@ -46,13 +58,25 @@ const debugLog = (tag: string, message: string): void => {
         if (!debugLoggingEnabled()) {
             return;
         }
-        if (!betterGitOutputChannel) {
-            betterGitOutputChannel = vscode.window.createOutputChannel("Better Git");
-        }
-        const ts = new Date().toISOString().split("T")[1]?.replace("Z", "") ?? "";
-        betterGitOutputChannel.appendLine(`[${ts}] [${tag}] ${message}`);
+        appendDebugLog(tag, message);
     } catch {
         // logging is best-effort telemetry — never let it interfere with the actual command
+    }
+};
+
+const mouseDebugTrace: string[] = [];
+const mouseDebug = (message: string): void => {
+    try {
+        if (!debugLoggingEnabled() && !debugNotificationsEnabled()) { return; }
+        mouseDebugTrace.push(message);
+        if (mouseDebugTrace.length > 100) { mouseDebugTrace.splice(0, mouseDebugTrace.length - 100); }
+        appendDebugLog("mouse-hold", message);
+        if (debugNotificationsEnabled()) {
+            // Never await a diagnostic toast: dismissing it must not gate navigation, staging or cancellation.
+            void vscode.window.showInformationMessage(`Better Git debug: ${message}`);
+        }
+    } catch {
+        // Debug presentation cannot participate in the input path.
     }
 };
 
@@ -95,6 +119,7 @@ type MouseReviewView = {
 };
 const mouseHoldRequests = new Map<MouseReviewSource, MouseHoldRequest>();
 let latestMouseHoldRequest: MouseHoldRequest | undefined;
+let clearStageHoldFeedbackRequest: (source?: MouseReviewSource) => void = () => undefined;
 const mouseNavigationOrigins = new Map<MouseReviewSource, {
     change: FileChange;
     direction: "next" | "previous";
@@ -104,6 +129,8 @@ const mouseNavigationOrigins = new Map<MouseReviewSource, {
     view?: MouseReviewView;
 }>(); // A late stage press belongs to the file left by this mouse, never the newly displayed file. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
 const isMouseReviewSource = (source: unknown): source is MouseReviewSource => source === "corsair" || source === "razer";
+const mouseSourceLabel = (source: MouseReviewSource): string => source === "corsair" ? "Corsair" : "Razer";
+const mouseDirectionLabel = (direction: "next" | "previous"): string => direction === "next" ? "Next" : "Previous";
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
 // LAST-STAGED STATUS BAR (v1.1.0)
@@ -521,6 +548,8 @@ interface BetterGitExtensionApi {
     whenCurrentHunkOverviewMarkerSettled(): Promise<void>;
     getCurrentHunkOverviewMarker(): { uri: string; start: number; end: number } | undefined;
     getScmTreeCommandTrace(): readonly string[];
+    getMouseDebugTrace(): readonly string[];
+    clearMouseDebugTrace(): void;
 }
 
 // The only automatic behavior still available is a double opt-in, one-shot collapse-all. The master
@@ -699,21 +728,35 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // Readiness restores that captured review view exactly; navigation in the opposite direction is not an inverse.
     const mouseHoldCommands = [
         vscode.commands.registerCommand("better-git-vscode.begin-mouse-navigation-hold", (args: unknown) => {
-            if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) { return; }
+            if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) {
+                mouseDebug("Button down ignored, invalid hold arguments.");
+                return;
+            }
             const { source, direction } = args;
-            if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) { return; }
+            if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) {
+                mouseDebug("Button down ignored, unknown mouse or direction.");
+                return;
+            }
+            mouseDebug(`${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)} button down.`);
             clearStageHoldFeedback();
             lastNavDirection = direction;
             return navigateWithMouseOrigin(direction, source, true);
         }),
         vscode.commands.registerCommand("better-git-vscode.finish-mouse-navigation-hold", (args: unknown) => stageMouseNavigationOrigin(args, true)),
         vscode.commands.registerCommand("better-git-vscode.cancel-mouse-navigation-hold", (source: unknown) => {
-            if (!isMouseReviewSource(source)) { return; }
+            if (!isMouseReviewSource(source)) {
+                mouseDebug("Short release ignored, unknown mouse source.");
+                return;
+            }
             const request = mouseHoldRequests.get(source);
             if (request) { request.active = false; }
             return serializeChangeNavigation(async () => {
                 if (mouseNavigationOrigins.get(source)?.holdRequest === request) { mouseNavigationOrigins.delete(source); }
                 if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
+                if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
+                mouseDebug(request
+                    ? `${mouseSourceLabel(source)} short release cleared the hold; navigation kept.`
+                    : `${mouseSourceLabel(source)} short release ignored, no hold in progress.`);
             });
         }),
     ];
@@ -751,7 +794,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
 
     let undoLastStageDisposable = vscode.commands.registerCommand(
         "better-git-vscode.undo-last-stage-and-advance",
-        () => { clearStageHoldFeedback(); return runUndoCommand(); }
+        () => {
+            const cancelledHold = cancelLatestMouseNavigationHold();
+            if (cancelledHold) { return cancelledHold; }
+            clearStageHoldFeedback();
+            return runUndoCommand();
+        }
     );
 
     // Legacy command: stage the current file WITHOUT navigating. Kept registered so anyone who bound it keeps
@@ -1137,24 +1185,66 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (source) { stageHoldReadySources.delete(source); } else { stageHoldReadySources.clear(); }
         if (affected.length) { reviewDecoEmitter.fire(affected); }
     };
+    clearStageHoldFeedbackRequest = clearStageHoldFeedback;
+    context.subscriptions.push(new vscode.Disposable(() => {
+        if (clearStageHoldFeedbackRequest === clearStageHoldFeedback) {
+            clearStageHoldFeedbackRequest = () => undefined;
+        }
+        betterGitOutputChannel?.dispose();
+        betterGitOutputChannel = undefined;
+    }));
     const stageHoldReadyCommand = vscode.commands.registerCommand("better-git-vscode.stage-hold-ready", (source: unknown) => {
-        if (!isMouseReviewSource(source)) { return; }
+        if (!isMouseReviewSource(source)) {
+            mouseDebug("Hold threshold ignored, unknown mouse source.");
+            return;
+        }
         // Capture input ownership now, even while button-down navigation is still queued.
         const request = mouseHoldRequests.get(source);
         return serializeChangeNavigation(async check => {
-            if (!vscode.window.state.focused) { return; }
+            if (!vscode.window.state.focused) {
+                mouseDebug(`${mouseSourceLabel(source)} event ignored, VS Code is not focused.`);
+                return;
+            }
             const origin = mouseNavigationOrigins.get(source);
             if (request) {
-                if (!request.active || request !== latestMouseHoldRequest || origin?.holdRequest !== request) { return; }
-                await restoreMouseReviewView(origin, check);
+                if (!request.active) {
+                    mouseDebug(`${mouseSourceLabel(source)} event ignored, hold was cancelled.`);
+                    return;
+                }
+                if (request !== latestMouseHoldRequest) {
+                    mouseDebug(`${mouseSourceLabel(source)} event ignored, another hold is in progress.`);
+                    return;
+                }
+                if (origin?.holdRequest !== request) {
+                    mouseDebug(`${mouseSourceLabel(source)} event ignored, no review item was captured.`);
+                    return;
+                }
+                const restored = await restoreMouseReviewView(origin, check);
+                if (!restored) {
+                    mouseDebug(`${mouseSourceLabel(source)} event ignored, pre-press view could not be restored.`);
+                    return;
+                }
                 await refreshReviewDecoration();
                 requestCurrentHunkOverviewMarkerRefresh();
                 check();
                 // Release/cancel may arrive while the editor was opening. Never re-light a completed hold.
-                if (!request.active || request !== latestMouseHoldRequest) { return; }
-            } else if (!currentReviewUri || currentReviewTab !== vscode.window.tabGroups.activeTabGroup.activeTab) { return; }
+                if (!request.active || request !== latestMouseHoldRequest) {
+                    mouseDebug(`${mouseSourceLabel(source)} event ignored, hold ended while restoring the view.`);
+                    return;
+                }
+            } else if (!currentReviewUri || currentReviewTab !== vscode.window.tabGroups.activeTabGroup.activeTab) {
+                mouseDebug(`${mouseSourceLabel(source)} event ignored, no hold in progress.`);
+                return;
+            }
             const target = origin?.held ? origin.change.uri : currentReviewUri;
-            if (target) { stageHoldReadySources.set(source, target); reviewDecoEmitter.fire([target]); }
+            if (target) {
+                stageHoldReadySources.set(source, target);
+                reviewDecoEmitter.fire([target]);
+                const direction = origin?.direction;
+                mouseDebug(direction
+                    ? `${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)} hold threshold reached; pre-press view restored. Release will stage.`
+                    : `${mouseSourceLabel(source)} hold threshold reached; release will stage.`);
+            }
         });
     });
     const stageHoldClearCommand = vscode.commands.registerCommand("better-git-vscode.stage-hold-clear", (source: unknown) => {
@@ -1162,6 +1252,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             const request = mouseHoldRequests.get(source);
             if (request) { request.active = false; }
             clearStageHoldFeedback(source);
+            mouseDebug(request
+                ? `${mouseSourceLabel(source)} hold feedback cleared.`
+                : `${mouseSourceLabel(source)} feedback clear ignored, no hold in progress.`);
+        } else {
+            mouseDebug("Feedback clear ignored, unknown mouse source.");
         }
     });
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
@@ -1204,8 +1299,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // theme-aware find-match accent. The Full lane deliberately paints over the native marker for this one
     // range, leaving every other hunk's red/green marker untouched.
     const currentHunkOverviewDecoration = vscode.window.createTextEditorDecorationType({
-        overviewRulerColor: new vscode.ThemeColor("editorOverviewRuler.findMatchForeground"),
+        // Opaque high-contrast colours are much easier to find than the theme's often translucent find marker.
+        overviewRulerColor: "#ffd400",
         overviewRulerLane: vscode.OverviewRulerLane.Full,
+        light: { overviewRulerColor: "#7c3aed" },
+        dark: { overviewRulerColor: "#ffd400" },
     });
     let currentHunkOverviewEditor: vscode.TextEditor | undefined;
     let currentHunkOverviewMarker: { uri: string; start: number; end: number } | undefined;
@@ -1506,6 +1604,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         whenCurrentHunkOverviewMarkerSettled: () => currentHunkMarkerRefreshPromise,
         getCurrentHunkOverviewMarker: () => currentHunkOverviewMarker && { ...currentHunkOverviewMarker },
         getScmTreeCommandTrace: () => [...scmTreeCommandTrace],
+        getMouseDebugTrace: () => [...mouseDebugTrace],
+        clearMouseDebugTrace: () => { mouseDebugTrace.length = 0; },
     };
 }
 
@@ -3772,9 +3872,9 @@ const captureMouseReviewView = (): MouseReviewView | undefined => {
         ).map(editor => ({ uri: editor.document.uri.toString(), selections: [...editor.selections], top: editor.visibleRanges[0]?.start })) };
 };
 
-const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mouseNavigationOrigins.get>>, check: NavigationCheckpoint): Promise<void> => {
+const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mouseNavigationOrigins.get>>, check: NavigationCheckpoint): Promise<boolean> => {
     const view = origin.view;
-    if (!view) { return; }
+    if (!view) { return false; }
     check();
     const sameInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input === view.input;
     if (!sameInput) {
@@ -3793,7 +3893,7 @@ const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mous
     check();
     const shown = await currentReviewFileUriAsync();
     check();
-    if (shown?.toString() !== origin.change.uri.toString()) { invalidateChangeNavigation(); return; }
+    if (shown?.toString() !== origin.change.uri.toString()) { invalidateChangeNavigation(); return false; }
     for (const saved of view.editors) {
         const editor = vscode.window.visibleTextEditors.find(candidate =>
             (candidate.viewColumn === undefined || candidate.viewColumn === view.column) && candidate.document.uri.toString() === saved.uri);
@@ -3811,6 +3911,36 @@ const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mous
             check();
         }
     }
+    return true;
+};
+
+// Agentic Mouse sends the existing exact-Undo action when the adjacent cancel cell is pressed during a hold.
+// While a hold is active, consume that action as a gesture cancel: restore the captured view, retain the Git
+// index and delete the release receipt. With no active hold, the same command keeps its normal exact Undo role.
+const cancelLatestMouseNavigationHold = (): Promise<void> | undefined => {
+    const request = latestMouseHoldRequest;
+    if (!request?.active) { return undefined; }
+    const owner = [...mouseHoldRequests.entries()].find(([, candidate]) => candidate === request);
+    if (!owner) { return undefined; }
+    const [source] = owner;
+    request.active = false; // Readiness arriving behind this input must not relight or stage the hold.
+    clearStageHoldFeedbackRequest(source);
+    return serializeChangeNavigation(async check => {
+        const origin = mouseNavigationOrigins.get(source);
+        let restored = false;
+        if (origin?.holdRequest === request) {
+            restored = await restoreMouseReviewView(origin, check);
+            requestCurrentHunkOverviewMarkerRefresh();
+        }
+        if (mouseNavigationOrigins.get(source)?.holdRequest === request) { mouseNavigationOrigins.delete(source); }
+        if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
+        if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
+        clearStageHoldFeedbackRequest(source);
+        const direction = origin?.direction;
+        mouseDebug(direction && restored
+            ? `${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)} cancel chord received; pre-press view restored. Release will do nothing.`
+            : `${mouseSourceLabel(source)} cancel chord received; no review view was restored. Release will do nothing.`);
+    });
 };
 
 // Capture inside the existing navigation queue, before moving; a rapid late press queues behind capture,
@@ -3853,21 +3983,33 @@ const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unk
 // navigation settles before a slow press. Consume the exact source receipt once, or do nothing. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
 const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> => {
     const requestedAt = performance.now();
-    if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) { return Promise.resolve(); }
+    if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) {
+        mouseDebug("Release ignored, invalid hold arguments.");
+        return Promise.resolve();
+    }
     const { source, direction } = args;
-    if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) { return Promise.resolve(); }
+    if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) {
+        mouseDebug("Release ignored, unknown mouse or direction.");
+        return Promise.resolve();
+    }
     const request = held ? mouseHoldRequests.get(source) : undefined;
     if (request) { request.active = false; }
     return serializeChangeNavigation(check => runStageCommand(async () => {
         const origin = mouseNavigationOrigins.get(source);
         mouseNavigationOrigins.delete(source);
         if (held && mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
-        if (!origin || origin.direction !== direction || requestedAt < origin.requestedAt || origin.held !== held || origin.holdRequest !== request || requestedAt - origin.requestedAt >= (held ? 60_000 : 1000)) { return; }
+        if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
+        const label = `${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)}`;
+        if (!origin) { mouseDebug(`${label} release ignored, no press in progress.`); return; }
+        if (origin.direction !== direction) { mouseDebug(`${label} release ignored, direction changed.`); return; }
+        if (requestedAt < origin.requestedAt) { mouseDebug(`${label} release ignored, event order was invalid.`); return; }
+        if (origin.held !== held || origin.holdRequest !== request) { mouseDebug(`${label} release ignored, hold ownership changed.`); return; }
+        if (requestedAt - origin.requestedAt >= (held ? 60_000 : 1000)) { mouseDebug(`${label} release ignored, hold receipt expired.`); return; }
         const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
         const repo = git?.getRepository(origin.change.uri);
-        if (!repo) { return; } // A closed repository must not redirect the captured file to the first workspace repo.
+        if (!repo) { mouseDebug(`${label} release ignored, repository is no longer open.`); return; } // A closed repository must not redirect the captured file to the first workspace repo.
         const stillUnstaged = (await getFileChanges(origin.change.uri)).some(change => !change.staged && change.uri.toString() === origin.change.uri.toString());
-        if (!stillUnstaged) { return; }
+        if (!stillUnstaged) { mouseDebug(`${label} release ignored, original item is no longer unstaged.`); return; }
         const shown = await getActiveFileUri();
         check();
         if (shown?.toString() === origin.change.uri.toString()) {
@@ -3875,6 +4017,7 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         } else {
             await stageThroughExtension(repo, origin.change.uri); // Navigation already crossed files: stage the origin without a second jump.
         }
+        mouseDebug(`${label} release staged ${path.basename(origin.change.uri.fsPath)}.`);
     }));
 };
 

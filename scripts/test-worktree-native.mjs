@@ -262,6 +262,22 @@ try {
         await check(2, `${source}-threshold-restores-origin`, 'b.txt');
         assert.equal((await request('state')).badge, '💥💥', 'the original view must be ready while held');
         await capture(`${source}-origin-ready`);
+        await key('F16', 'F16', 127); // Agentic Mouse adjacent cell: cancel this hold, not the earlier stage receipt.
+        await until(() => request('badge', { repo: 2, file: 'b.txt' }), state => state.value === '🔥🔥', 'cancel clears readiness badge');
+        await check(2, `${source}-hold-cancel-restores-origin`, 'b.txt');
+        assert.deepEqual(git(roots[2], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged.txt']);
+        await key('F18', 'F18', 129, modifiers); // A stale release after cancellation must do nothing.
+        await key('F15', 'F15', 126, source === 'corsair' ? 7 : 12);
+        await pause(250);
+        await check(2, `${source}-cancelled-release-noop`, 'b.txt');
+        assert.deepEqual(git(roots[2], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged.txt']);
+
+        // Start a fresh hold to retain the established release-stage and ordinary-Undo coverage.
+        await key('F13', 'F13', 124, modifiers);
+        await check(2, `${source}-post-cancel-hold-down`, 'c.txt');
+        await key('F20', 'F20', 131, source === 'corsair' ? 7 : 12);
+        await until(() => request('badge', { repo: 2, file: 'b.txt' }), state => state.value === '💥💥', 'post-cancel readiness badge');
+        await check(2, `${source}-post-cancel-threshold-restores-origin`, 'b.txt');
         await pause(1100);
         await key('F18', 'F18', 129, modifiers);
         await key('F15', 'F15', 126, source === 'corsair' ? 7 : 12);
