@@ -80,6 +80,11 @@ const debugLog = (tag: string, message: string): void => {
 // nav yet advances forward (top-to-bottom), which is the overwhelmingly common review order.
 let lastNavDirection: "next" | "previous" = "next";
 
+// Installed by activate() and called after Better Git navigation settles. Keeping the hook module-level lets
+// the navigation functions stay independent of VS Code decoration lifetime while the active extension instance
+// owns the actual decoration type, refresh coalescing and disposal.
+let requestCurrentHunkOverviewMarkerRefresh: () => void = () => undefined;
+
 type MouseReviewSource = "corsair" | "razer";
 type MouseHoldRequest = { active: boolean };
 type MouseReviewView = {
@@ -513,6 +518,8 @@ interface BetterGitExtensionApi {
     whenReviewDecorationSettled(): Promise<void>;
     getCurrentReviewUri(): string | undefined;
     getReviewDecorationBadge(uri: vscode.Uri): string | vscode.ThemeIcon | undefined;
+    whenCurrentHunkOverviewMarkerSettled(): Promise<void>;
+    getCurrentHunkOverviewMarker(): { uri: string; start: number; end: number } | undefined;
     getScmTreeCommandTrace(): readonly string[];
 }
 
@@ -1141,6 +1148,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 if (!request.active || request !== latestMouseHoldRequest || origin?.holdRequest !== request) { return; }
                 await restoreMouseReviewView(origin, check);
                 await refreshReviewDecoration();
+                requestCurrentHunkOverviewMarkerRefresh();
                 check();
                 // Release/cancel may arrive while the editor was opening. Never re-light a completed hold.
                 if (!request.active || request !== latestMouseHoldRequest) { return; }
@@ -1190,6 +1198,114 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             return undefined;
         },
     };
+
+    // The native diff overview ruler uses red/green for every changed range, but offers no public way to
+    // recolour only its current change. Overlay the hunk Better Git most recently navigated to with VS Code's
+    // theme-aware find-match accent. The Full lane deliberately paints over the native marker for this one
+    // range, leaving every other hunk's red/green marker untouched.
+    const currentHunkOverviewDecoration = vscode.window.createTextEditorDecorationType({
+        overviewRulerColor: new vscode.ThemeColor("editorOverviewRuler.findMatchForeground"),
+        overviewRulerLane: vscode.OverviewRulerLane.Full,
+    });
+    let currentHunkOverviewEditor: vscode.TextEditor | undefined;
+    let currentHunkOverviewMarker: { uri: string; start: number; end: number } | undefined;
+    const clearCurrentHunkOverviewMarker = (): void => {
+        try {
+            currentHunkOverviewEditor?.setDecorations(currentHunkOverviewDecoration, []);
+        } catch {
+            // A tab can dispose its TextEditor between the tab event and this queued refresh.
+        }
+        currentHunkOverviewEditor = undefined;
+        currentHunkOverviewMarker = undefined;
+    };
+    const applyCurrentHunkOverviewMarker = (
+        editor: vscode.TextEditor,
+        fileUri: vscode.Uri,
+        hunk: ModifiedHunk,
+    ): void => {
+        try {
+            currentHunkOverviewEditor?.setDecorations(currentHunkOverviewDecoration, []);
+        } catch {
+            // The old editor may already be disposed; the new active editor still gets the marker below.
+        }
+        const lastLine = Math.max(0, editor.document.lineCount - 1);
+        const start = Math.min(Math.max(0, hunk.start), lastLine);
+        const end = Math.min(Math.max(start, hunk.end), lastLine);
+        editor.setDecorations(currentHunkOverviewDecoration, [
+            new vscode.Range(new vscode.Position(start, 0), editor.document.lineAt(end).range.end),
+        ]);
+        currentHunkOverviewEditor = editor;
+        currentHunkOverviewMarker = { uri: fileUri.toString(), start, end };
+    };
+
+    // Recompute off the command's critical path. Rapid navigation coalesces to the latest request, so a slow
+    // Git diff cannot repaint a hunk from a tab or cursor position the user has already left.
+    let currentHunkMarkerRefreshRequest = 0;
+    let currentHunkMarkerRefreshRunning = false;
+    let currentHunkMarkerRefreshPromise: Promise<void> = Promise.resolve();
+    const refreshCurrentHunkOverviewMarker = (): Promise<void> => {
+        currentHunkMarkerRefreshRequest++;
+        if (currentHunkMarkerRefreshRunning) {
+            return currentHunkMarkerRefreshPromise;
+        }
+        currentHunkMarkerRefreshRunning = true;
+        currentHunkMarkerRefreshPromise = (async () => {
+            let handledRequest = -1;
+            while (handledRequest !== currentHunkMarkerRefreshRequest) {
+                handledRequest = currentHunkMarkerRefreshRequest;
+                const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+                if (!(tab?.input instanceof vscode.TabInputTextDiff)) {
+                    if (handledRequest === currentHunkMarkerRefreshRequest) {
+                        clearCurrentHunkOverviewMarker();
+                    }
+                    continue;
+                }
+                const editor = visibleEditorForActiveTab();
+                const fileUri = currentReviewFileUri();
+                if (!editor || !fileUri) {
+                    if (handledRequest === currentHunkMarkerRefreshRequest) {
+                        clearCurrentHunkOverviewMarker();
+                    }
+                    continue;
+                }
+                const active = await getActiveChange();
+                const geometry = await getModifiedSideHunkGeometry(fileUri, active?.staged === true);
+                if (
+                    handledRequest !== currentHunkMarkerRefreshRequest ||
+                    vscode.window.tabGroups.activeTabGroup.activeTab !== tab ||
+                    visibleEditorForActiveTab() !== editor
+                ) {
+                    continue;
+                }
+                const line = editor.selection.active.line;
+                const hunk =
+                    hunkContainingLine(geometry.hunks, line, 0) ??
+                    hunkContainingLine(geometry.hunks, line, 1) ??
+                    geometry.deletionStops
+                        .filter(stop => Math.abs(stop - line) <= 1)
+                        .sort((left, right) => Math.abs(left - line) - Math.abs(right - line))
+                        .map(stop => ({ start: stop, end: stop }))[0];
+                if (hunk) {
+                    applyCurrentHunkOverviewMarker(editor, fileUri, hunk);
+                } else {
+                    clearCurrentHunkOverviewMarker();
+                }
+            }
+        })().finally(() => {
+            currentHunkMarkerRefreshRunning = false;
+        });
+        return currentHunkMarkerRefreshPromise;
+    };
+    const installedCurrentHunkMarkerRefresh = () => {
+        void refreshCurrentHunkOverviewMarker();
+    };
+    requestCurrentHunkOverviewMarkerRefresh = installedCurrentHunkMarkerRefresh;
+    context.subscriptions.push(new vscode.Disposable(() => {
+        if (requestCurrentHunkOverviewMarkerRefresh === installedCurrentHunkMarkerRefresh) {
+            requestCurrentHunkOverviewMarkerRefresh = () => undefined;
+        }
+        clearCurrentHunkOverviewMarker();
+    }));
     // Recompute the current review file whenever the active editor/tab changes, and refresh the decoration
     // for both the old and new file so the badge moves with you. Resolution is async because current VS Code
     // exposes some non-text diffs (notably modified images) as an active Tab with no public `input` resource.
@@ -1324,29 +1440,51 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         commitMessageGenerator,
         stageAndAdvanceStatusBarItem, // fixed-location Stage & Next mouse target (v1.2.20)
         lastStagedStatusBarItem, // disposed cleanly on deactivate
+        currentHunkOverviewDecoration,
         configListener,
         reviewDecoEmitter,
         vscode.window.registerFileDecorationProvider(reviewDecorationProvider),
-        vscode.window.tabGroups.onDidChangeTabs(() => { observeNavigationTab(); void refreshReviewDecoration(); }),
-        vscode.window.tabGroups.onDidChangeTabGroups(() => { observeNavigationTab(); void refreshReviewDecoration(); }),
+        vscode.window.tabGroups.onDidChangeTabs(() => {
+            observeNavigationTab();
+            void refreshReviewDecoration();
+            requestCurrentHunkOverviewMarkerRefresh();
+        }),
+        vscode.window.tabGroups.onDidChangeTabGroups(() => {
+            observeNavigationTab();
+            void refreshReviewDecoration();
+            requestCurrentHunkOverviewMarkerRefresh();
+        }),
         vscode.window.onDidChangeTextEditorSelection(event => {
             if (event.textEditor === visibleEditorForActiveTab() &&
                 (event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)) {
                 invalidateChangeNavigation();
+                // A manual cursor move is no longer a Better Git-selected hunk. Clear immediately instead of
+                // spawning a Git diff on every arrow-key repeat; the next Better Git navigation repaints it.
+                clearCurrentHunkOverviewMarker();
             }
         }),
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
                 invalidateChangeNavigation(); // Git hunk coordinates no longer describe the displayed revision.
+                clearCurrentHunkOverviewMarker();
             }
         }),
-        vscode.window.onDidChangeActiveTextEditor(() => { clearStageHoldFeedback(); void refreshReviewDecoration(); }),
-        vscode.window.onDidChangeActiveNotebookEditor(() => { clearStageHoldFeedback(); void refreshReviewDecoration(); })
+        vscode.window.onDidChangeActiveTextEditor(() => {
+            clearStageHoldFeedback();
+            void refreshReviewDecoration();
+            requestCurrentHunkOverviewMarkerRefresh();
+        }),
+        vscode.window.onDidChangeActiveNotebookEditor(() => {
+            clearStageHoldFeedback();
+            void refreshReviewDecoration();
+            requestCurrentHunkOverviewMarkerRefresh();
+        })
     );
 
     // Activation can occur after a review tab is already open, in which case no subsequent editor event is
     // guaranteed. Seed the provider from the current active tab once instead of waiting for user movement.
     void refreshReviewDecoration();
+    requestCurrentHunkOverviewMarkerRefresh();
 
     return {
         whenScmTreeStateSettled,
@@ -1365,6 +1503,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 tokenSource.dispose();
             }
         },
+        whenCurrentHunkOverviewMarkerSettled: () => currentHunkMarkerRefreshPromise,
+        getCurrentHunkOverviewMarker: () => currentHunkOverviewMarker && { ...currentHunkOverviewMarker },
         getScmTreeCommandTrace: () => [...scmTreeCommandTrace],
     };
 }
@@ -3705,6 +3845,7 @@ const navigateWithMouseOrigin = (direction: typeof lastNavDirection, source: unk
             mouseNavigationOrigins.clear();
         }
         await (direction === "next" ? goToNextDiffOnce(check) : goToPreviousDiffOnce(check));
+        requestCurrentHunkOverviewMarkerRefresh();
     });
 };
 
@@ -3920,7 +4061,12 @@ const ordinaryChangeNavigation = (step: typeof goToNextDiffOnce): Promise<void> 
     mouseHoldRequests.forEach(request => { request.active = false; });
     latestMouseHoldRequest = undefined;
     mouseHoldRequests.clear();
-    return serializeChangeNavigation(async check => { mouseNavigationOrigins.clear(); await step(check); });
+    return serializeChangeNavigation(async check => {
+        mouseNavigationOrigins.clear();
+        await step(check);
+        // Paint after the navigation promise settles, but do not make the next keypress wait for Git geometry.
+        requestCurrentHunkOverviewMarkerRefresh();
+    });
 };
 const goToNextDiff = (): Promise<void> => ordinaryChangeNavigation(goToNextDiffOnce);
 const goToPreviousDiff = (): Promise<void> => ordinaryChangeNavigation(goToPreviousDiffOnce);
