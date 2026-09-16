@@ -1624,7 +1624,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
         const ownedStagePreview = next && [...stageHoldSelections.values()].some(selection =>
             selection.request?.active && selection.request === latestMouseHoldRequest
-            && selection.items[selection.cursorIndex]?.uri.toString() === next.toString());
+            && selectedMouseStageItems(selection).some(change => change.uri.toString() === next.toString()));
         if ((currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) && !ownedStagePreview) {
             clearStageHoldFeedback();
         }
