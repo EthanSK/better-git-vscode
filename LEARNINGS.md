@@ -1,5 +1,15 @@
 # Learnings
 
+## Preview every endpoint of a held mouse stage range (2026-09-16)
+
+**Trigger:** Ethan wanted every wheel detent during a stage-ready mouse hold to open the newest file added to the pending batch in the main editor. Cancelling the batch needed to return to the exact diff view from before range selection.
+
+**Cause:** The range state previously changed only Source Control decorations. Opening endpoint previews also exposed two asynchronous VS Code races: Git can replace a preview tab after its command promise resolves, and the review-decoration refresh can briefly resolve the old file or no file while the replacement tab renders. Either event could invalidate or clear the live selection before the next wheel detent.
+
+**Change:** Version 1.2.90 opens the range cursor after every effective wheel move through the existing serialized navigation queue. Every held gesture captures its original tab input, diff resources, text selections and viewport. The adjacent stage-ready cancel chord restores that exact view and consumes the later release. Delayed Git tab replacement is accepted only for the source-owned preview target, while manual tab changes still invalidate the hold; transient decoration refreshes no longer own cancellation. Multi-file release keeps the existing batch stage, advance target and one-transaction Undo behavior.
+
+**Verification:** TypeScript compilation, lint, production packaging and all 87 non-GUI tests passed. A focused isolated VS Code 1.138.0 run on the Mini passed endpoint preview after each wheel detent, reverse contraction, upward range growth, wrong-source rejection, batch stage and advance, one exact Undo, and cancellation restoring the original tracked diff, cursor selection and viewport while making the later release inert. The Mini and packaged local production JavaScript match at SHA-256 `5872fac2cff2fb6e239a009962d58795397827ef3fa9f6fd9df1db30fd30cc9b`.
+
 ## Treat a held keyboard stage shortcut as one physical gesture (2026-09-16)
 
 **Trigger:** Holding a Shift+Option Stage-and-Next/Previous keyboard shortcut let macOS key repeat invoke the VS Code command again and again, staging and advancing through several files before the key was released. Ethan required one stage per continuous hold and another stage only after release and a fresh press.
