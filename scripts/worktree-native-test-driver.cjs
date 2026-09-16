@@ -18,6 +18,8 @@ exports.run = async () => {
  await vscode.commands.executeCommand('workbench.scm.action.expandAllRepositories');
  const input = path.join(root,'request.json'), output=path.join(root,'result.json');
  let previous=0, busy=false;
+ let watchedTabs=[];
+ let tabWatch;
  const state=()=>({ focused:vscode.window.state.focused, badge:api.getCurrentReviewUri() ? api.getReviewDecorationBadge(vscode.Uri.parse(api.getCurrentReviewUri())) : undefined, trace:api.getScmTreeCommandTrace(), active:String(vscode.window.activeTextEditor?.document.uri), tabs:vscode.window.tabGroups.activeTabGroup.tabs.map(t=>({label:t.label,active:t.isActive})) });
  fs.writeFileSync(path.join(root,'ready.json'),JSON.stringify({ roots, version:vscode.version, ...state() }));
  await new Promise(resolve=> {
@@ -28,9 +30,15 @@ exports.run = async () => {
    previous=request.id; busy=true;
    try {
     let value;
-    if(request.action==='badge') value=api.getReviewDecorationBadge(vscode.Uri.file(path.join(roots[request.repo],request.file)));
+    if(request.action==='watch-tabs') {
+     watchedTabs=[]; tabWatch?.dispose();
+     tabWatch=vscode.window.tabGroups.onDidChangeTabs(()=>{const input=vscode.window.tabGroups.activeTabGroup.activeTab?.input; watchedTabs.push(String(input?.modified??input?.uri));});
+    }
+    else if(request.action==='watched-tabs') {tabWatch?.dispose(); value=watchedTabs;}
+    else if(request.action==='badge') value=api.getReviewDecorationBadge(vscode.Uri.file(path.join(roots[request.repo],request.file)));
     else if(request.action==='open') value=await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control',vscode.Uri.file(roots[request.repo]));
-    else if(request.action==='plain') value=await vscode.commands.executeCommand('vscode.open',vscode.Uri.file(path.join(roots[request.repo],'a.txt')));
+    else if(request.action==='plain') value=await vscode.commands.executeCommand('vscode.open',vscode.Uri.file(path.join(roots[request.repo],request.file??'a.txt')), {preview:request.preview??true});
+    else if(request.action==='working') value=await vscode.commands.executeCommand('git.openChange',vscode.Uri.file(path.join(roots[request.repo],request.file)));
     else if(request.action==='refresh') value=await git.getRepository(vscode.Uri.file(roots[request.repo])).status();
     else if(request.action==='uri') {
      if(!uriHandler) throw new Error('Better Git URI handler was not captured');

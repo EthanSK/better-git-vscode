@@ -19,6 +19,7 @@ const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { enco
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const testReturnApp = process.argv.includes('--return-app');
 const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
+const testStageReveal = process.argv.includes('--stage-reveal');
 async function until(read, accept, description, timeout = 15_000) {
     const end = Date.now() + timeout;
     let last;
@@ -121,10 +122,10 @@ async function check(repo, name, file = 'a.txt') {
         }
     }
     await capture(name);
+    assert.equal(rows.find(r => r.aria === 'Staged Changes')?.expanded, 'false', `${name}: Staged Changes remained expanded`);
     const repositories = rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria));
     assert.equal(repositories.length, 9, `${name}: missing repository headers`);
     assert.deepEqual(repositories.filter(r => r.expanded === 'true').map(r => r.aria), [`repo-${repo} Git`], `${name}: expanded repositories`);
-    assert.equal(rows.find(r => r.aria === 'Staged Changes')?.expanded, 'false', `${name}: Staged Changes remained expanded`);
     assert.equal(rows.find(r => r.aria === 'Changes')?.expanded, 'true', `${name}: Changes must stay expanded`);
     assert.ok(rows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ',')), `${name}: wrong selected file`);
     console.log(`PASS ${name}`);
@@ -201,7 +202,49 @@ try {
     fs.writeFileSync(path.join(roots[1], 'staged-late.txt'), 'late staged change\n'); git(roots[1], 'add', 'staged-late.txt');
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'switch-after-staged-refresh');
-    if (testReturnApp) {
+    if (testStageReveal) {
+        // Closing a pinned review tab must never activate a staged-only background editor.
+        // Its file: URI causes SCM Auto Reveal to expand Staged Changes and scroll the tree.
+        await request('plain', { repo: 1, file: 'staged.txt', preview: false });
+        await request('open', { repo: 1 });
+        await request('command', { command: 'workbench.action.keepEditor' });
+        await check(1, 'pinned-review-before-stage');
+        await request('watch-tabs');
+        await key('F18', 'F18', 129);
+        await check(1, 'pinned-review-after-stage', 'b.txt');
+        const transitions = (await request('watched-tabs')).value;
+        assert.ok(!transitions.some(uri => uri.includes('/staged.txt')), `staged editor flashed: ${JSON.stringify(transitions)}`);
+        await request('command', { command: 'workbench.action.keepEditor' });
+        await key('F18', 'F18', 129); await key('F18', 'F18', 129);
+        await check(1, 'pinned-rapid-stage', 'd.txt');
+        for (const file of ['c.txt', 'b.txt', 'a.txt']) {
+            await key('F16', 'F16', 127); await check(1, `pinned-undo-${file}`, file);
+        }
+        await request('plain', { repo: 2, file: 'staged.txt', preview: false });
+        await request('open', { repo: 2 });
+        await request('working', { repo: 2, file: 'c.txt' });
+        await request('command', { command: 'workbench.action.keepEditor' });
+        await request('command', { command: 'better-git-vscode.stage-and-previous-changed-file' });
+        await check(2, 'pinned-stage-previous', 'b.txt');
+        await request('plain', { repo: 3, file: 'staged.txt', preview: false });
+        await request('open', { repo: 3 });
+        await request('command', { command: 'better-git-vscode.begin-mouse-navigation-hold', args: [{source:'corsair',direction:'next'}] });
+        await request('command', { command: 'better-git-vscode.stage-hold-ready', args: ['corsair'] });
+        await request('command', { command: 'better-git-vscode.adjust-mouse-stage-selection', args: ['corsair', 'down'] });
+        await request('command', { command: 'workbench.action.keepEditor' });
+        await request('command', { command: 'better-git-vscode.finish-mouse-navigation-hold', args: [{source:'corsair',direction:'next'}] });
+        await check(3, 'pinned-batch-stage', 'c.txt');
+        assert.deepEqual(git(roots[3], 'diff', '--cached', '--name-only').trim().split('\n'), ['a.txt','b.txt','staged.txt']);
+        await key('F16', 'F16', 127); await check(3, 'pinned-batch-undo', 'a.txt');
+        await expandStagedGroup();
+        await request('command', { command: 'workbench.action.keepEditor' });
+        await key('F18', 'F18', 129);
+        await until(() => request('state'), state => state.active.endsWith('/b.txt'), 'stage after manual expansion');
+        await pause(350);
+        assert.equal((await evaluate(rowsExpression)).find(r => r.aria === 'Staged Changes')?.expanded, 'true', 'manually expanded Staged Changes must remain expanded');
+        await capture('manually-expanded-stage-preserved');
+        console.log('BETTER_GIT_STAGE_REVEAL_VERIFIED');
+    } else if (testReturnApp) {
         // Dummy apps are launched by the test caller, never by production focus code.
         const appA = process.env.BGV_RETURN_APP_A;
         const appB = process.env.BGV_RETURN_APP_B;

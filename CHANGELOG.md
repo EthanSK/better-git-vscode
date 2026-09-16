@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.91] — keep staged changes still during review
+
+- Open the next review file before closing the previous pinned editor, preventing a background staged file from briefly activating and expanding Staged Changes.
+- Preserve deliberately expanded groups and unsaved editors, without adding a navigation delay or changing mouse timing.
+
 ## [1.2.90] — preview a held mouse range
 
 - Open each newly selected range endpoint in the main editor while a stage-ready mouse hold is extended or contracted with the wheel.

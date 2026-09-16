@@ -3070,6 +3070,30 @@ suite('SCM change navigation E2E', () => {
 		assert.strictEqual(git('diff --cached --name-only'), '');
 	});
 
+	for (const direction of ['next', 'previous'] as const) {
+		test(`pinned stage ${direction} never activates a background staged file`, async () => {
+			write('zz_background.txt', 'already staged');
+			git('add zz_background.txt');
+			write('review_a.txt', 'a');
+			write('review_b.txt', 'b');
+			await refreshUntil(() => inIndex('zz_background.txt') && isUntracked('review_b.txt'), 'pinned stage fixture');
+			await openPlainAt('zz_background.txt', 0);
+			const origin = direction === 'next' ? 'review_a.txt' : 'review_b.txt';
+			const target = direction === 'next' ? 'review_b.txt' : 'review_a.txt';
+			await openPlainAt(origin, 0);
+			const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab!;
+			const seen: (string | undefined)[] = [];
+			const listener = vscode.window.tabGroups.onDidChangeTabs(() => seen.push(activeTabPath()));
+			try {
+				await vscode.commands.executeCommand(`better-git-vscode.stage-and-${direction}-changed-file`);
+				await expectActiveTab(target);
+				assert.ok(!seen.includes(wsUri('zz_background.txt').path), `background staged file activated: ${seen}`);
+				assert.ok(!vscode.window.tabGroups.all.some(group => group.tabs.includes(originalTab)), 'replaced clean pinned tab must close');
+				assert.ok(inIndex(origin), 'the original file must be staged');
+			} finally { listener.dispose(); }
+		});
+	}
+
 	test('undo latest Stage + Next restores the exact pre-stage index', async () => {
 		const partiallyStaged = lines(24, 'mod_a').split('\n');
 		partiallyStaged[2] = 'mod_a PREVIOUSLY STAGED line 3';

@@ -4051,10 +4051,19 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
     if (check === noNavigationCheckpoint) {
         invalidateChangeNavigation();
     }
+    const previousTab = closeCurrent ? vscode.window.tabGroups.activeTabGroup.activeTab : undefined;
     navigationOwnTabChange = true;
     try {
-        if (closeCurrent) { await vscode.commands.executeCommand("workbench.action.closeActiveEditor"); }
         await openChangeEntry(entry);
+        // Closing first activates an unrelated background tab. A staged-only file: tab then
+        // makes SCM Auto Reveal expand Staged Changes, even after the next review file opens.
+        // Open the destination first and close only the captured, now-inactive clean tab.
+        // Failed opens and unsaved edits must retain the original editor.
+        if (previousTab && !previousTab.isActive && !previousTab.isDirty
+            && vscode.window.tabGroups.all.some(group => group.tabs.includes(previousTab))
+            && (await currentReviewFileUriAsync())?.toString() === entry.uri.toString()) {
+            await vscode.window.tabGroups.close(previousTab, true);
+        }
     } finally {
         observeNavigationTab();
         navigationOwnTabChange = false;

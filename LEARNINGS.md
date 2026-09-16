@@ -1,5 +1,15 @@
 # Learnings
 
+## Avoid activating background staged editors during review navigation (2026-09-17)
+
+**Trigger:** Staging a file sometimes expanded Staged Changes and jumped Source Control, especially with several pinned review tabs already open.
+
+**Cause:** `openNavigationTarget` closed the active editor before opening its destination. Closing a pinned tab briefly activated a background staged-only `file:` editor. VS Code's native `scm.autoReveal` then expanded Staged Changes and scrolled to that resource; opening the next unstaged diff did not restore the collapsed group. The isolated native reproduction used F18 without Agentic Mouse and failed on 1.2.90, so the demonstrated cause is Better Git's tab handoff rather than the mouse transport.
+
+**Change:** Open the destination first, then close only the captured, now-inactive clean original tab with the public tab API and `preserveFocus`. Keep the original if the destination failed to open, the original became dirty, or it is still active. No delay, mouse timing change, automatic recollapse or global SCM setting change is needed; deliberately expanded groups remain expanded.
+
+**Verification:** All 87 non-GUI tests, compilation, lint and production packaging passed. Twelve focused real VS Code 1.138.0 E2Es on the Mini passed pinned Next/Previous without transient background activation, rapid staging, range preview/cancel, batch staging, exact Undo and its three-entry cap. The native `--stage-reveal` scenario reproduced the expanded group on the old implementation and passed the fix across Next, Previous, repeated stage, three Undos, pinned batch release/Undo and preservation of a deliberately expanded group, alongside existing worktree switch checks. Inspected screenshots show Staged Changes collapsed with the correct next unstaged file selected. The tested production JavaScript is SHA-256 `c376a66bc3fc7d9003d0a353d4c64b8b420ca5104459525119b5ce11467b20de`. Physical mouse acceptance remains separate from these native command tests.
+
 ## Preview every endpoint of a held mouse stage range (2026-09-16)
 
 **Trigger:** Ethan wanted every wheel detent during a stage-ready mouse hold to open the newest file added to the pending batch in the main editor. Cancelling the batch needed to return to the exact diff view from before range selection.
