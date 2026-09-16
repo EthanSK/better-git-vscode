@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.88] — undo through the live adjacent chord
+
+- Apply the adjacent-cell rule to the bare F16 that Agentic Mouse's live Karabiner rules actually emit between the source-tagged F14 and F15: before stage-ready it cancels the hold and performs the exact Undo; after stage-ready it cancels only the pending stage.
+- Keep a release-only hold alive through its short-release registration even when button-down captured no unstaged review item, so a quick chord on a just-staged file still undoes instead of being dropped as stale input.
+- Return the chord to Undo when readiness could not light a stage-ready decoration. Short navigation, long staging, range selection, the inert later release and the three-entry Undo cap are unchanged.
+
 ## [1.2.87] — restore quick adjacent Undo
 
 - Press the adjacent mouse cell before the 200 ms stage-ready threshold to cancel the unfinished hold and Undo the previous stage.

@@ -20,6 +20,7 @@ import {
     moveMouseStageSelection,
     selectedMouseStageItems,
 } from "./mouseStageSelection";
+import { MouseHoldChordState, registerMouseShortRelease, resolveAdjacentMouseChord } from "./mouseHoldChord";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -116,13 +117,10 @@ let lastNavDirection: "next" | "previous" = "next";
 let requestCurrentHunkOverviewMarkerRefresh: () => void = () => undefined;
 
 type MouseReviewSource = "corsair" | "razer";
-type MouseHoldRequest = {
-    active: boolean;
-    shortReleasePending?: boolean;
-    // Set synchronously when F20 arrives, before its queued Git/editor work. The adjacent F16 chord uses this
-    // input-order fact to distinguish a quick Undo chord from a ready-hold cancel even if navigation is busy.
-    stageReadyRequested?: boolean;
-};
+// `stageReadyRequested` is set synchronously when F20 arrives, before its queued Git/editor work. The adjacent
+// F16 chord uses this input-order fact to distinguish a quick Undo chord from a ready-hold cancel even if
+// navigation is busy. See mouseHoldChord.ts for the shared decision rule.
+type MouseHoldRequest = MouseHoldChordState;
 type ActiveMouseStageSelection = MouseStageSelection<FileChange> & { request?: MouseHoldRequest };
 type MouseReviewView = {
     input: unknown;
@@ -787,12 +785,16 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             const request = mouseHoldRequests.get(source);
             return serializeChangeNavigation(async check => {
                 const origin = mouseNavigationOrigins.get(source);
-                if (request?.active && origin?.holdRequest === request && !origin.navigateOnButtonDown) {
-                    request.shortReleasePending = true;
-                    mouseDebug(`${mouseSourceLabel(source)} ${mouseDirectionLabel(origin.direction)} short release registered.`);
+                const reviewItemCaptured = request !== undefined && origin?.holdRequest === request;
+                const outcome = registerMouseShortRelease(request, reviewItemCaptured);
+                if (outcome === "pending" || outcome === "pending-without-review-item") {
+                    // Without a review item the hold still stays alive for the adjacent F16 that Agentic Mouse
+                    // sends right after this F14; the F15 boundary then finds no review item and stays inert.
+                    mouseDebug(origin && outcome === "pending"
+                        ? `${mouseSourceLabel(source)} ${mouseDirectionLabel(origin.direction)} short release registered.`
+                        : `${mouseSourceLabel(source)} short release registered; no review item was captured, so the boundary will not navigate.`);
                     return;
                 }
-                if (request) { request.active = false; }
                 if (origin?.holdRequest === request) { mouseNavigationOrigins.delete(source); }
                 if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
                 if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
@@ -841,16 +843,22 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 mouseDebug("Cancel chord ignored, unknown mouse source.");
                 return;
             }
-            const activeRequest = source === undefined ? undefined : mouseHoldRequests.get(source);
-            const cancelOnly = activeRequest?.stageReadyRequested === true;
+            // The live Agentic Mouse chord delivers this Undo key BARE (through the user's plain `f16` binding),
+            // while Better Git's contributed bindings tag it per mouse. Decide both from the same input-order
+            // rule before cancelling, because cancellation clears the readiness flag's owner.
+            const hold = source === undefined ? latestMouseHoldRequest : mouseHoldRequests.get(source);
+            const outcome = resolveAdjacentMouseChord(hold);
             const cancelledHold = cancelMouseNavigationHold(source);
             if (cancelledHold) {
                 // The adjacent mouse cell has two deliberate meanings. Before the 200 ms readiness event it is
                 // the original quick Undo gesture: consume the unfinished hold, then restore the latest stage.
                 // Once F20 has arrived, it cancels only the pending stage selection and preserves Undo history.
-                return source !== undefined && !cancelOnly
-                    ? cancelledHold.then(runUndoCommand)
-                    : cancelledHold;
+                if (outcome === "cancel-only") { return cancelledHold; }
+                return cancelledHold.then(runUndoCommand, error => {
+                    // The user asked for Undo; a failed view restoration must not swallow it.
+                    mouseDebug(`Cancel chord restoration failed before Undo: ${String(error)}`);
+                    return runUndoCommand();
+                });
             }
             // A source-tagged F16 belongs only to an adjacent mouse chord. If its hold already ended,
             // consume the stale input instead of turning it into an unrelated staging Undo.
@@ -1323,6 +1331,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     return;
                 }
                 if (origin?.holdRequest !== request) {
+                    // No stage-ready decoration can appear, so a later adjacent press still means Undo.
+                    request.stageReadyRequested = false;
                     mouseDebug(`${mouseSourceLabel(source)} event ignored, no review item was captured.`);
                     return;
                 }
@@ -1351,6 +1361,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 const anchorIndex = changes.findIndex(change => change.uri.toString() === target.toString());
                 const selection = createMouseStageSelection(changes, anchorIndex);
                 if (!selection) {
+                    if (request?.active && request === latestMouseHoldRequest) { request.stageReadyRequested = false; }
                     mouseDebug(`${mouseSourceLabel(source)} hold threshold ignored, review item is no longer unstaged.`);
                     return;
                 }
@@ -4068,7 +4079,8 @@ const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mous
 
 // Agentic Mouse sends the existing exact-Undo action when the adjacent cancel cell is pressed during a hold.
 // While a hold is active, consume that action as a gesture cancel: restore the captured view, retain the Git
-// index and delete the release receipt. With no active hold, the same command keeps its normal exact Undo role.
+// index and delete the release receipt. The caller decides separately (from input order) whether the exact
+// staging Undo follows; with no active hold, the same command keeps its normal exact Undo role.
 const cancelMouseNavigationHold = (source?: MouseReviewSource): Promise<void> | undefined => {
     const request = source ? mouseHoldRequests.get(source) : latestMouseHoldRequest;
     if (!request?.active) { return undefined; }
@@ -4114,7 +4126,9 @@ const navigateWithMouseOrigin = (
 ): Promise<void> => {
     const requestedAt = performance.now();
     observeNavigationTab();
-    const holdRequest = held && isMouseReviewSource(source) ? { active: true } : undefined;
+    const holdRequest: MouseHoldRequest | undefined = held && isMouseReviewSource(source)
+        ? { active: true, navigateOnButtonDown }
+        : undefined;
     latestMouseHoldRequest = holdRequest;
     if (isMouseReviewSource(source)) {
         const previous = mouseHoldRequests.get(source);
