@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.88",
+  "version": "1.2.89",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -615,49 +615,81 @@
         "command": "better-git-vscode.stage-and-next-changed-file",
         "key": "shift+alt+.",
         "mac": "shift+alt+.",
-        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)",
+        "args": {
+          "source": "keyboard",
+          "physicalKey": "period"
+        }
       },
       {
         "command": "better-git-vscode.stage-and-next-changed-file",
         "key": "shift+alt+v",
         "mac": "shift+alt+v",
-        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)",
+        "args": {
+          "source": "keyboard",
+          "physicalKey": "period"
+        }
       },
       {
         "command": "better-git-vscode.stage-and-next-changed-file",
         "key": "shift+alt+x",
         "mac": "shift+alt+x",
-        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)",
+        "args": {
+          "source": "keyboard",
+          "physicalKey": "x"
+        }
       },
       {
         "command": "better-git-vscode.stage-and-next-changed-file",
         "key": "shift+alt+q",
         "mac": "shift+alt+q",
-        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)",
+        "args": {
+          "source": "keyboard",
+          "physicalKey": "x"
+        }
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
         "key": "shift+alt+,",
         "mac": "shift+alt+,",
-        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)",
+        "args": {
+          "source": "keyboard",
+          "physicalKey": "comma"
+        }
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
         "key": "shift+alt+w",
         "mac": "shift+alt+w",
-        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)"
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)",
+        "args": {
+          "source": "keyboard",
+          "physicalKey": "comma"
+        }
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
         "key": "shift+alt+z",
         "mac": "shift+alt+z",
-        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+        "when": "!config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)",
+        "args": {
+          "source": "keyboard",
+          "physicalKey": "z"
+        }
       },
       {
         "command": "better-git-vscode.stage-and-previous-changed-file",
         "key": "shift+alt+;",
         "mac": "shift+alt+;",
-        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)"
+        "when": "config.better-git-vscode.dvorakMode && (config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both)",
+        "args": {
+          "source": "keyboard",
+          "physicalKey": "z"
+        }
       },
       {
         "command": "better-git-vscode.revert-and-save",

@@ -137,23 +137,27 @@ suite('Extension Test Suite', () => {
 
 		const right = '(config.better-git-vscode.navigationHands == right || config.better-git-vscode.navigationHands == both)';
 		const left = 'config.better-git-vscode.navigationHands == left || config.better-git-vscode.navigationHands == both';
+		// Stage-and-advance keyboard bindings carry the physical key so the extension can hold a held key to
+		// exactly one stage (keyboardStageRepeatGuard.ts). Both layouts of one physical key share the tag;
+		// plain navigation bindings stay untagged.
+		const keyboard = (physicalKey: 'x' | 'z' | 'comma' | 'period') => ({ source: 'keyboard', physicalKey });
 		const expected = [
-			['better-git-vscode.next-scm-change', 'alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.next-scm-change', 'alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.next-scm-change', 'alt+x', `!config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.next-scm-change', 'alt+q', `config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.previous-scm-change', 'alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.previous-scm-change', 'alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.previous-scm-change', 'alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.previous-scm-change', 'alt+;', `config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+.', `!config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+v', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+x', `!config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+q', `config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+,', `!config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+w', `config.better-git-vscode.dvorakMode && ${right}`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+z', `!config.better-git-vscode.dvorakMode && (${left})`],
-			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+;', `config.better-git-vscode.dvorakMode && (${left})`]
+			['better-git-vscode.next-scm-change', 'alt+.', `!config.better-git-vscode.dvorakMode && ${right}`, undefined],
+			['better-git-vscode.next-scm-change', 'alt+v', `config.better-git-vscode.dvorakMode && ${right}`, undefined],
+			['better-git-vscode.next-scm-change', 'alt+x', `!config.better-git-vscode.dvorakMode && (${left})`, undefined],
+			['better-git-vscode.next-scm-change', 'alt+q', `config.better-git-vscode.dvorakMode && (${left})`, undefined],
+			['better-git-vscode.previous-scm-change', 'alt+,', `!config.better-git-vscode.dvorakMode && ${right}`, undefined],
+			['better-git-vscode.previous-scm-change', 'alt+w', `config.better-git-vscode.dvorakMode && ${right}`, undefined],
+			['better-git-vscode.previous-scm-change', 'alt+z', `!config.better-git-vscode.dvorakMode && (${left})`, undefined],
+			['better-git-vscode.previous-scm-change', 'alt+;', `config.better-git-vscode.dvorakMode && (${left})`, undefined],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+.', `!config.better-git-vscode.dvorakMode && ${right}`, keyboard('period')],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+v', `config.better-git-vscode.dvorakMode && ${right}`, keyboard('period')],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+x', `!config.better-git-vscode.dvorakMode && (${left})`, keyboard('x')],
+			['better-git-vscode.stage-and-next-changed-file', 'shift+alt+q', `config.better-git-vscode.dvorakMode && (${left})`, keyboard('x')],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+,', `!config.better-git-vscode.dvorakMode && ${right}`, keyboard('comma')],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+w', `config.better-git-vscode.dvorakMode && ${right}`, keyboard('comma')],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+z', `!config.better-git-vscode.dvorakMode && (${left})`, keyboard('z')],
+			['better-git-vscode.stage-and-previous-changed-file', 'shift+alt+;', `config.better-git-vscode.dvorakMode && (${left})`, keyboard('z')]
 		];
 		const handAwareCommandIds = new Set([
 			'better-git-vscode.next-scm-change',
@@ -161,6 +165,7 @@ suite('Extension Test Suite', () => {
 			'better-git-vscode.stage-and-next-changed-file',
 			'better-git-vscode.stage-and-previous-changed-file'
 		]);
+		// Mouse transports tag these commands with a plain source string; everything else is a keyboard binding.
 		const actual = (manifest.contributes?.keybindings as Array<{
 			command: string;
 			key: string;
@@ -168,8 +173,8 @@ suite('Extension Test Suite', () => {
 			when?: string;
 			args?: unknown;
 		}>)
-			.filter(binding => handAwareCommandIds.has(binding.command) && binding.args === undefined)
-			.map(binding => [binding.command, binding.key, binding.when]);
+			.filter(binding => handAwareCommandIds.has(binding.command) && typeof binding.args !== 'string')
+			.map(binding => [binding.command, binding.key, binding.when, binding.args]);
 
 		assert.deepStrictEqual(actual, expected);
 		const contributedKeybindings = manifest.contributes?.keybindings as Array<{ command: string; key: string; mac?: string }>;

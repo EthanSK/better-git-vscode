@@ -32,6 +32,8 @@ Approve as you go. Holding **Shift** on the nav key stages the file you're looki
 
 `Shift+Option+.` stage & next · `Shift+Option+,` stage & previous.
 
+Each physical Stage-and-Next/Previous press stages once. Holding the navigation key down cannot auto-repeat through several files; release it and press again to stage the next file. Mouse F18/F19 staging remains independently repeatable.
+
 ### 3. Fix something without losing your place
 
 When you open a *staged* file, what you see is a frozen, read-only snapshot of what's staged — you can't actually edit it there. Spot a bug mid-review and you'd normally have to go hunt down the real file. **One key does it for you:** it opens the actual, editable working file at the *exact* line and scroll position you were looking at. See it, fix it, on the spot.
