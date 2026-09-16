@@ -2325,11 +2325,14 @@ suite('SCM change navigation E2E', () => {
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('batch_c.txt')), undefined, 'wheel must be inert before readiness');
 			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
 			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			assert.strictEqual(activeTabPath(), wsUri('batch_c.txt').path, 'first wheel step must preview its new endpoint');
 			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			assert.strictEqual(activeTabPath(), wsUri('batch_d.txt').path, 'second wheel step must preview its new endpoint');
 			for (const name of ['batch_b.txt', 'batch_c.txt', 'batch_d.txt']) {
 				assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(name)), '💥💥', `${name} must be selected`);
 			}
 			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'up');
+			assert.strictEqual(activeTabPath(), wsUri('batch_c.txt').path, 'contracting the range must preview the current endpoint');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('batch_d.txt')), undefined, 'reverse wheel must contract the range');
 
 			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
@@ -2339,6 +2342,57 @@ suite('SCM change navigation E2E', () => {
 			assert.strictEqual(activeTabPath(), wsUri('batch_d.txt').path, 'release must land after the staged range');
 			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 			assert.strictEqual(git('diff --cached --name-only'), 'batch_existing.txt', 'one Undo must restore the full batch and keep older staged work');
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('stage-ready wheel previews endpoint diffs and cancel restores the exact original diff view', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			const first = lines(40, 'preview_a').split('\n');
+			first[25] = 'preview_a changed line';
+			const second = lines(10, 'preview_d').split('\n');
+			second[4] = 'preview_d changed line';
+			const third = lines(260, 'preview_e').split('\n');
+			third[110] = 'preview_e changed line';
+			write('committed/mod_a.txt', first.join('\n'));
+			write('committed/mod_d.txt', second.join('\n'));
+			write('committed/tall_e.txt', third.join('\n'));
+			await refreshUntil(
+				() => ['committed/mod_a.txt', 'committed/mod_d.txt', 'committed/tall_e.txt'].every(rel => inWorkingTree(rel, 5)),
+				'wheel preview diff files'
+			);
+
+			const originalEditor = await openWorkingDiffAt('committed/mod_a.txt', 25);
+			originalEditor.selection = new vscode.Selection(25, 2, 25, 7);
+			originalEditor.revealRange(new vscode.Range(18, 0, 18, 0), vscode.TextEditorRevealType.AtTop);
+			await sleep(100);
+			const originalSelection = originalEditor.selection;
+			const originalTop = originalEditor.visibleRanges[0].start.line;
+
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			assert.strictEqual(activeTabPath(), wsUri('committed/mod_d.txt').path);
+			assert.ok(vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
+				'wheel endpoint must open as a diff preview');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			assert.strictEqual(activeTabPath(), wsUri('committed/tall_e.txt').path);
+			assert.ok(vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
+				'each newly selected endpoint must replace the main diff preview');
+
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', 'corsair');
+			assert.strictEqual(activeTabPath(), wsUri('committed/mod_a.txt').path, 'cancel must restore the pre-selection file');
+			assert.ok(vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
+				'cancel must restore the original diff view');
+			const restored = visibleEditorFor(wsUri('committed/mod_a.txt'))!;
+			assert.deepStrictEqual(restored.selection, originalSelection, 'cancel must restore the original cursor selection');
+			assert.strictEqual(restored.visibleRanges[0].start.line, originalTop, 'cancel must restore the original viewport');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			assert.strictEqual(git('diff --cached --name-only'), '', 'release after cancel must remain inert');
+			assert.strictEqual(activeTabPath(), wsUri('committed/mod_a.txt').path);
 		} finally {
 			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
 		}
@@ -2378,7 +2432,9 @@ suite('SCM change navigation E2E', () => {
 			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
 			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
 			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			assert.strictEqual(activeTabPath(), wsUri('range_cancel_b.txt').path, 'wheel must preview the pending range endpoint');
 			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', 'corsair');
+			assert.strictEqual(activeTabPath(), wsUri('range_cancel_a.txt').path, 'cancel must restore the pre-selection view');
 			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
 			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
 			assert.strictEqual(git('diff --cached --name-only'), '');

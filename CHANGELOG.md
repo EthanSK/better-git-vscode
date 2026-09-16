@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.90] — preview a held mouse range
+
+- Open each newly selected range endpoint in the main editor while a stage-ready mouse hold is extended or contracted with the wheel.
+- Restore the exact file, diff, cursor selection and viewport from before batch selection when the adjacent cancel chord is pressed. The later release remains inert.
+- Keep the live range through VS Code's delayed Git preview and decoration updates. Release still stages the selected files as one batch, advances past them and records one exact Undo transaction.
+
 ## [1.2.89] — stop held keyboard staging from repeating
 
 - Treat one continuous Stage-and-Next/Previous keyboard hold as one action, so macOS key repeat cannot stage and advance through several files.

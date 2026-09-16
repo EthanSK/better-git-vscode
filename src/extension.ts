@@ -1317,7 +1317,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         reviewDecoEmitter.fire(selected.map(change => change.uri));
         return selected;
     };
-    adjustStageHoldSelectionRequest = (source, direction) => serializeChangeNavigation(async () => {
+    adjustStageHoldSelectionRequest = (source, direction) => serializeChangeNavigation(async check => {
         const request = mouseHoldRequests.get(source);
         const origin = mouseNavigationOrigins.get(source);
         const selection = stageHoldSelections.get(source);
@@ -1334,7 +1334,16 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         stageHoldSelections.set(source, moved);
         const after = selectionUris(moved);
         reviewDecoEmitter.fire([...before, ...after]);
-        mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected.`);
+        const preview = moved.items[moved.cursorIndex];
+        if (preview && moved.cursorIndex !== selection.cursorIndex) {
+            // Git can replace an initially-opened preview tab shortly after its command promise resolves.
+            // Keep that delayed, same-target transition owned by this live hold so it cannot cancel the
+            // range before the next wheel detent arrives. Any other target still invalidates immediately.
+            ownedMouseStagePreview = { request, uri: preview.uri.toString() };
+            await openNavigationTarget(preview, check);
+            requestCurrentHunkOverviewMarkerRefresh();
+        }
+        mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
     });
     context.subscriptions.push(new vscode.Disposable(() => {
         if (clearStageHoldFeedbackRequest === clearStageHoldFeedback) {
@@ -1613,7 +1622,14 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const applyReviewDecorationUri = (next: vscode.Uri | undefined) => {
         const prev = currentReviewUri;
         const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-        if (currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) { clearStageHoldFeedback(); }
+        // A Git preview can transiently resolve to the old file or no file while its replacement tab renders.
+        // Decoration refreshes therefore cannot cancel a live batch hold. The tab observer owns manual-change
+        // cancellation and clears the range through invalidateChangeNavigation().
+        const liveStageSelection = [...stageHoldSelections.values()].some(selection =>
+            selection.request?.active && selection.request === latestMouseHoldRequest);
+        if ((currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) && !liveStageSelection) {
+            clearStageHoldFeedback();
+        }
         currentReviewUri = next;
         currentReviewTab = nextTab;
         const changed: vscode.Uri[] = [];
@@ -1772,7 +1788,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
         }),
         vscode.window.onDidChangeActiveTextEditor(() => {
-            clearStageHoldFeedback();
+            // Moving the batch-selection endpoint intentionally opens a different preview editor. Keep the
+            // orange range alive for that owned transition; a manual tab/editor change invalidates the hold
+            // through observeNavigationTab(), which clears the feedback via invalidateChangeNavigation().
+            if (![...stageHoldSelections.values()].some(selection => selection.request?.active)) {
+                clearStageHoldFeedback();
+            }
             void refreshReviewDecoration();
             requestCurrentHunkOverviewMarkerRefresh();
         }),
@@ -3995,6 +4016,7 @@ let changeNavigationGeneration = 0;
 let navigationTab: vscode.Tab | undefined;
 let navigationGroup: vscode.TabGroup | undefined;
 let navigationOwnTabChange = false;
+let ownedMouseStagePreview: { request: MouseHoldRequest; uri: string } | undefined;
 
 const invalidateChangeNavigation = (): void => {
     changeNavigationGeneration++;
@@ -4002,6 +4024,8 @@ const invalidateChangeNavigation = (): void => {
     mouseHoldRequests.forEach(request => { request.active = false; });
     mouseHoldRequests.clear();
     latestMouseHoldRequest = undefined;
+    ownedMouseStagePreview = undefined;
+    clearStageHoldFeedbackRequest();
 };
 
 // Observe transitions, not just the final URI: switching away and back also abandons the old burst.
@@ -4012,7 +4036,10 @@ const observeNavigationTab = (): void => {
     if (tab !== navigationTab || group !== navigationGroup) {
         navigationTab = tab;
         navigationGroup = group;
-        if (!navigationOwnTabChange) { invalidateChangeNavigation(); }
+        const previewOwner = ownedMouseStagePreview;
+        const delayedOwnedPreview = previewOwner?.request === latestMouseHoldRequest
+            && currentReviewFileUri()?.toString() === previewOwner?.uri;
+        if (!navigationOwnTabChange && !delayedOwnedPreview) { invalidateChangeNavigation(); }
     }
 };
 
@@ -4137,7 +4164,7 @@ const cancelMouseNavigationHold = (source?: MouseReviewSource): Promise<void> | 
         let restored = false;
         let stayedStill = false;
         if (origin?.holdRequest === request) {
-            if (origin.navigateOnButtonDown) {
+            if (origin.view) {
                 restored = await restoreMouseReviewView(origin, check);
             } else {
                 stayedStill = true;
@@ -4180,7 +4207,10 @@ const navigateWithMouseOrigin = (
         if (isMouseReviewSource(source)) {
             mouseNavigationOrigins.delete(source);
             const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
-            const view = held && navigateOnButtonDown ? captureMouseReviewView() : undefined;
+            // A release-only hold normally stays on this view until button-up, but wheel range selection now
+            // previews its moving endpoint. Capture every held origin so cancellation can restore the exact
+            // pre-selection tab, diff side, cursor selection and viewport.
+            const view = held ? captureMouseReviewView() : undefined;
             const active = await getActiveChange();
             const uri = await getActiveFileUri();
             check();
@@ -4243,10 +4273,8 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         }
         const shown = await getActiveFileUri();
         check();
-        if (selected.length > 1 && shown?.toString() === origin.change.uri.toString()) {
+        if (selected.length > 1) {
             await stageSelectedFilesAndAdvance(direction, selected, check);
-        } else if (selected.length > 1) {
-            await stageBatchThroughExtension(repo, selected.map(change => change.uri));
         } else if (shown?.toString() === origin.change.uri.toString()) {
             await stageCurrentFileAndAdvance(direction, origin.change, check);
         } else {
