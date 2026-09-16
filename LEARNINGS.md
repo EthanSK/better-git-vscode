@@ -1,5 +1,15 @@
 # Learnings
 
+## Extend a ready mouse hold into one multi-file stage transaction (2026-09-16)
+
+**Trigger:** Ethan wanted each physical wheel detent during a stage-ready Next/Previous mouse hold to extend or contract the highlighted SCM file range, then stage that range on button release and Undo the whole range together.
+
+**Change:** Version 1.2.86 adds source-owned `/mouse-stage-selection/up|down` URI routes, contiguous range selection in the hold direction, `💥💥` decoration on every selected row, and one batched `repository.add(paths)` call on release. The receipt schema accepts multiple URIs while remaining compatible with single-file receipts, so the existing three-entry global Undo cap counts a multi-file stage as one entry. Wrong-source input, pre-ready input, stale files, mixed repositories and cancellation fail closed. URI routing happens before worktree-link parsing; an older Better Git build otherwise reports the new mouse-selection URI as an invalid worktree path.
+
+**Verification:** The 52 non-GUI tests, TypeScript compilation, lint and production build passed. A focused real VS Code 1.137.0 run on the Mini passed all 15 cases covering both mice and directions, range growth and contraction, upward selection, wrong-source input, cancellation, one batch stage and one exact Undo that preserves an earlier staged file. That run caught and fixed an initial repository-wrapper identity comparison; containment is now checked by repository root path. The final Mini and packaged production JavaScript match at SHA-256 `aa6940851ac9d97e38705a03314753916a78e829224c5647329ee807d94daaa0`.
+
+**Release:** PR #152 merged as `cd0a773`. Version 1.2.86 passed the required verifier with `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED identity=EthanSK.better-git-vscode version=1.2.86 sha256=af9c321617da3fbe6c41e171b87824323364904b33c61cf5528b921a67075cdf`. Ethan's normal installation was updated through the Marketplace identifier and retained `source=gallery`, Marketplace UUID `939b51df-f995-4799-88fa-ae47815cabb2`, publisher UUID `78eae69f-3d8c-4060-a72c-ca4862edb593` and `pinned=false`; its installed bundle matches the tested JavaScript hash above. Agentic Mouse 1.0.213 build 219 supplies the 200 ms readiness and source-tagged wheel URIs. Per Ethan's request, the Extension Host was not restarted, so activation and physical confirmation remain pending.
+
 ## Make adjacent mouse cancellation one source-owned command (2026-09-16)
 
 **Trigger:** After the release-only hold change, Ethan reported that Corsair 8+7 and 5+4 no longer cancelled the held review gesture reliably.
