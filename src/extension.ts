@@ -1317,7 +1317,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         reviewDecoEmitter.fire(selected.map(change => change.uri));
         return selected;
     };
-    adjustStageHoldSelectionRequest = (source, direction) => serializeChangeNavigation(async () => {
+    adjustStageHoldSelectionRequest = (source, direction) => serializeChangeNavigation(async check => {
         const request = mouseHoldRequests.get(source);
         const origin = mouseNavigationOrigins.get(source);
         const selection = stageHoldSelections.get(source);
@@ -1334,7 +1334,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         stageHoldSelections.set(source, moved);
         const after = selectionUris(moved);
         reviewDecoEmitter.fire([...before, ...after]);
-        mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected.`);
+        const preview = moved.items[moved.cursorIndex];
+        if (preview && moved.cursorIndex !== selection.cursorIndex) {
+            await openNavigationTarget(preview, check);
+            requestCurrentHunkOverviewMarkerRefresh();
+        }
+        mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
     });
     context.subscriptions.push(new vscode.Disposable(() => {
         if (clearStageHoldFeedbackRequest === clearStageHoldFeedback) {
@@ -4137,7 +4142,7 @@ const cancelMouseNavigationHold = (source?: MouseReviewSource): Promise<void> | 
         let restored = false;
         let stayedStill = false;
         if (origin?.holdRequest === request) {
-            if (origin.navigateOnButtonDown) {
+            if (origin.view) {
                 restored = await restoreMouseReviewView(origin, check);
             } else {
                 stayedStill = true;
@@ -4180,7 +4185,10 @@ const navigateWithMouseOrigin = (
         if (isMouseReviewSource(source)) {
             mouseNavigationOrigins.delete(source);
             const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
-            const view = held && navigateOnButtonDown ? captureMouseReviewView() : undefined;
+            // A release-only hold normally stays on this view until button-up, but wheel range selection now
+            // previews its moving endpoint. Capture every held origin so cancellation can restore the exact
+            // pre-selection tab, diff side, cursor selection and viewport.
+            const view = held ? captureMouseReviewView() : undefined;
             const active = await getActiveChange();
             const uri = await getActiveFileUri();
             check();
@@ -4243,10 +4251,8 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         }
         const shown = await getActiveFileUri();
         check();
-        if (selected.length > 1 && shown?.toString() === origin.change.uri.toString()) {
+        if (selected.length > 1) {
             await stageSelectedFilesAndAdvance(direction, selected, check);
-        } else if (selected.length > 1) {
-            await stageBatchThroughExtension(repo, selected.map(change => change.uri));
         } else if (shown?.toString() === origin.change.uri.toString()) {
             await stageCurrentFileAndAdvance(direction, origin.change, check);
         } else {
