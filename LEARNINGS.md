@@ -1,5 +1,17 @@
 # Learnings
 
+## Restore pre-ready adjacent Undo without changing ready-hold cancellation (2026-09-16)
+
+**Trigger:** Ethan clarified the two adjacent-button outcomes. Pressing the adjacent cell before a Next/Previous hold reaches the 200 ms stage-ready threshold must cancel the unfinished hold and Undo the previous completed stage. Pressing it after the held row is stage-ready must cancel only that pending stage and preserve the existing Undo history.
+
+**Cause:** Version 1.2.85 made source-tagged F16 an atomic hold-cancel command, but treated every active hold as cancel-only. That removed the earlier pre-ready Undo outcome. Deciding from queued editor work would also be racy: Agentic Mouse's transaction arrives as source-tagged F14, F16 and F15, and the readiness command can be waiting behind other navigation work even though its physical input already arrived.
+
+**Change:** Version 1.2.87 records `stageReadyRequested` synchronously when the source-owned readiness command arrives. A source-tagged F16 always cancels the active hold; before readiness it then runs the existing exact staging Undo, while after readiness it stops after cancellation. The later F15 boundary remains harmless. Normal short-release navigation, long-release staging, wheel range selection, stale-event rejection and the three-entry global Undo cap are unchanged.
+
+**Verification:** TypeScript compilation, lint, production packaging and all 52 non-GUI tests passed. A focused real VS Code run on the Mini passed eight cases covering both mouse sources and both directions: pre-ready adjacent cancellation performed exact Undo, while stage-ready adjacent cancellation preserved the earlier stage receipt. The Mini and packaged production JavaScript match at SHA-256 `9fc1ddc52506bbdbdd23924fa14888710444e9bf41cba511946923892d846da5`. The coordinated Agentic Mouse 1.0.214 build 220 repeated 12 generator tests and 18 focused Swift tests, and its four live source/direction paths contain the expected F14, F16, F15 transaction.
+
+**Release:** PR #154 merged as `9b2aeda`. Version 1.2.87 passed the required verifier with `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED identity=EthanSK.better-git-vscode version=1.2.87 sha256=e2f5d55384de69b20ec2ee680c64af4a4112e10896f4c070c4e3a9d6c15daeed`. Ethan's installation was updated through the Marketplace identifier and retained `source=gallery`, Marketplace UUID `939b51df-f995-4799-88fa-ae47815cabb2`, publisher UUID `78eae69f-3d8c-4060-a72c-ca4862edb593` and `pinned=false`; its installed bundle matches the tested JavaScript hash above. Signed Agentic Mouse 1.0.214 build 220 is installed and running with executable SHA-256 `93198cae151698f2dcfac8ad53f239655cc3e8b53d75f0c9789690b4602275cf`; its generated seven-rule block is live at config SHA-256 `d256481bbd35635f14f6f8dfd739c54568c36b6c226bd9f28ecf9aad1c22540c`, while all three non-Agentic rules and the active OBS recording were preserved. The VS Code Extension Host was deliberately not restarted, so activation and physical confirmation remain pending.
+
 ## Extend a ready mouse hold into one multi-file stage transaction (2026-09-16)
 
 **Trigger:** Ethan wanted each physical wheel detent during a stage-ready Next/Previous mouse hold to extend or contract the highlighted SCM file range, then stage that range on button release and Undo the whole range together.
