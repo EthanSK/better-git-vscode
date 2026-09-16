@@ -2419,6 +2419,31 @@ suite('SCM change navigation E2E', () => {
 
 	for (const source of ['corsair', 'razer']) {
 		for (const direction of ['next', 'previous']) {
+			test(`source-tagged adjacent chord undoes the previous stage before ${source} ${direction} hold readiness`, async () => {
+				const config = vscode.workspace.getConfiguration('better-git-vscode');
+				const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+				try {
+					write('cancel_history.txt', 'history'); write('hold_a.txt', 'first'); write('hold_b.txt', 'second');
+					await refreshUntil(() => ['cancel_history.txt', 'hold_a.txt', 'hold_b.txt'].every(isUntracked), 'pre-ready undo files');
+					await openPlainAt('cancel_history.txt', 0);
+					await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+					assert.strictEqual(git('diff --cached --name-only'), 'cancel_history.txt');
+					const origin = direction === 'next' ? 'hold_a.txt' : 'hold_b.txt';
+					await openPlainAt(origin, 0);
+
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', source);
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', source);
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(git('diff --cached --name-only'), '', 'pre-ready adjacent chord must perform exact Undo');
+					assert.strictEqual(activeTabPath(), wsUri('cancel_history.txt').path, 'Undo must reveal the restored staged file');
+					assert.strictEqual(fs.readFileSync(wsUri(origin).fsPath, 'utf8'), direction === 'next' ? 'first' : 'second');
+				} finally {
+					await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+				}
+			});
+
 			test(`source-tagged adjacent chord atomically cancels a release-only ${source} ${direction} hold`, async () => {
 				const config = vscode.workspace.getConfiguration('better-git-vscode');
 				const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
