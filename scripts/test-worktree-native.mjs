@@ -18,6 +18,7 @@ fs.mkdirSync(evidence, { recursive: true });
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const testReturnApp = process.argv.includes('--return-app');
+const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
 async function until(read, accept, description, timeout = 15_000) {
     const end = Date.now() + timeout;
     let last;
@@ -59,6 +60,9 @@ fs.writeFileSync(workspace, JSON.stringify({ folders: roots.slice(0, -1).map(p =
     'git.openRepositoryInParentFolders': 'never', 'git.detectWorktrees': false,
     'git.autoRepositoryDetection': false, 'workbench.startupEditor': 'none',
     'better-git-vscode.experimentalScmTreeStateManagement': false,
+    // The dedicated Mini uses Dvorak - QWERTY Cmd. Physical X is therefore the contributed Shift+Option+Q
+    // binding while still reporting hardware key code 7 to the release monitor.
+    'better-git-vscode.dvorakMode': testKeyboardRepeat,
 } }));
 const profile = path.join(root, 'profile');
 fs.mkdirSync(path.join(profile, 'User'), { recursive: true });
@@ -127,6 +131,15 @@ async function check(repo, name, file = 'a.txt') {
 }
 async function key(key, code, virtualKey, modifiers = 0) {
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: virtualKey, modifiers });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: virtualKey, modifiers });
+}
+async function repeatedKeyDown(key, code, virtualKey, modifiers, repeatCount) {
+    // Send the same keyDown burst VS Code receives from OS auto-repeat. Keep the monitor cold so all repeats
+    // queue behind one first press before its asynchronous physical-release probe can settle in this synthetic
+    // test (CDP itself does not change CoreGraphics' global key state).
+    await Promise.all(Array.from({ length: repeatCount }, (_, index) => send('Input.dispatchKeyEvent', {
+        type: 'keyDown', key, code, windowsVirtualKeyCode: virtualKey, modifiers, autoRepeat: index > 0,
+    })));
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: virtualKey, modifiers });
 }
 try {
@@ -241,15 +254,33 @@ try {
     await capture('hold-ready');
     await key('F15', 'F15', 126, 7);
     await until(() => request('state'), state => state.badge === '🔥🔥', 'hold release clears readiness');
-    await key('F18', 'F18', 129);
-    await check(1, 'stage-and-next', 'b.txt');
-    assert.match(git(roots[1], 'diff', '--cached', '--name-only'), /^a.txt$/m);
-    await key('F18', 'F18', 129); await key('F18', 'F18', 129);
-    await check(1, 'rapid-stage-and-next', 'd.txt');
-    for (const file of ['c.txt', 'b.txt', 'a.txt']) { await key('F16', 'F16', 127); await check(1, `undo-to-${file}`, file); }
-    assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged-late.txt', 'staged.txt']);
+    // Repeated native keyDown events model macOS auto-repeat while the physical X key remains down. The
+    // contributed Shift+Option+X binding is tagged, so one continuous hold must stage only a.txt. A release
+    // followed by a fresh physical press must immediately stage b.txt, while the untagged F18 mouse transport
+    // remains independently responsive for c.txt.
+    if (testKeyboardRepeat) {
+        await repeatedKeyDown('q', 'KeyQ', 81, 9, 25); // Dvorak character on physical X (key code 7).
+        await check(1, 'keyboard-held-stage-and-next-once', 'b.txt');
+        assert.match(git(roots[1], 'diff', '--cached', '--name-only'), /^a.txt$/m);
+        await pause(100);
+        await key('q', 'KeyQ', 81, 9);
+        await check(1, 'keyboard-fresh-press-after-release', 'c.txt');
+        assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['a.txt', 'b.txt', 'staged-late.txt', 'staged.txt']);
+        await key('F18', 'F18', 129);
+        await check(1, 'untagged-mouse-stage-after-keyboard', 'd.txt');
+    } else {
+        await key('F18', 'F18', 129);
+        await check(1, 'stage-and-next', 'b.txt');
+        assert.match(git(roots[1], 'diff', '--cached', '--name-only'), /^a.txt$/m);
+        await key('F18', 'F18', 129); await key('F18', 'F18', 129);
+        await check(1, 'rapid-stage-and-next', 'd.txt');
+    }
+    if (!testKeyboardRepeat) {
+        for (const file of ['c.txt', 'b.txt', 'a.txt']) { await key('F16', 'F16', 127); await check(1, `undo-to-${file}`, file); }
+        assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged-late.txt', 'staged.txt']);
+    }
     // Both source transports: navigation happens before release; release stages only the origin.
-    for (const [source, modifiers] of [['corsair', 6], ['razer', 12]]) {
+    if (!testKeyboardRepeat) for (const [source, modifiers] of [['corsair', 6], ['razer', 12]]) {
         await request('open', { repo: 2 });
         await key('F13', 'F13', 124, modifiers);
         await check(2, `${source}-button-down`, 'b.txt');
@@ -294,6 +325,9 @@ try {
         await key('F16', 'F16', 127);
         await check(2, `${source}-previous-undo`, 'b.txt');
         assert.deepEqual(git(roots[2], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged.txt']);
+    }
+    if (testKeyboardRepeat) {
+        console.log('BETTER_GIT_KEYBOARD_REPEAT_VERIFIED repeated-keydown=one-stage release-and-repress=next-stage untagged-F18=unchanged');
     }
     }
     for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {

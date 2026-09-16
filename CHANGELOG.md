@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.89] — stop held keyboard staging from repeating
+
+- Treat one continuous Stage-and-Next/Previous keyboard hold as one action, so macOS key repeat cannot stage and advance through several files.
+- Allow the next physical press immediately after release, with no debounce on normal keyboard use.
+- Keep mouse F18/F19 staging, command-palette calls and rapid separate mouse presses on their existing unthrottled path.
+
 ## [1.2.88] — undo through the live adjacent chord
 
 - Apply the adjacent-cell rule to the bare F16 that Agentic Mouse's live Karabiner rules actually emit between the source-tagged F14 and F15: before stage-ready it cancels the hold and performs the exact Undo; after stage-ready it cancels only the pending stage.

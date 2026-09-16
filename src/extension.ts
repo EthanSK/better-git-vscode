@@ -21,6 +21,8 @@ import {
     selectedMouseStageItems,
 } from "./mouseStageSelection";
 import { MouseHoldChordState, registerMouseShortRelease, resolveAdjacentMouseChord } from "./mouseHoldChord";
+import { KeyboardStageRepeatGuard, parseKeyboardStageArgs } from "./keyboardStageRepeatGuard";
+import { MacKeyReleaseMonitor } from "./macKeyReleaseMonitor";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -149,6 +151,23 @@ const mouseNavigationOrigins = new Map<MouseReviewSource, {
 const isMouseReviewSource = (source: unknown): source is MouseReviewSource => source === "corsair" || source === "razer";
 const mouseSourceLabel = (source: MouseReviewSource): string => source === "corsair" ? "Corsair" : "Razer";
 const mouseDirectionLabel = (direction: "next" | "previous"): string => direction === "next" ? "Next" : "Previous";
+
+// ──────────────────────────────────────────────────────────────────────────────────────────
+// KEYBOARD HELD-KEY REPEAT GUARD (stage-and-next / stage-and-previous shortcuts)
+//
+// Holding Shift+Option+X/Z (or < / >, and the same physical keys under Dvorak) made VS Code re-dispatch the
+// stage-and-advance keybinding on every OS auto-repeat, staging one file per repeat. The manifest tags only
+// those keyboard bindings with `{ source: "keyboard", physicalKey }`; the guard admits the first press of a
+// physical hold and suppresses every further tagged invocation until the key is released (exact macOS
+// key-state monitor) or, if that signal is unavailable, until a bounded quiet period passes. Untagged calls —
+// the F18/F19 mouse user bindings, the command palette, the status-bar and editor-title buttons — never reach
+// the guard, so rapid separate mouse presses keep their existing no-debounce behaviour.
+let keyboardStageRepeatGuard: KeyboardStageRepeatGuard | undefined;
+const admitStageAndAdvancePress = (args: unknown): boolean => {
+    const physicalKey = parseKeyboardStageArgs(args);
+    if (!physicalKey) { return true; }
+    return keyboardStageRepeatGuard?.admit(physicalKey) ?? true;
+};
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
 // LAST-STAGED STATUS BAR (v1.1.0)
@@ -820,9 +839,29 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         await vscode.commands.executeCommand("workbench.action.files.save");
     });
 
+    // One physical keyboard hold must stage exactly once (see the module-level guard comment). The monitor is
+    // lazy: no osascript child exists until the first tagged keyboard press, and it idles on stdin afterwards.
+    const keyboardHoldLog = (message: string): void => debugLog("keyboard-hold", message);
+    const keyReleaseMonitor = new MacKeyReleaseMonitor({
+        log: keyboardHoldLog,
+        warn: message => {
+            // A macOS monitor failure silently changes the shortcut's feel, so record it once even without
+            // debug logging enabled; the output channel is the only place this evidence can be recovered.
+            try { appendDebugLog("keyboard-hold", message); } catch { /* best effort */ }
+        },
+    });
+    keyboardStageRepeatGuard = new KeyboardStageRepeatGuard({ monitor: keyReleaseMonitor, log: keyboardHoldLog });
+    const keyboardStageRepeatGuardDisposable = new vscode.Disposable(() => {
+        keyboardStageRepeatGuard?.dispose();
+        keyboardStageRepeatGuard = undefined;
+        keyReleaseMonitor.dispose();
+    });
+
     // The keyboard stage-and-advance commands also count as a "jump" — pressing shift+alt+. means Ethan is
     // reviewing top-to-bottom, so the "+" button should keep advancing forward after this, and vice versa.
-    let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async () => {
+    // A suppressed auto-repeat returns before touching any state: it must be a complete no-op.
+    let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async (args?: unknown) => {
+        if (!admitStageAndAdvancePress(args)) { return; }
         clearStageHoldFeedback();
         lastNavDirection = "next";
         await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("next", undefined, check)));
@@ -830,7 +869,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
 
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
     // PREVIOUS unstaged file instead of the next. Bound to "shift + previous" so it parallels "shift + next".
-    let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async () => {
+    let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async (args?: unknown) => {
+        if (!admitStageAndAdvancePress(args)) { return; }
         clearStageHoldFeedback();
         lastNavDirection = "previous";
         await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("previous", undefined, check)));
@@ -1688,6 +1728,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         disposable9, disposable10, disposable11, disposable12, disposable13, disposable14, disposable15,
         disposable16, // add-current-worktree-to-workspace (v1.2.14)
         undoLastStageDisposable,
+        keyboardStageRepeatGuardDisposable, // ends any keyboard hold and stops the osascript key-state monitor
         stageBeforeMouseNavigation,
         ...mouseHoldCommands,
         stageHoldReadyCommand, stageHoldClearCommand, stageHoldAdjustCommand,

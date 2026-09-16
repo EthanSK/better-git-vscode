@@ -1,5 +1,17 @@
 # Learnings
 
+## Treat a held keyboard stage shortcut as one physical gesture (2026-09-16)
+
+**Trigger:** Holding a Shift+Option Stage-and-Next/Previous keyboard shortcut let macOS key repeat invoke the VS Code command again and again, staging and advancing through several files before the key was released. Ethan required one stage per continuous hold and another stage only after release and a fresh press.
+
+**Cause:** VS Code re-dispatches contributed keybindings for repeated key-down events, while `registerCommand` receives no key-up event. The Stage-and-Next/Previous handlers therefore could not distinguish one physical hold from rapid separate presses. Applying a generic debounce would also slow legitimate mouse F18/F19 staging and still would not identify the real release boundary.
+
+**Change:** Version 1.2.89 tags only the eight contributed QWERTY/Dvorak keyboard bindings with their physical key identity. A keyboard-only guard admits the first invocation and suppresses further tagged invocations until a persistent, shell-free `/usr/bin/osascript` JXA monitor observes that physical macOS key released through `CGEventSourceKeyState`. Physical X/Z and comma/period share key codes across the two layouts. Exact release has no debounce or elapsed-time guess; monitor failure uses a 500 ms quiet-period fallback that repeated key-down events continuously extend. Untagged command-palette, status-bar and mouse F18/F19 calls bypass the guard completely.
+
+**Verification:** TypeScript compilation, lint, production packaging and all 87 non-GUI tests passed. The release-monitor JXA ran successfully against the live macOS CoreGraphics API, and its process protocol, allowlists, chunking, failures, timeout and disposal passed dedicated tests. A focused real VS Code 1.132.0 run on the Mini passed the QWERTY/Dvorak manifest mappings. A second isolated native-workbench run sent 25 repeated Shift+Option+Q key-downs for the Mini's Dvorak physical X binding and proved exactly one stage, then proved release/re-press staged the next file and untagged F18 still staged independently. The Mini and local production JavaScript match at SHA-256 `43bb9ba2dfb09f35549779cfe12bfcaeb0b1e10606fd84d031e4e881f469593a`. The Mini's SSH process lacks macOS Input Monitoring (`CGPreflightPostEventAccess=false`), so the burst exercised VS Code's real repeated-keydown dispatch while the actual CoreGraphics release query was verified separately; final physical keyboard acceptance remains after installation and Extension Host restart.
+
+**Independent implementation review:** Ethan requested Fable. Canonical `claude-fable-5-1` produced the first implementation pass. Codex retained its keyboard-only manifest tagging, allowlisted persistent JXA monitor and safe fallback, then removed Fable's 30 ms release plausibility delay and two-second exact-mode idle expiry because both could swallow a valid fast re-press or turn an unreleased key into a new stage. The finished exact path ends only on the physical release signal.
+
 ## Match adjacent Undo to the live bare-F16 transport (2026-09-16)
 
 **Trigger:** After 1.2.87 was installed and activated, Ethan confirmed ordinary Better Git Undo still worked but the quick adjacent physical chord did not. That split isolated the remaining defect to the active-hold input route rather than Git restoration or saved Undo history.
