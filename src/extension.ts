@@ -1777,7 +1777,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
         }),
         vscode.window.onDidChangeActiveTextEditor(() => {
-            clearStageHoldFeedback();
+            // Moving the batch-selection endpoint intentionally opens a different preview editor. Keep the
+            // orange range alive for that owned transition; a manual tab/editor change invalidates the hold
+            // through observeNavigationTab(), which clears the feedback via invalidateChangeNavigation().
+            if (![...stageHoldSelections.values()].some(selection => selection.request?.active)) {
+                clearStageHoldFeedback();
+            }
             void refreshReviewDecoration();
             requestCurrentHunkOverviewMarkerRefresh();
         }),
@@ -4007,6 +4012,7 @@ const invalidateChangeNavigation = (): void => {
     mouseHoldRequests.forEach(request => { request.active = false; });
     mouseHoldRequests.clear();
     latestMouseHoldRequest = undefined;
+    clearStageHoldFeedbackRequest();
 };
 
 // Observe transitions, not just the final URI: switching away and back also abandons the old burst.
