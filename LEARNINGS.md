@@ -1,5 +1,17 @@
 # Learnings
 
+## Match adjacent Undo to the live bare-F16 transport (2026-09-16)
+
+**Trigger:** After 1.2.87 was installed and activated, Ethan confirmed ordinary Better Git Undo still worked but the quick adjacent physical chord did not. That split isolated the remaining defect to the active-hold input route rather than Git restoration or saved Undo history.
+
+**Cause:** The live Agentic Mouse Karabiner rules emit source-tagged F14, **bare F16**, then source-tagged F15 for all four source/direction paths. Version 1.2.87 tested and fixed only the source-tagged F16 binding, so the bare F16 used by the live user keybinding still saw an active hold as cancel-only. A second edge existed when button-down captured no unstaged review item: queued F14 work could tear the hold down before F16 decided it.
+
+**Change:** Version 1.2.88 gives bare and source-tagged F16 the same synchronous input-order rule. Before readiness, F16 cancels the unfinished hold and performs the exact previous staging Undo; after readiness, it cancels only the pending stage and preserves Undo history. Release-only holds now survive F14 until F16 or the F15 boundary decides them even without a captured review item. If readiness cannot produce a stage-ready decoration, the chord returns to the pre-ready Undo meaning. Short navigation, long staging, wheel range selection, experimental button-down behavior and the three-entry cap retain their existing paths.
+
+**Verification:** All 58 non-GUI tests, TypeScript compilation, lint and the production build passed. The exact production JavaScript passed 45 focused real VS Code 1.132.0 cases on the Mac Mini: live tagged-F14/bare-F16/tagged-F15 sequences and tagged fallback sequences for both mice and directions; pre-ready Undo; ready-state cancellation; missing review items; inert later releases; short and long holds; wheel-range staging; experimental button-down holds; rapid Undo; and the three-entry cap. The Mini, packaged VSIX and installed Gallery extension share JavaScript SHA-256 `815bb08ed9f84746e3f10f1bfb8304d6bdc3df5a30a819a5981604f7d1ef85f2`.
+
+**Release:** PR #156 merged as `7905060`. Version 1.2.88 passed the required verifier with `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED identity=EthanSK.better-git-vscode version=1.2.88 sha256=d017ad17a71444e1a19a3b20ccbb2c35a970a57ae91856b80589448e88e0f995`. Ethan's installation was updated through the Marketplace identifier and retained `source=gallery`, Marketplace UUID `939b51df-f995-4799-88fa-ae47815cabb2`, publisher UUID `78eae69f-3d8c-4060-a72c-ca4862edb593`, `pinned=false` and default automatic updates. The Extension Host was deliberately not restarted, so activation and physical confirmation remain pending.
+
 ## Restore pre-ready adjacent Undo without changing ready-hold cancellation (2026-09-16)
 
 **Trigger:** Ethan clarified the two adjacent-button outcomes. Pressing the adjacent cell before a Next/Previous hold reaches the 200 ms stage-ready threshold must cancel the unfinished hold and Undo the previous completed stage. Pressing it after the held row is stage-ready must cancel only that pending stage and preserve the existing Undo history.
