@@ -177,7 +177,7 @@ fresh session with no navigation yet defaults to advancing *forward*. The plain,
 
 Agentic Mouse can tag Next/Previous with the mouse that sent it. Better Git captures the file before navigating, so pressing that mouse's stage button within one second stages the original file even after the next file has appeared. If navigation already crossed files, staging leaves the destination open; it does not jump a second time. Within-file navigation still uses the normal Stage + Next/Previous behavior.
 
-During a held Next/Previous gesture, the adjacent Agentic Mouse Undo cell cancels that hold instead of undoing an earlier completed stage: Better Git restores the exact pre-press tab, cursor, selection and viewport, then consumes the later release without staging. The same F16 action keeps its normal exact Undo behavior whenever no hold is active.
+During a held Next/Previous gesture, the adjacent Agentic Mouse Undo cell has two meanings decided by input order. Before the 200 ms stage-ready threshold it cancels the unfinished hold and then performs the previous exact staging Undo. Once the hold is stage-ready (`💥💥` visible) it cancels only that pending stage and preserves Undo history. The later button release does nothing in either case. The same F16 action keeps its normal exact Undo behavior whenever no hold is active, whether Agentic Mouse delivers it bare or tagged with the mouse source.
 
 For a physical-input diagnosis, enable `better-git-vscode.debugLogging` to retain mouse phases in the persistent **Better Git** log output channel. Enable `better-git-vscode.debugNotifications` to also show each registered hold phase as a temporary VS Code notification. Both settings are off by default.
 
