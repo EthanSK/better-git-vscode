@@ -1622,10 +1622,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const applyReviewDecorationUri = (next: vscode.Uri | undefined) => {
         const prev = currentReviewUri;
         const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-        const ownedStagePreview = next && [...stageHoldSelections.values()].some(selection =>
-            selection.request?.active && selection.request === latestMouseHoldRequest
-            && selectedMouseStageItems(selection).some(change => change.uri.toString() === next.toString()));
-        if ((currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) && !ownedStagePreview) {
+        // A Git preview can transiently resolve to the old file or no file while its replacement tab renders.
+        // Decoration refreshes therefore cannot cancel a live batch hold. The tab observer owns manual-change
+        // cancellation and clears the range through invalidateChangeNavigation().
+        const liveStageSelection = [...stageHoldSelections.values()].some(selection =>
+            selection.request?.active && selection.request === latestMouseHoldRequest);
+        if ((currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) && !liveStageSelection) {
             clearStageHoldFeedback();
         }
         currentReviewUri = next;
