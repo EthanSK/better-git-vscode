@@ -1336,6 +1336,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         reviewDecoEmitter.fire([...before, ...after]);
         const preview = moved.items[moved.cursorIndex];
         if (preview && moved.cursorIndex !== selection.cursorIndex) {
+            // Git can replace an initially-opened preview tab shortly after its command promise resolves.
+            // Keep that delayed, same-target transition owned by this live hold so it cannot cancel the
+            // range before the next wheel detent arrives. Any other target still invalidates immediately.
+            ownedMouseStagePreview = { request, uri: preview.uri.toString() };
             await openNavigationTarget(preview, check);
             requestCurrentHunkOverviewMarkerRefresh();
         }
@@ -4005,6 +4009,7 @@ let changeNavigationGeneration = 0;
 let navigationTab: vscode.Tab | undefined;
 let navigationGroup: vscode.TabGroup | undefined;
 let navigationOwnTabChange = false;
+let ownedMouseStagePreview: { request: MouseHoldRequest; uri: string } | undefined;
 
 const invalidateChangeNavigation = (): void => {
     changeNavigationGeneration++;
@@ -4012,6 +4017,7 @@ const invalidateChangeNavigation = (): void => {
     mouseHoldRequests.forEach(request => { request.active = false; });
     mouseHoldRequests.clear();
     latestMouseHoldRequest = undefined;
+    ownedMouseStagePreview = undefined;
     clearStageHoldFeedbackRequest();
 };
 
@@ -4023,7 +4029,10 @@ const observeNavigationTab = (): void => {
     if (tab !== navigationTab || group !== navigationGroup) {
         navigationTab = tab;
         navigationGroup = group;
-        if (!navigationOwnTabChange) { invalidateChangeNavigation(); }
+        const previewOwner = ownedMouseStagePreview;
+        const delayedOwnedPreview = previewOwner?.request === latestMouseHoldRequest
+            && currentReviewFileUri()?.toString() === previewOwner?.uri;
+        if (!navigationOwnTabChange && !delayedOwnedPreview) { invalidateChangeNavigation(); }
     }
 };
 
