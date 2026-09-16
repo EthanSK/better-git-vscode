@@ -2383,7 +2383,7 @@ suite('SCM change navigation E2E', () => {
 			assert.ok(vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
 				'each newly selected endpoint must replace the main diff preview');
 
-			await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', 'corsair');
 			assert.strictEqual(activeTabPath(), wsUri('committed/mod_a.txt').path, 'cancel must restore the pre-selection file');
 			assert.ok(vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff,
 				'cancel must restore the original diff view');
