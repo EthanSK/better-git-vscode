@@ -116,7 +116,13 @@ let lastNavDirection: "next" | "previous" = "next";
 let requestCurrentHunkOverviewMarkerRefresh: () => void = () => undefined;
 
 type MouseReviewSource = "corsair" | "razer";
-type MouseHoldRequest = { active: boolean; shortReleasePending?: boolean };
+type MouseHoldRequest = {
+    active: boolean;
+    shortReleasePending?: boolean;
+    // Set synchronously when F20 arrives, before its queued Git/editor work. The adjacent F16 chord uses this
+    // input-order fact to distinguish a quick Undo chord from a ready-hold cancel even if navigation is busy.
+    stageReadyRequested?: boolean;
+};
 type ActiveMouseStageSelection = MouseStageSelection<FileChange> & { request?: MouseHoldRequest };
 type MouseReviewView = {
     input: unknown;
@@ -835,8 +841,17 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 mouseDebug("Cancel chord ignored, unknown mouse source.");
                 return;
             }
+            const activeRequest = source === undefined ? undefined : mouseHoldRequests.get(source);
+            const cancelOnly = activeRequest?.stageReadyRequested === true;
             const cancelledHold = cancelMouseNavigationHold(source);
-            if (cancelledHold) { return cancelledHold; }
+            if (cancelledHold) {
+                // The adjacent mouse cell has two deliberate meanings. Before the 200 ms readiness event it is
+                // the original quick Undo gesture: consume the unfinished hold, then restore the latest stage.
+                // Once F20 has arrived, it cancels only the pending stage selection and preserves Undo history.
+                return source !== undefined && !cancelOnly
+                    ? cancelledHold.then(runUndoCommand)
+                    : cancelledHold;
+            }
             // A source-tagged F16 belongs only to an adjacent mouse chord. If its hold already ended,
             // consume the stale input instead of turning it into an unrelated staging Undo.
             if (source !== undefined) {
@@ -1289,6 +1304,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
         // Capture input ownership now, even while button-down navigation is still queued.
         const request = mouseHoldRequests.get(source);
+        if (request?.active && request === latestMouseHoldRequest) {
+            request.stageReadyRequested = true;
+        }
         return serializeChangeNavigation(async check => {
             if (!vscode.window.state.focused) {
                 mouseDebug(`${mouseSourceLabel(source)} event ignored, VS Code is not focused.`);

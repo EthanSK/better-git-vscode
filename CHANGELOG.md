@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.87] — restore quick adjacent Undo
+
+- Press the adjacent mouse cell before the 200 ms stage-ready threshold to cancel the unfinished hold and Undo the previous stage.
+- Press the same adjacent cell after stage-ready to cancel only the pending stage selection and preserve earlier Undo history.
+- Keep normal short navigation, long staging, range selection and stale-cancel protection unchanged.
+
 ## [1.2.86] — stage a held mouse range
 
 - After a mouse hold becomes ready to stage, use each wheel step to expand or contract a contiguous file selection above or below the held file.
