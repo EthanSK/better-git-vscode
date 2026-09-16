@@ -10,6 +10,8 @@
 
 **Verification:** TypeScript compilation, lint, production packaging and all 87 non-GUI tests passed. A focused isolated VS Code 1.138.0 run on the Mini passed endpoint preview after each wheel detent, reverse contraction, upward range growth, wrong-source rejection, batch stage and advance, one exact Undo, and cancellation restoring the original tracked diff, cursor selection and viewport while making the later release inert. The Mini and packaged local production JavaScript match at SHA-256 `5872fac2cff2fb6e239a009962d58795397827ef3fa9f6fd9df1db30fd30cc9b`.
 
+**Release:** PR #159 merged as `54dfe57`. Version 1.2.90 passed the required verifier with `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED identity=EthanSK.better-git-vscode version=1.2.90 sha256=37a35fb4ffb155a906a629074983b0f58e0367eeb5908a2408eaed089776d2a3`. Ethan's installation was updated through the Marketplace identifier and retained `source=gallery`, Marketplace UUID `939b51df-f995-4799-88fa-ae47815cabb2`, publisher UUID `78eae69f-3d8c-4060-a72c-ca4862edb593`, `pinned=false` and default automatic updates. Its installed production JavaScript matches the tested release bundle at SHA-256 `5872fac2cff2fb6e239a009962d58795397827ef3fa9f6fd9df1db30fd30cc9b`. The Extension Host was deliberately not restarted, so activation and final physical mouse confirmation remain pending.
+
 ## Treat a held keyboard stage shortcut as one physical gesture (2026-09-16)
 
 **Trigger:** Holding a Shift+Option Stage-and-Next/Previous keyboard shortcut let macOS key repeat invoke the VS Code command again and again, staging and advancing through several files before the key was released. Ethan required one stage per continuous hold and another stage only after release and a fresh press.
