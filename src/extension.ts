@@ -1622,7 +1622,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const applyReviewDecorationUri = (next: vscode.Uri | undefined) => {
         const prev = currentReviewUri;
         const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-        if (currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) { clearStageHoldFeedback(); }
+        const ownedStagePreview = next && [...stageHoldSelections.values()].some(selection =>
+            selection.request?.active && selection.request === latestMouseHoldRequest
+            && selection.items[selection.cursorIndex]?.uri.toString() === next.toString());
+        if ((currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) && !ownedStagePreview) {
+            clearStageHoldFeedback();
+        }
         currentReviewUri = next;
         currentReviewTab = nextTab;
         const changed: vscode.Uri[] = [];
