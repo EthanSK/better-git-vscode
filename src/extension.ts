@@ -136,6 +136,9 @@ let clearStageHoldFeedbackRequest: (source?: MouseReviewSource) => void = () => 
 let adjustStageHoldSelectionRequest: (
     source: MouseReviewSource, direction: "up" | "down"
 ) => Promise<void> = async () => undefined;
+let navigateStageHoldPreviewRequest: (
+    source: MouseReviewSource, direction: "next" | "previous"
+) => Promise<void> = async () => undefined;
 let takeStageHoldSelectionRequest: (
     source: MouseReviewSource, request: MouseHoldRequest
 ) => readonly FileChange[] | undefined = () => undefined;
@@ -1060,6 +1063,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 }
                 return;
             }
+            const previewMatch = /^\/mouse-stage-preview\/(next|previous)$/.exec(uri.path);
+            if (previewMatch) {
+                const source = new URLSearchParams(uri.query).get("source");
+                if (isMouseReviewSource(source)) {
+                    await navigateStageHoldPreviewRequest(
+                        source,
+                        previewMatch[1] as "next" | "previous"
+                    );
+                } else {
+                    mouseDebug("Stage preview navigation ignored, unknown mouse source.");
+                }
+                return;
+            }
             const root = parseWorktreeLink(uri);
             if (!root) {
                 void vscode.window.showErrorMessage("Better Git: This link does not contain a valid worktree path.");
@@ -1345,11 +1361,34 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
         mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
     });
+    navigateStageHoldPreviewRequest = (source, direction) => serializeChangeNavigation(async check => {
+        const request = mouseHoldRequests.get(source);
+        const origin = mouseNavigationOrigins.get(source);
+        const selection = stageHoldSelections.get(source);
+        if (!vscode.window.state.focused) {
+            mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, VS Code is not focused.`);
+            return;
+        }
+        if (!request?.active || request !== latestMouseHoldRequest
+            || origin?.holdRequest !== request || selection?.request !== request) {
+            mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
+            return;
+        }
+        // The Stage button modifies only what the wheel does. It must not move
+        // the batch cursor or replace the source-owned selection that release
+        // will stage as one transaction.
+        ownedMouseStagePreview = undefined;
+        await (direction === "next" ? goToNextDiffOnce(check) : goToPreviousDiffOnce(check));
+        requestCurrentHunkOverviewMarkerRefresh();
+        const count = selectionUris(selection).length;
+        mouseDebug(`${mouseSourceLabel(source)} stage preview navigated ${direction}; ${count} selected ${count === 1 ? "file remains" : "files remain"} in the batch.`);
+    });
     context.subscriptions.push(new vscode.Disposable(() => {
         if (clearStageHoldFeedbackRequest === clearStageHoldFeedback) {
             clearStageHoldFeedbackRequest = () => undefined;
         }
         adjustStageHoldSelectionRequest = async () => undefined;
+        navigateStageHoldPreviewRequest = async () => undefined;
         takeStageHoldSelectionRequest = () => undefined;
         betterGitOutputChannel?.dispose();
         betterGitOutputChannel = undefined;
@@ -1460,6 +1499,16 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 return;
             }
             return adjustStageHoldSelectionRequest(source, direction);
+        }
+    );
+    const stageHoldPreviewNavigationCommand = vscode.commands.registerCommand(
+        "better-git-vscode.navigate-mouse-stage-preview",
+        (source: unknown, direction: unknown) => {
+            if (!isMouseReviewSource(source) || (direction !== "next" && direction !== "previous")) {
+                mouseDebug("Stage preview navigation ignored, invalid arguments.");
+                return;
+            }
+            return navigateStageHoldPreviewRequest(source, direction);
         }
     );
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
@@ -1748,6 +1797,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         stageBeforeMouseNavigation,
         ...mouseHoldCommands,
         stageHoldReadyCommand, stageHoldClearCommand, stageHoldAdjustCommand,
+        stageHoldPreviewNavigationCommand,
         vscode.window.onDidChangeWindowState(state => {
             if (!state.focused) { invalidateChangeNavigation(); clearStageHoldFeedback(); }
         }),

@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-09-18 — Preview navigation must remain inside the source-owned stage hold
+
+Agentic Mouse can temporarily repurpose the wheel while a stage-ready range remains selected. Accept that navigation only for the exact source whose hold is active, ready, and still owns a nonempty selection. Route every step through the existing serialized next/previous diff navigation so rapid ratchets cannot reorder editor state. Preview navigation must not clear the ready decoration, rebuild the range, stage anything, or change the later release transaction; releasing the original hold still stages the preserved batch and advances normally.
+
+The mouse-side adjacent cell is only a momentary modifier during this chord. Better Git therefore exposes a private source-tagged URI for navigation rather than changing the public Stage-and-Next command or inferring physical button state inside VS Code.
+
+The focused real-host test passed on the Mac mini against VS Code 1.138.0. It exercised next and previous preview navigation, retained the two-file selection and ready badges, then released the hold and verified that exactly the preserved batch staged before normal advancement.
+
 ## Avoid activating background staged editors during review navigation (2026-09-17)
 
 **Trigger:** Staging a file sometimes expanded Staged Changes and jumped Source Control, especially with several pinned review tabs already open.

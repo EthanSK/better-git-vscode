@@ -2347,6 +2347,57 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('stage-button wheel navigation preserves the selected batch until release', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			for (const name of ['inspect_a.txt', 'inspect_b.txt', 'inspect_c.txt', 'inspect_d.txt']) {
+				write(name, name);
+			}
+			await refreshUntil(
+				() => ['inspect_a.txt', 'inspect_b.txt', 'inspect_c.txt', 'inspect_d.txt'].every(isUntracked),
+				'inspect batch files'
+			);
+			await openPlainAt('inspect_b.txt', 0);
+
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', {
+				source: 'corsair', direction: 'next'
+			});
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			assert.strictEqual(activeTabPath(), wsUri('inspect_c.txt').path);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('inspect_b.txt')), '💥💥');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('inspect_c.txt')), '💥💥');
+
+			await vscode.commands.executeCommand(
+				'better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next'
+			);
+			assert.strictEqual(activeTabPath(), wsUri('inspect_d.txt').path,
+				'wheel down with Stage held must navigate to the next change');
+			await vscode.commands.executeCommand(
+				'better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'previous'
+			);
+			assert.strictEqual(activeTabPath(), wsUri('inspect_c.txt').path,
+				'wheel up with Stage held must navigate to the previous change');
+			for (const name of ['inspect_b.txt', 'inspect_c.txt']) {
+				assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(name)), '💥💥',
+					'preview navigation must preserve the batch selection');
+			}
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('inspect_d.txt')), undefined);
+
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', {
+				source: 'corsair', direction: 'next'
+			});
+			assert.deepStrictEqual(git('diff --cached --name-only').split('\n'), [
+				'inspect_b.txt', 'inspect_c.txt'
+			]);
+			assert.strictEqual(activeTabPath(), wsUri('inspect_d.txt').path,
+				'release must keep the ordinary post-batch advance');
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('stage-ready wheel previews endpoint diffs and cancel restores the exact original diff view', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);

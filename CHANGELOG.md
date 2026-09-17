@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.2.92] — browse changes inside a held stage range
+
+- While Agentic Mouse is holding a stage-ready range and its adjacent Stage button, make each wheel step open the next or previous change without changing the selected batch.
+- Keep release behavior unchanged: releasing the adjacent button returns the wheel to range selection, and releasing the original hold stages the selected files together and advances.
+
 ## [1.2.91] — keep staged changes still during review
 
 - Open the next review file before closing the previous pinned editor, preventing a background staged file from briefly activating and expanding Staged Changes.
