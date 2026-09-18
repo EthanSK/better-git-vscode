@@ -8,6 +8,8 @@ The mouse-side adjacent cell is only a momentary modifier during this chord. Bet
 
 The focused real-host test passed on the Mac mini against VS Code 1.138.0. It exercised next and previous preview navigation, retained the two-file selection and ready badges, then released the hold and verified that exactly the preserved batch staged before normal advancement.
 
+Better Git 1.2.92 passed the required Marketplace gate with SHA-256 `532fd728866ce8397841f76214a8068692c27096a7a922051a58b73ff9af6994`. The gallery install selected 1.2.92 with `metadata.source=gallery`; its production bundle hash matched the packaged source, and the restarted primary extension host activated Better Git after the update.
+
 ## Avoid activating background staged editors during review navigation (2026-09-17)
 
 **Trigger:** Staging a file sometimes expanded Staged Changes and jumped Source Control, especially with several pinned review tabs already open.
