@@ -4320,6 +4320,7 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         mouseDebug("Release ignored, unknown mouse or direction.");
         return Promise.resolve();
     }
+    mouseDebug(`${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)} release received.`);
     const request = held ? mouseHoldRequests.get(source) : undefined;
     const heldSelection = request ? takeStageHoldSelectionRequest(source, request) : undefined;
     const releasedOrigin = heldSelection?.length ? mouseNavigationOrigins.get(source) : undefined;
@@ -4339,6 +4340,7 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         const repo = git?.getRepository(origin.change.uri);
         if (!repo) { mouseDebug(`${label} release ignored, repository is no longer open.`); return; } // A closed repository must not redirect the captured file to the first workspace repo.
         if (heldSelection?.length) {
+            mouseDebug(`${label} release committing ${heldSelection.length} marked files.`);
             await stageSelectedFilesAndAdvance(direction, heldSelection, check);
             return;
         }
@@ -4624,23 +4626,20 @@ const stageSelectedFilesAndAdvance = async (
 
     const current = distinctUnstagedChanges(await getFileChanges(selected[0].uri));
     const indexByUri = new Map(current.map((change, index) => [change.uri.toString(), index]));
-    const indices = selectedKeys.map(key => indexByUri.get(key));
-    if (indices.some(index => index === undefined)) {
-        void vscode.window.showWarningMessage("Better Git: Files changed before release, so nothing was staged.");
-        return true;
-    }
-    const numericIndices = indices as number[];
-    const first = Math.min(...numericIndices);
-    const last = Math.max(...numericIndices);
-    const liveRange = current.slice(first, last + 1).map(change => change.uri.toString());
-    if (liveRange.length !== selectedKeys.length || liveRange.some((key, index) => key !== selectedKeys[index])) {
-        void vscode.window.showWarningMessage("Better Git: Files changed before release, so nothing was staged.");
-        return true;
-    }
-
+    // The marked URI snapshot owns the transaction. Background edits, new files,
+    // sorting changes or staging elsewhere must not redefine or veto that group.
+    // Use the current list only to choose where review continues after staging.
+    const indices = selectedKeys.map(key => indexByUri.get(key))
+        .filter((index): index is number => index !== undefined);
+    const first = indices.length ? Math.min(...indices) : 0;
+    const last = indices.length ? Math.max(...indices) : current.length - 1;
+    const selectedSet = new Set(selectedKeys);
+    const before = current.slice(0, first).reverse().find(change => !selectedSet.has(change.uri.toString()));
+    const after = current.slice(last + 1).find(change => !selectedSet.has(change.uri.toString()));
+    const remaining = current.filter(change => !selectedSet.has(change.uri.toString()));
     const target = direction === "next"
-        ? current[last + 1] ?? current[first - 1]
-        : current[first - 1] ?? current[last + 1];
+        ? after ?? before ?? remaining[0]
+        : before ?? after ?? remaining[remaining.length - 1];
     const activeWasSelected = selectedKeys.includes((await getActiveFileUri())?.toString() ?? "");
     await stageBatchThroughExtension(repo, selected.map(change => change.uri));
     check();

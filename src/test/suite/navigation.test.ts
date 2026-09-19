@@ -2383,6 +2383,34 @@ suite('SCM change navigation E2E', () => {
 		});
 	}
 
+	for (const drift of [false, true]) {
+		test(`shrunk marked batch stages after editor clicks with list drift=${drift}`, async () => {
+			const config = vscode.workspace.getConfiguration('better-git-vscode');
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+			try {
+				for (const name of ['shrink_a.txt', 'shrink_b.txt', 'shrink_c.txt', 'shrink_d.txt']) { write(name, name); }
+				await refreshUntil(() => isUntracked('shrink_d.txt'), 'shrink files');
+				await openPlainAt('shrink_a.txt', 0);
+				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+				await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+				await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+				await openPlainAt('shrink_d.txt', 0);
+				if (drift) { write('shrink_aa.txt', 'created elsewhere'); await refreshUntil(() => isUntracked('shrink_aa.txt'), 'inserted unselected file'); }
+				await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'up');
+				for (const name of ['shrink_a.txt', 'shrink_b.txt']) { assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(name)), '💥💥'); }
+				assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('shrink_c.txt')), '💥💥');
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', 'corsair');
+				await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+				for (const name of ['shrink_a.txt', 'shrink_b.txt', 'shrink_c.txt']) { assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri(name)), '💥💥'); }
+				assert.strictEqual(git('diff --cached --name-only'), 'shrink_a.txt\nshrink_b.txt', 'release must stage exactly the marked files despite unrelated list changes');
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(git('diff --cached --name-only'), '');
+			} finally { await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global); }
+		});
+	}
+
 	test('released batch commits despite a simultaneous editor switch and does not steal focus', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);

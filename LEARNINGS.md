@@ -1,5 +1,15 @@
 # Learnings
 
+## 2026-09-19 — Stage the marked paths, not a reconstructed live range
+
+A new unselected file inserted between two marked files made 1.2.93 reject the entire release because the current list was no longer contiguous. The Mini baseline reproduced the reported shape: select three, switch editor, create an intervening file, shrink to two, assert both boom badges, release, and observe an empty index. Without list drift the same sequence passed. This proves an additional failure path, not that the unlogged physical incident necessarily had this exact cause.
+
+The captured marked URIs now own staging; the refreshed list chooses only the next review destination. Do not require selected files to retain their former positions or unstaged status, and never add newly inserted unselected files. Preserve repository path checks, Git error reporting and one batch Undo. Diagnostic logging records release arrival and captured count; Ethan's notification popups remain off.
+
+Agentic Mouse confirmed F15 is shared release/abort cleanup and can be emitted while a physical hold remains active, including mode entry and focus cancellation. Never use F15 alone to stage as a lost-F18 fallback. A delayed wheel URL must not recreate a consumed group.
+
+Verification: 87 non-GUI tests, lint and packaging passed. Eighteen focused Mini integration tests passed, including both mouse sources, long holds, shrinking with and without list drift, release races, late wheel delivery, explicit cancellation and batch Undo. The native Mini test passed editor/gutter clicks, cross-repository browsing, selection contraction after a new file appeared, exact release staging and batch Undo. Inspected screenshot shows only a.txt and b.txt marked, with the intervening aa-unselected.txt unmarked. Tested production bundle SHA-256: `afea8e5341df1df9c4791bbb0a4a4292a771ff074d21f58d9cccf46a1c966c8a`.
+
 ## 2026-09-19 — Editor clicks must not cancel a physical stage hold
 
 Mouse/keyboard cursor changes, manual tab changes and edits previously called the same invalidation routine as explicit cancellation. The native Mini reproduction on 1.2.92 lost its ready badges after an editor click. Preserve the active source-owned hold and captured selection across these UI changes while still invalidating queued navigation. A released ready selection becomes a captured Git transaction: subsequent editor changes may suppress its follow-up navigation, never silently discard its stage. Keep repository/live-path validation and explicit cancellation; remove the arbitrary 60-second expiry for physical holds. Do not close an unrelated active editor when staging captured files.
