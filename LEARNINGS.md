@@ -8,6 +8,8 @@ Verification: 87 non-GUI tests and 30 focused VS Code integration tests passed. 
 
 Agentic Mouse coordination confirmed 1.0.221 sends release on physical key-up and has no editor-click cancellation path. Its intentionally disabled stageRangePreviewNavigation feature remains disabled; no mouse-side update is needed for this fix.
 
+Release: PR #162 merged as `57505d2`. Version 1.2.93 passed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` with exact VSIX SHA-256 `3ed31b3a09f2d0aa2af45fee475c2a31d433fc5444e16bb91b5aa71e7950d354`. Gallery installation retained the Marketplace UUID, no version pin and effective automatic updates; installed JavaScript matches the tested bundle. Extension Host activation and physical mouse acceptance remain pending.
+
 ## 2026-09-18 — Preview navigation must remain inside the source-owned stage hold
 
 Agentic Mouse can temporarily repurpose the wheel while a stage-ready range remains selected. Accept that navigation only for the exact source whose hold is active, ready, and still owns a nonempty selection. Route every step through the existing serialized next/previous diff navigation so rapid ratchets cannot reorder editor state. Preview navigation must not clear the ready decoration, rebuild the range, stage anything, or change the later release transaction; releasing the original hold still stages the preserved batch and advances normally.
