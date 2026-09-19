@@ -1354,7 +1354,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (preview && moved.cursorIndex !== selection.cursorIndex) {
             // Git can replace an initially-opened preview tab shortly after its command promise resolves.
             // Keep that delayed, same-target transition owned by this live hold so it cannot cancel the
-            // range before the next wheel detent arrives. Any other target still invalidates immediately.
+            // range before the next wheel detent arrives. Other targets supersede only queued navigation.
             ownedMouseStagePreview = { request, uri: preview.uri.toString() };
             await openNavigationTarget(preview, check);
             requestCurrentHunkOverviewMarkerRefresh();
@@ -1672,8 +1672,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         const prev = currentReviewUri;
         const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
         // A Git preview can transiently resolve to the old file or no file while its replacement tab renders.
-        // Decoration refreshes therefore cannot cancel a live batch hold. The tab observer owns manual-change
-        // cancellation and clears the range through invalidateChangeNavigation().
+        // Decoration refreshes and manual editor changes cannot cancel a live physical hold.
         const liveStageSelection = [...stageHoldSelections.values()].some(selection =>
             selection.request?.active && selection.request === latestMouseHoldRequest);
         if ((currentReviewTab !== nextTab || prev?.toString() !== next?.toString()) && !liveStageSelection) {
@@ -1825,7 +1824,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         vscode.window.onDidChangeTextEditorSelection(event => {
             if (event.textEditor === visibleEditorForActiveTab() &&
                 (event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)) {
-                invalidateChangeNavigation();
+                invalidateChangeNavigation(true);
                 // A manual cursor move is no longer a Better Git-selected hunk. Clear immediately instead of
                 // spawning a Git diff on every arrow-key repeat; the next Better Git navigation repaints it.
                 clearCurrentHunkOverviewMarker();
@@ -1833,14 +1832,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
-                invalidateChangeNavigation(); // Git hunk coordinates no longer describe the displayed revision.
+                invalidateChangeNavigation(true); // Git hunk coordinates no longer describe the displayed revision.
                 clearCurrentHunkOverviewMarker();
             }
         }),
         vscode.window.onDidChangeActiveTextEditor(() => {
             // Moving the batch-selection endpoint intentionally opens a different preview editor. Keep the
-            // orange range alive for that owned transition; a manual tab/editor change invalidates the hold
-            // through observeNavigationTab(), which clears the feedback via invalidateChangeNavigation().
+            // orange range alive for both preview and manual transitions until the gesture ends.
             if (![...stageHoldSelections.values()].some(selection => selection.request?.active)) {
                 clearStageHoldFeedback();
             }
@@ -1848,7 +1846,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             requestCurrentHunkOverviewMarkerRefresh();
         }),
         vscode.window.onDidChangeActiveNotebookEditor(() => {
-            clearStageHoldFeedback();
+            if (![...stageHoldSelections.values()].some(selection => selection.request?.active)) {
+                clearStageHoldFeedback();
+            }
             void refreshReviewDecoration();
             requestCurrentHunkOverviewMarkerRefresh();
         })
@@ -4068,8 +4068,17 @@ let navigationGroup: vscode.TabGroup | undefined;
 let navigationOwnTabChange = false;
 let ownedMouseStagePreview: { request: MouseHoldRequest; uri: string } | undefined;
 
-const invalidateChangeNavigation = (): void => {
+const invalidateChangeNavigation = (preserveHeldSelection = false): void => {
     changeNavigationGeneration++;
+    if (preserveHeldSelection) {
+        // Cursor/tab/document changes supersede old navigation work, not a physical hold.
+        // Its captured files belong to that gesture until release or explicit cancellation.
+        for (const [source, origin] of mouseNavigationOrigins) {
+            if (!origin.holdRequest?.active) { mouseNavigationOrigins.delete(source); }
+        }
+        ownedMouseStagePreview = undefined;
+        return;
+    }
     mouseNavigationOrigins.clear();
     mouseHoldRequests.forEach(request => { request.active = false; });
     mouseHoldRequests.clear();
@@ -4089,7 +4098,7 @@ const observeNavigationTab = (): void => {
         const previewOwner = ownedMouseStagePreview;
         const delayedOwnedPreview = previewOwner?.request === latestMouseHoldRequest
             && currentReviewFileUri()?.toString() === previewOwner?.uri;
-        if (!navigationOwnTabChange && !delayedOwnedPreview) { invalidateChangeNavigation(); }
+        if (!navigationOwnTabChange && !delayedOwnedPreview) { invalidateChangeNavigation(true); }
     }
 };
 
@@ -4099,7 +4108,7 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
     check();
     // Explicit file commands are a new user intention, not part of a queued change burst.
     if (check === noNavigationCheckpoint) {
-        invalidateChangeNavigation();
+        invalidateChangeNavigation(true);
     }
     const previousTab = closeCurrent ? vscode.window.tabGroups.activeTabGroup.activeTab : undefined;
     navigationOwnTabChange = true;
@@ -4126,7 +4135,10 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
     check();
 };
 
-const serializeChangeNavigation = (operation: (check: NavigationCheckpoint) => Promise<void>): Promise<void> => {
+const serializeChangeNavigation = (
+    operation: (check: NavigationCheckpoint) => Promise<void>,
+    commitCapturedStage = false
+): Promise<void> => {
     observeNavigationTab();
     const generation = changeNavigationGeneration;
     const check = () => {
@@ -4135,7 +4147,9 @@ const serializeChangeNavigation = (operation: (check: NavigationCheckpoint) => P
     };
     const execute = async () => {
         try {
-            check();
+            // An already-released, captured stage is a Git transaction. UI movement may
+            // cancel its later navigation, but must not silently discard the transaction.
+            if (!commitCapturedStage) { check(); }
             await operation(check);
         } catch (error) {
             if (!(error instanceof NavigationSuperseded)) { throw error; }
@@ -4308,9 +4322,10 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
     }
     const request = held ? mouseHoldRequests.get(source) : undefined;
     const heldSelection = request ? takeStageHoldSelectionRequest(source, request) : undefined;
+    const releasedOrigin = heldSelection?.length ? mouseNavigationOrigins.get(source) : undefined;
     if (request) { request.active = false; }
     return serializeChangeNavigation(check => runStageCommand(async () => {
-        const origin = mouseNavigationOrigins.get(source);
+        const origin = releasedOrigin ?? mouseNavigationOrigins.get(source);
         mouseNavigationOrigins.delete(source);
         if (held && mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
         if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
@@ -4319,11 +4334,15 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         if (origin.direction !== direction) { mouseDebug(`${label} release ignored, direction changed.`); return; }
         if (requestedAt < origin.requestedAt) { mouseDebug(`${label} release ignored, event order was invalid.`); return; }
         if (origin.held !== held || origin.holdRequest !== request) { mouseDebug(`${label} release ignored, hold ownership changed.`); return; }
-        if (requestedAt - origin.requestedAt >= (held ? 60_000 : 1000)) { mouseDebug(`${label} release ignored, hold receipt expired.`); return; }
+        if (!held && requestedAt - origin.requestedAt >= 1000) { mouseDebug(`${label} release ignored, hold receipt expired.`); return; }
         const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
         const repo = git?.getRepository(origin.change.uri);
         if (!repo) { mouseDebug(`${label} release ignored, repository is no longer open.`); return; } // A closed repository must not redirect the captured file to the first workspace repo.
-        const selected = heldSelection?.length ? heldSelection : [origin.change];
+        if (heldSelection?.length) {
+            await stageSelectedFilesAndAdvance(direction, heldSelection, check);
+            return;
+        }
+        const selected = [origin.change];
         const liveUnstaged = new Set(distinctUnstagedChanges(await getFileChanges(origin.change.uri))
             .map(change => change.uri.toString()));
         if (selected.some(change => !liveUnstaged.has(change.uri.toString()))) {
@@ -4342,7 +4361,7 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         mouseDebug(selected.length > 1
             ? `${label} release staged ${selected.length} files.`
             : `${label} release staged ${path.basename(origin.change.uri.fsPath)}.`);
-    }));
+    }), !!heldSelection?.length);
 };
 
 const goToNextDiffOnce = async (check: NavigationCheckpoint) => {
@@ -4593,7 +4612,7 @@ const stageSelectedFilesAndAdvance = async (
     selected: readonly FileChange[],
     check: NavigationCheckpoint = noNavigationCheckpoint
 ): Promise<boolean> => {
-    if (selected.length < 2) { return false; }
+    if (selected.length === 0) { return false; }
     const selectedKeys = selected.map(change => change.uri.toString());
     const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
     const repo = git?.getRepository(selected[0].uri);
@@ -4604,7 +4623,6 @@ const stageSelectedFilesAndAdvance = async (
     })) { return false; }
 
     const current = distinctUnstagedChanges(await getFileChanges(selected[0].uri));
-    check();
     const indexByUri = new Map(current.map((change, index) => [change.uri.toString(), index]));
     const indices = selectedKeys.map(key => indexByUri.get(key));
     if (indices.some(index => index === undefined)) {
@@ -4623,10 +4641,12 @@ const stageSelectedFilesAndAdvance = async (
     const target = direction === "next"
         ? current[last + 1] ?? current[first - 1]
         : current[first - 1] ?? current[last + 1];
+    const activeWasSelected = selectedKeys.includes((await getActiveFileUri())?.toString() ?? "");
     await stageBatchThroughExtension(repo, selected.map(change => change.uri));
     check();
 
     if (!target) {
+        if (!activeWasSelected) { return true; }
         navigationOwnTabChange = true;
         try {
             await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
@@ -4638,7 +4658,7 @@ const stageSelectedFilesAndAdvance = async (
         return true;
     }
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
-    await openNavigationTarget(target, check, !isPreview);
+    await openNavigationTarget(target, check, activeWasSelected && !isPreview);
     if (direction === "previous") { await landChangeForBackwardReview(target, check); }
     return true;
 };

@@ -2347,6 +2347,73 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	for (const source of ['corsair', 'razer']) {
+		test(`held batch survives manual editor changes for ${source}`, async function () {
+			this.timeout(90_000);
+			const config = vscode.workspace.getConfiguration('better-git-vscode');
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+			try {
+				for (const name of ['click_a.txt', 'click_b.txt', 'click_c.txt', 'click_d.txt', 'click_other.txt']) { write(name, name); }
+				await refreshUntil(() => isUntracked('click_other.txt'), 'held interaction files');
+				await openPlainAt('click_a.txt', 0);
+				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction: 'next' });
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+				await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', source, 'down');
+				const unrelated = await openPlainAt('click_other.txt', 0);
+				const unrelatedTab = vscode.window.tabGroups.activeTabGroup.activeTab!;
+				await unrelated.edit(edit => edit.insert(new vscode.Position(0, 0), 'unsaved '));
+				await sleep(100);
+				for (const name of ['click_a.txt', 'click_b.txt']) {
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(name)), '💥💥', 'editor changes must not cancel the held selection');
+				}
+				await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', source, 'down');
+				assert.strictEqual(activeTabPath(), wsUri('click_c.txt').path, 'wheel continues from the batch endpoint');
+				if (source === 'corsair') { await sleep(60_100); } // Physical holds end on release, not a one-minute timeout.
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction: 'next' });
+				assert.strictEqual(git('diff --cached --name-only'), 'click_a.txt\nclick_b.txt\nclick_c.txt');
+				assert.strictEqual(activeTabPath(), wsUri('click_d.txt').path);
+				assert.ok(unrelated.document.isDirty && unrelatedTab.isDirty, 'unrelated unsaved edits survive');
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the captured batch');
+				await vscode.window.showTextDocument(unrelated.document);
+				await vscode.commands.executeCommand('workbench.action.files.revert');
+			} finally {
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+			}
+		});
+	}
+
+	test('released batch commits despite a simultaneous editor switch and does not steal focus', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		const prototype = Object.getPrototypeOf(repo);
+		const originalAdd = prototype.add;
+		let unblock!: () => void;
+		try {
+			for (const name of ['race_a.txt', 'race_b.txt', 'race_c.txt', 'race_other.txt']) { write(name, name); }
+			await refreshUntil(() => isUntracked('race_other.txt'), 'release race files');
+			await openPlainAt('race_a.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+			let entered!: () => void;
+			const staging = new Promise<void>(resolve => { entered = resolve; });
+			const gate = new Promise<void>(resolve => { unblock = resolve; });
+			prototype.add = async function (...args: unknown[]) { entered(); await gate; return originalAdd.apply(this, args); };
+			const release = vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await staging;
+			await openPlainAt('race_other.txt', 0);
+			unblock();
+			await release;
+			assert.strictEqual(git('diff --cached --name-only'), 'race_a.txt\nrace_b.txt', 'editor interaction must not discard a released stage');
+			assert.strictEqual(activeTabPath(), wsUri('race_other.txt').path, 'commit must not pull focus back after a later click');
+		} finally {
+			unblock?.();
+			prototype.add = originalAdd;
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('stage-button wheel navigation preserves the selected batch until release', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
@@ -3006,14 +3073,15 @@ suite('SCM change navigation E2E', () => {
 		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('hold_b.txt').fsPath);
 	});
 
-	test('button-down hold rejects a manual editor switch before release', async () => {
+	test('button-down hold retains its captured file across a manual editor switch', async () => {
 		for (const name of ['hold_a.txt', 'hold_b.txt', 'hold_c.txt']) { write(name, name); }
 		await refreshUntil(() => ['hold_a.txt', 'hold_b.txt', 'hold_c.txt'].every(isUntracked), 'hold cancellation files');
 		await openPlainAt('hold_a.txt', 0);
 		await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'razer', direction: 'next' });
 		await openPlainAt('hold_c.txt', 0);
 		await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'razer', direction: 'next' });
-		assert.strictEqual(git('diff --cached --name-only'), '', 'manual editor choice cancels the old hold');
+		assert.strictEqual(git('diff --cached --name-only'), 'hold_a.txt', 'manual editor choice must preserve the held origin');
+		assert.strictEqual(activeTabPath(), wsUri('hold_c.txt').path, 'release must not stage or replace the unrelated editor');
 	});
 
 	for (const source of ['corsair', 'razer']) {
