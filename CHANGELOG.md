@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.94
+
+- Release stages the marked file paths even when new files appear or the change list refreshes during a hold. Shrinking the group keeps its exact selected files; unrelated files are never added to the batch.
+- Log mouse release arrival and the captured batch size when diagnostic logging is enabled.
+
 ## [1.2.93] — keep a held stage selection while using the editor
 
 - Keep the selected batch through editor and gutter clicks, tab changes and editing while the stage button remains held.

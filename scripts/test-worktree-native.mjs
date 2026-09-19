@@ -223,9 +223,18 @@ try {
         await capture('held-batch-after-gutter-click');
         await request('plain', { repo: 0, file: 'd.txt', preview: false });
         await request('command', { command: 'better-git-vscode.adjust-mouse-stage-selection', args: ['corsair', 'down'] });
+        fs.writeFileSync(path.join(roots[1], 'aa-unselected.txt'), 'background edit\n');
+        await request('refresh', { repo: 1 });
+        await request('command', { command: 'better-git-vscode.adjust-mouse-stage-selection', args: ['corsair', 'up'] });
+        for (const file of ['a.txt', 'b.txt']) { assert.equal((await request('badge', { repo: 1, file })).value, '💥💥'); }
+        assert.notEqual((await request('badge', { repo: 1, file: 'c.txt' })).value, '💥💥');
+        await capture('held-click-shrunk-group');
         await request('command', { command: 'better-git-vscode.finish-mouse-navigation-hold', args: [{ source: 'corsair', direction: 'next' }] });
-        assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['a.txt', 'b.txt', 'c.txt', 'staged-late.txt', 'staged.txt']);
-        await until(() => request('state'), state => state.active === 'file://' + roots[1] + '/d.txt', 'release advances in the captured repository');
+        await request('command', { command: 'better-git-vscode.stage-hold-clear', args: ['corsair'] });
+        // A delayed mouse-wheel URL must not re-light or mutate the released group.
+        await request('command', { command: 'better-git-vscode.adjust-mouse-stage-selection', args: ['corsair', 'down'] });
+        assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['a.txt', 'b.txt', 'staged-late.txt', 'staged.txt']);
+        await until(() => request('state'), state => state.active === 'file://' + roots[1] + '/c.txt', 'release advances in the captured repository');
         await capture('held-click-release');
         await key('F16', 'F16', 127);
         await until(() => git(roots[1], 'diff', '--cached', '--name-only').trim(), value => value === 'staged-late.txt\nstaged.txt', 'one Undo restores the held batch');
