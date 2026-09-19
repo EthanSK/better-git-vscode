@@ -19,6 +19,7 @@ const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { enco
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const testReturnApp = process.argv.includes('--return-app');
 const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
+const testHeldClick = process.argv.includes('--held-click');
 const testStageReveal = process.argv.includes('--stage-reveal');
 async function until(read, accept, description, timeout = 15_000) {
     const end = Date.now() + timeout;
@@ -202,7 +203,35 @@ try {
     fs.writeFileSync(path.join(roots[1], 'staged-late.txt'), 'late staged change\n'); git(roots[1], 'add', 'staged-late.txt');
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'switch-after-staged-refresh');
-    if (testStageReveal) {
+    if (testHeldClick) {
+        await request('command', { command: 'better-git-vscode.begin-mouse-navigation-hold', args: [{ source: 'corsair', direction: 'next' }] });
+        await request('command', { command: 'better-git-vscode.stage-hold-ready', args: ['corsair'] });
+        await request('command', { command: 'better-git-vscode.adjust-mouse-stage-selection', args: ['corsair', 'down'] });
+        const point = await evaluate(`(()=>{const nodes=[...document.querySelectorAll('.part.editor .monaco-editor .view-line')].filter(n=>n.getBoundingClientRect().width>0 && n.textContent.includes('modified'));const r=nodes.at(-1).getBoundingClientRect();return {x:r.x+32,y:r.y+8};})()`);
+        for (const type of ['mousePressed', 'mouseReleased']) { await send('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 }); }
+        await pause(250);
+        await capture('held-batch-after-editor-click');
+        for (const file of ['a.txt', 'b.txt']) {
+            assert.equal((await request('badge', { repo: 1, file })).value, '💥💥', 'left-click must retain the held batch');
+        }
+        const gutter = await evaluate(`(()=>{const nodes=[...document.querySelectorAll('.part.editor .line-numbers')].filter(n=>n.getBoundingClientRect().width>0);const r=nodes.at(-1).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+        for (const type of ['mousePressed', 'mouseReleased']) { await send('Input.dispatchMouseEvent', { type, ...gutter, button: 'left', clickCount: 1 }); }
+        await pause(250);
+        for (const file of ['a.txt', 'b.txt']) {
+            assert.equal((await request('badge', { repo: 1, file })).value, '💥💥', 'gutter click must retain the held batch');
+        }
+        await capture('held-batch-after-gutter-click');
+        await request('plain', { repo: 0, file: 'd.txt', preview: false });
+        await request('command', { command: 'better-git-vscode.adjust-mouse-stage-selection', args: ['corsair', 'down'] });
+        await request('command', { command: 'better-git-vscode.finish-mouse-navigation-hold', args: [{ source: 'corsair', direction: 'next' }] });
+        assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['a.txt', 'b.txt', 'c.txt', 'staged-late.txt', 'staged.txt']);
+        await until(() => request('state'), state => state.active === 'file://' + roots[1] + '/d.txt', 'release advances in the captured repository');
+        await capture('held-click-release');
+        await key('F16', 'F16', 127);
+        await until(() => git(roots[1], 'diff', '--cached', '--name-only').trim(), value => value === 'staged-late.txt\nstaged.txt', 'one Undo restores the held batch');
+        await capture('held-click-batch-undo');
+        console.log('BETTER_GIT_HELD_EDITOR_CLICK_VERIFIED');
+    } else if (testStageReveal) {
         // Closing a pinned review tab must never activate a staged-only background editor.
         // Its file: URI causes SCM Auto Reveal to expand Staged Changes and scroll the tree.
         await request('plain', { repo: 1, file: 'staged.txt', preview: false });

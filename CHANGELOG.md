@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.93] — keep a held stage selection while using the editor
+
+- Keep the selected batch through editor and gutter clicks, tab changes and editing while the stage button remains held.
+- Stage the captured selection on release even when editor movement supersedes its subsequent navigation; retain exact batch Undo.
+- Remove the one-minute physical-hold expiry and preserve unrelated editors when advancing after a batch.
+
 ## [1.2.92] — browse changes inside a held stage range
 
 - While Agentic Mouse is holding a stage-ready range and its adjacent Stage button, make each wheel step open the next or previous change without changing the selected batch.

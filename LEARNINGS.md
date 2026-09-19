@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-09-19 — Editor clicks must not cancel a physical stage hold
+
+Mouse/keyboard cursor changes, manual tab changes and edits previously called the same invalidation routine as explicit cancellation. The native Mini reproduction on 1.2.92 lost its ready badges after an editor click. Preserve the active source-owned hold and captured selection across these UI changes while still invalidating queued navigation. A released ready selection becomes a captured Git transaction: subsequent editor changes may suppress its follow-up navigation, never silently discard its stage. Keep repository/live-path validation and explicit cancellation; remove the arbitrary 60-second expiry for physical holds. Do not close an unrelated active editor when staging captured files.
+
+Verification: 87 non-GUI tests and 30 focused VS Code integration tests passed. The latter cover both mouse sources, edits and manual editor switches, a hold exceeding 60 seconds, a simultaneous release/editor-switch race, short/long release, explicit cancellation and exact batch Undo. Native Mini editor and gutter clicks retained ready badges; further wheel selection, release and one batch Undo passed (`BETTER_GIT_HELD_EDITOR_CLICK_VERIFIED`). Tested production JavaScript SHA-256: `26587961930d374457b0f3bb305b38c50b847192e25f95efa6170ab9fffe4e6c`. Physical mouse acceptance remains separate.
+
+Agentic Mouse coordination confirmed 1.0.221 sends release on physical key-up and has no editor-click cancellation path. Its intentionally disabled stageRangePreviewNavigation feature remains disabled; no mouse-side update is needed for this fix.
+
 ## 2026-09-18 — Preview navigation must remain inside the source-owned stage hold
 
 Agentic Mouse can temporarily repurpose the wheel while a stage-ready range remains selected. Accept that navigation only for the exact source whose hold is active, ready, and still owns a nonempty selection. Route every step through the existing serialized next/previous diff navigation so rapid ratchets cannot reorder editor state. Preview navigation must not clear the ready decoration, rebuild the range, stage anything, or change the later release transaction; releasing the original hold still stages the preserved batch and advances normally.
