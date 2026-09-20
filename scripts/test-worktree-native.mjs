@@ -17,6 +17,7 @@ const evidence = process.env.BGV_NATIVE_EVIDENCE_DIR ?? root;
 fs.mkdirSync(evidence, { recursive: true });
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const testLinkBackground = process.argv.includes('--link-background');
 const testReturnApp = process.argv.includes('--return-app');
 const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
 const testHeldClick = process.argv.includes('--held-click');
@@ -204,7 +205,23 @@ try {
     fs.writeFileSync(path.join(roots[1], 'staged-late.txt'), 'late staged change\n'); git(roots[1], 'add', 'staged-late.txt');
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'switch-after-staged-refresh');
-    if (testHeldClick) {
+    if (testLinkBackground) {
+        const jxa = code => execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit'); ${code}`], { encoding: 'utf8' });
+        const focusCode = () => jxa(`$.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`);
+        for (const [repo, delay] of [[2, 1200], [3, 50], [2, 0]]) {
+            await request('command', { command: 'workbench.scm.action.expandAllRepositories' });
+            await request('plain', { repo: 0 });
+            await request('command', { command: 'workbench.scm.history.focus' });
+            jxa(`$.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);`);
+            await until(() => request('state'), state => !state.focused, 'Code is background before URI');
+            const opening = request('uri', { uri: `vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}` });
+            await pause(delay);
+            focusCode();
+            await opening;
+            await check(repo, `background-link-${repo}-${delay}`);
+        }
+        console.log('BETTER_GIT_BACKGROUND_LINK_VERIFIED');
+    } else if (testHeldClick) {
         await request('command', { command: 'better-git-vscode.begin-mouse-navigation-hold', args: [{ source: 'corsair', direction: 'next' }] });
         await request('command', { command: 'better-git-vscode.stage-hold-ready', args: ['corsair'] });
         await request('command', { command: 'better-git-vscode.adjust-mouse-stage-selection', args: ['corsair', 'down'] });

@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-09-20 — Wait for VS Code focus before Chrome-originated SCM collapse
+
+A Worktree link delivered while the receiving Code window was behind Chrome could run Source Control commands against a partially rendered tree. The Mini reproduced the failure when several repositories were expanded: the link completed with only two visible repository headers, so the target tree did not reliably collapse peers. The collapse command and existing 500 ms SCM resource-settle allowance were correct; the missing precondition was native window focus.
+
+The link reveal now waits on `window.onDidChangeWindowState` until the receiving VS Code window is focused, with a two-second safety bound. It then runs the existing exact-target reveal, recursive `list.collapseAll`, and selection clear. No polling, recollapse loop, arbitrary input debounce, renderer connection, or staging/mouse behavior changed. If Code never becomes focused, the reveal is skipped rather than acting on the wrong tree.
+
+Verification: 89 non-GUI tests, lint and packaging passed. The Mini background-link harness passed with Code focused after 0 ms, 50 ms, and 1.2 seconds while Finder was frontmost initially; each case left only the requested repository expanded, Staged Changes collapsed, the Changes group open, and the top unstaged file selected. The test used unmodified VS Code 1.138.0 and retained the existing Graph/repeat/switch checks.
+
 ## 2026-09-20 — Keep the origin next in native app switching
 
 The optional application-scoped `worktreeLinkKeepEditorFront` setting activates the configured/link origin after worktree reveal, waits for native activation acknowledgement, then reactivates the exact captured VS Code process. It requires the existing return-focus setting and defaults off. Existing links and configurable origins remain unchanged; no app launches or mouse/staging changes are involved.

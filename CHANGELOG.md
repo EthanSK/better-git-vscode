@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.96
+
+- Wait for the VS Code window to become frontmost before a Worktree link drives Source Control reveal and collapse. This keeps Chrome-to-VS Code handoffs from acting on a partially rendered SCM tree.
+
 ## 1.2.95
 
 - Add an optional macOS worktree-link setting to activate the origin app, then bring VS Code back to front, leaving the origin next in app switching.
