@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.95
+
+- Add an optional macOS worktree-link setting to activate the origin app, then bring VS Code back to front, leaving the origin next in app switching.
+- Wait for native activation before returning to the same editor process. Keep the existing return-focus behavior by default and respect switches to another app during the handoff.
+
 ## 1.2.94
 
 - Release stages the marked file paths even when new files appear or the change list refreshes during a hold. Shrinking the group keeps its exact selected files; unrelated files are never added to the batch.

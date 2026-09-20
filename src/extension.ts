@@ -1040,7 +1040,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     config.get<boolean>("worktreeLinkReturnFocus", false),
                     config.get<string>("worktreeLinkReturnApp", ""));
                 if (!destination) { return; }
-                try { await returnToApp(destination); }
+                const editorBundleId = config.get<boolean>("worktreeLinkKeepEditorFront", false)
+                    ? ({ vscode: "com.microsoft.VSCode", "vscode-insiders": "com.microsoft.VSCodeInsiders" } as Record<string, string>)[vscode.env.uriScheme]
+                    : undefined;
+                try { await returnToApp(destination, process.platform, undefined, editorBundleId); }
                 catch (error) { debugLog("worktree-focus", String(error)); }
             }
         });

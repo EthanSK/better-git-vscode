@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.94",
+  "version": "1.2.95",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -383,6 +383,12 @@
           "default": false,
           "scope": "application",
           "description": "macOS only. After opening a Worktree link and expanding Source Control, bring the app named in the link back to front. Links without an app use Worktree Link Return App. Only brings an already-running app to front, never launches one. Off by default."
+        },
+        "better-git-vscode.worktreeLinkKeepEditorFront": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Activate the app the worktree link came from, then return to VS Code, leaving that app next in app switching. Only works on macOS with Worktree Link Return Focus on. Only activates an already running app, and stops if you switch to another app during the handoff."
         },
         "better-git-vscode.worktreeLinkReturnApp": {
           "type": "string",
