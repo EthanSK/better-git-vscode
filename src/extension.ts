@@ -2071,6 +2071,32 @@ const waitForFileWorkspaceFolder = async (fileUri: vscode.Uri, timeout = 2000): 
     });
 };
 
+// A vscode:// link can arrive while this window is still behind Chrome. The
+// URI handler may run before the SCM view has a native window to render into;
+// dispatching view actions then observes only a partial tree. Wait for the
+// actual focus event instead of guessing with a fixed delay. A bounded timeout
+// keeps a background window from holding the serialized link queue forever.
+const waitForWindowFocus = async (timeout = 2000): Promise<boolean> => {
+    if (vscode.window.state.focused) {
+        return true;
+    }
+    return await new Promise<boolean>(resolve => {
+        let listener: vscode.Disposable | undefined;
+        const timer = setTimeout(() => {
+            listener?.dispose();
+            resolve(false);
+        }, timeout);
+        listener = vscode.window.onDidChangeWindowState(state => {
+            if (!state.focused) {
+                return;
+            }
+            clearTimeout(timer);
+            listener?.dispose();
+            resolve(true);
+        });
+    });
+};
+
 // SHARED merge-editor predicate (v1.2.9). A 3-way MERGE editor (git conflict) is a TabInputTextMerge tab.
 // That type exists at runtime but isn't in this project's @types/vscode (1.83), so we duck-type it by shape:
 // a merge input uniquely has `result` (the on-disk file being merged) + `input1` + `input2` (the two sides).
@@ -2267,6 +2293,10 @@ interface FileChange {
 const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<boolean> => {
     let root = requestedRoot;
     try {
+        if (!await waitForWindowFocus()) {
+            debugLog("worktree-link", "Skipped Source Control reveal because the receiving VS Code window never became focused.");
+            return false;
+        }
         const extension = vscode.extensions.getExtension<any>("vscode.git");
         const git = (await extension?.activate())?.getAPI(1);
         if (!git) {

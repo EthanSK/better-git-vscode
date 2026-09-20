@@ -103,7 +103,7 @@ For chat clients that require HTTPS, encode the complete URI twice as the `url` 
 
 Right-click a Git repository header and choose **Copy link to open worktree in Source Control**, or use **Better Git: Open Worktree in Source Control** in the Command Palette to choose an open repository. The link can also open a Git worktree outside the current workspace without replacing or adding workspace folders. It does not collapse other repositories or modify Git contents.
 
-Expansion and scrolling use VS Code's **SCM: Auto Reveal**. Clean or hidden repositories, disabled Auto Reveal, and changes without a working file can require manually showing or expanding the repository. VS Code can also keep the current scroll position when its already-selected file is opened again. Better Git does not change these settings or walk other repository rows.
+Expansion and scrolling use VS Code's **SCM: Auto Reveal**. A link waits for its receiving VS Code window to become frontmost before driving Source Control, so a Chrome handoff cannot race a partially rendered tree. Clean or hidden repositories, disabled Auto Reveal, and changes without a working file can require manually showing or expanding the repository. VS Code can also keep the current scroll position when its already-selected file is opened again. Better Git does not change these settings or walk other repository rows.
 
 ## Pull a worktree into your sidebar without leaving the editor
 
