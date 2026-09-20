@@ -8,6 +8,8 @@ The link reveal now waits on `window.onDidChangeWindowState` until the receiving
 
 Verification: 89 non-GUI tests, lint and packaging passed. The Mini background-link harness passed with Code focused after 0 ms, 50 ms, and 1.2 seconds while Finder was frontmost initially; each case left only the requested repository expanded, Staged Changes collapsed, the Changes group open, and the top unstaged file selected. The test used unmodified VS Code 1.138.0 and retained the existing Graph/repeat/switch checks.
 
+Release: PR #165 merged as `ac6413b`. Version 1.2.96 passed `BETTER_GIT_MARKETPLACE_RELEASE_VERIFIED` with VSIX SHA-256 `15730e475e21faa191067cd49ff6a06b71bc0c6a9b0d9bb74e1662c4342c9859`. Gallery installation matches the tested bundle, retains the Marketplace UUID, no pin and automatic updates. The installed host has not been restarted; Ethan requested a reminder rather than an automatic restart.
+
 ## 2026-09-20 — Keep the origin next in native app switching
 
 The optional application-scoped `worktreeLinkKeepEditorFront` setting activates the configured/link origin after worktree reveal, waits for native activation acknowledgement, then reactivates the exact captured VS Code process. It requires the existing return-focus setting and defaults off. Existing links and configurable origins remain unchanged; no app launches or mouse/staging changes are involved.
