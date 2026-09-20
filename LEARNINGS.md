@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-09-20 — Keep the origin next in native app switching
+
+The optional application-scoped `worktreeLinkKeepEditorFront` setting activates the configured/link origin after worktree reveal, waits for native activation acknowledgement, then reactivates the exact captured VS Code process. It requires the existing return-focus setting and defaults off. Existing links and configurable origins remain unchanged; no app launches or mouse/staging changes are involved.
+
+NSWorkspace caches frontmostApplication within a JXA process. Sleeping the script thread left it stale and the first native test finished in the origin instead of Code. Pumping NSRunLoop during the bounded acknowledgement wait fixed this; native activation notifications prove Code → origin → the same Code PID. Abort if another app intervenes, the origin is missing/ambiguous, or the editor cannot be identified safely.
+
+Verification: 89 non-GUI tests, lint and production packaging passed. The isolated Mini workbench passed existing reveal/collapse/return checks plus repeated optional returns, a large worktree with another origin, fallback origin, missing origin, disabled master setting and user-interrupted focus. Native observer evidence shows the required activation order for all four return cases, with the final Code PID unchanged. The SSH test process lacks Accessibility permission, so injected Command-Tab was not accepted; physical app-switcher acceptance remains separate. Tested production bundle SHA-256: `202fafbc49bf2e60de4de0aeb617859a5616f01d0e3ba72873e09f0891e80f90`.
+
 ## 2026-09-19 — Stage the marked paths, not a reconstructed live range
 
 A new unselected file inserted between two marked files made 1.2.93 reject the entire release because the current list was no longer contiguous. The Mini baseline reproduced the reported shape: select three, switch editor, create an intervening file, shrink to two, assert both boom badges, release, and observe an empty index. Without list drift the same sequence passed. This proves an additional failure path, not that the unlogged physical incident necessarily had this exact cause.

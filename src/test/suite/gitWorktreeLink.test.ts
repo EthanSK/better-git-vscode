@@ -13,6 +13,8 @@ suite('Git worktree links', () => {
         assert.strictEqual(properties['better-git-vscode.worktreeLinkReturnFocus'].default, false);
         assert.strictEqual(properties['better-git-vscode.worktreeLinkReturnApp'].default, '');
         assert.strictEqual(properties['better-git-vscode.worktreeLinkReturnFocus'].scope, 'application');
+        assert.strictEqual(properties['better-git-vscode.worktreeLinkKeepEditorFront'].default, false);
+        assert.strictEqual(properties['better-git-vscode.worktreeLinkKeepEditorFront'].scope, 'application');
         assert.strictEqual(properties['better-git-vscode.worktreeLinkReturnApp'].scope, 'application');
     });
 

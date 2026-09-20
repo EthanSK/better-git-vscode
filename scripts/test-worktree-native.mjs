@@ -84,6 +84,7 @@ const child = spawn(executable, [workspace, `--user-data-dir=${profile}`, `--ext
     `--remote-debugging-port=${port}`, '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-telemetry'],
 { env: { ...process.env, BGV_SWITCH_ROOT: root }, stdio: ['ignore', log, log] });
 let socket;
+let activationMonitor;
 let nextRequest = 0;
 async function request(action, extra = {}) {
     const id = ++nextRequest;
@@ -325,6 +326,36 @@ try {
         await request('open', { repo: 0 });
         assert.equal(front(), 'com.microsoft.VSCode', 'palette command must not return');
         console.log('PASS return-failed-worktree-and-ordinary-command');
+        await request('config', { settings: { worktreeLinkKeepEditorFront: true } });
+        const observer = path.join(root, 'app-activation');
+        execFileSync('/usr/bin/swiftc', [path.join(extensionRoot, 'scripts/test-app-activation.swift'), '-o', observer]);
+        activationMonitor = spawn(observer, [], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let activationOutput = '';
+        activationMonitor.stdout.on('data', data => { activationOutput += data.toString(); });
+        await until(() => activationOutput, value => value.includes('ready\n'), 'native activation observer ready');
+        for (const [repo, destination, name] of [[1, appA, 'editor-front-first'], [1, appA, 'editor-front-repeat'],
+            [8, appB, 'editor-front-large-other-origin'], [0, undefined, 'editor-front-fallback']]) {
+            activationOutput = '';
+            // Seed an unrelated previous app so simply staying in Code cannot pass.
+            focusApp(destination === appB ? appA : appB);
+            await verifyReturn(repo, destination, 'com.microsoft.VSCode', name);
+            const expectedOrigin = destination ?? appA;
+            const activations = () => activationOutput.trim().split('\n').filter(Boolean);
+            await until(activations, events => events.at(-1) === `com.microsoft.VSCode ${child.pid}`
+                && events.at(-2)?.startsWith(expectedOrigin + ' '), `${name}: origin then exact editor process`);
+            fs.writeFileSync(path.join(evidence, `${name}-app-order.json`), JSON.stringify({
+                final: front(), expectedOrigin, activations: activations(),
+            }));
+        }
+        await verifyReturn(1, 'com.bettergit.test.not-running', 'com.microsoft.VSCode', 'editor-front-missing-origin');
+        focusCode();
+        const openingWithEditorReturn = request('uri', { uri: uri(0, appA) });
+        await pause(250); focusApp(appB);
+        await openingWithEditorReturn;
+        assert.equal(front(), appB, 'user switching to another app must win over the two-step handoff');
+        await request('config', { settings: { worktreeLinkReturnFocus: false } });
+        await verifyReturn(1, appA, 'com.microsoft.VSCode', 'editor-front-master-disabled');
+        console.log('BETTER_GIT_ORIGIN_APP_ORDER_VERIFIED');
         await request('config', { settings: { worktreeLinkReturnFocus: false, worktreeLinkReturnApp: '' } });
     } else {
     // Native keyboard input exercises the mouse protocol's readiness/clear/release
@@ -417,6 +448,7 @@ try {
     console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);
 } finally {
     if (fs.existsSync(path.join(root, 'ready.json'))) { await request('stop').catch(() => {}); }
+    activationMonitor?.kill('SIGTERM');
     socket?.close();
     child.kill('SIGTERM');
     fs.closeSync(log);

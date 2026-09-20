@@ -26,6 +26,53 @@ suite('Git worktree focus', () => {
             }
         }
     });
+    test('optional editor return waits for the origin and preserves the original editor process', () => {
+        for (const mode of ['immediate', 'delayed', 'timeout', 'user-switch', 'activation-failed', 'ambiguous-editor', 'missing-origin', 'browser-start', 'insiders']) {
+            const editorId = mode === 'insiders' ? 'com.microsoft.VSCodeInsiders' : 'com.microsoft.VSCode';
+            const events: string[] = [];
+            let sleeps = 0;
+            let current: any;
+            const editor = { bundleIdentifier: editorId, processIdentifier: 10, activateWithOptions: () => { events.push('editor'); current = editor; return true; } };
+            const origin = { bundleIdentifier: 'com.openai.codex', processIdentifier: 20, activateWithOptions: () => {
+                events.push('origin');
+                if (['immediate', 'browser-start', 'insiders'].includes(mode)) { current = origin; }
+                return mode !== 'activation-failed';
+            } };
+            current = ['browser-start', 'ambiguous-editor'].includes(mode)
+                ? { bundleIdentifier: 'com.google.Chrome', processIdentifier: 30 } : editor;
+            runInNewContext(RETURN_TO_APP_SCRIPT + '\nrun([destination, editorId]);', {
+                destination: origin.bundleIdentifier, editorId,
+                ObjC: { import: () => {}, unwrap: (value: unknown) => value },
+                $: {
+                    NSWorkspace: { sharedWorkspace: { get frontmostApplication() { return current; } } },
+                    NSRunningApplication: { runningApplicationsWithBundleIdentifier: (id: string) => ({
+                        count: id === editorId ? (mode === 'ambiguous-editor' ? 2 : 1) : mode === 'missing-origin' ? 0 : 1,
+                        objectAtIndex: () => id === editorId ? editor : origin,
+                    }) },
+                    NSDate: { dateWithTimeIntervalSinceNow: (seconds: number) => seconds },
+                    NSRunLoop: { currentRunLoop: { runUntilDate: (seconds: number) => {
+                        assert.strictEqual(seconds, 0.01); sleeps++;
+                        if (mode === 'delayed' && sleeps === 3) { current = origin; }
+                        if (mode === 'user-switch') { current = { bundleIdentifier: 'com.google.Chrome', processIdentifier: 99 }; }
+                    } } },
+                },
+            });
+            assert.deepStrictEqual(events, ['ambiguous-editor', 'missing-origin'].includes(mode) ? []
+                : ['timeout', 'user-switch', 'activation-failed'].includes(mode) ? ['origin'] : ['origin', 'editor'], mode);
+            if (mode === 'delayed') { assert.strictEqual(sleeps, 3); }
+            if (mode === 'timeout') { assert.strictEqual(sleeps, 50); }
+            if (mode === 'user-switch') { assert.strictEqual(sleeps, 1); }
+        }
+    });
+    test('passes only supported editor identifiers and defaults to the existing one-way return', async () => {
+        for (const editor of [undefined, 'com.microsoft.VSCode', 'com.microsoft.VSCodeInsiders', 'com.apple.TextEdit', '-e.bad']) {
+            const run = (async (_file: string, args: string[]) => {
+                assert.deepStrictEqual(args.slice(4), ['com.openai.codex',
+                    ...(['com.microsoft.VSCode', 'com.microsoft.VSCodeInsiders'].includes(editor ?? '') ? [editor] : [])]);
+            }) as any;
+            await returnToApp('com.openai.codex', 'darwin', run, editor);
+        }
+    });
     test('passes a validated app as process data, never script source', async () => {
         let calls = 0;
         const run = (async (file: string, args: string[], options: unknown) => {

@@ -96,6 +96,8 @@ Use another app's macOS bundle identifier to change the default. **Copy link to 
 
 Returning focus never launches an app. Invalid or duplicate destinations, failed worktree opens, and an unrelated app becoming active during the handoff skip the return. Turning the feature off keeps you in VS Code even when a link contains return metadata. Ordinary Source Control commands do not return focus.
 
+To finish in VS Code with the origin app next in macOS app switching, also enable `better-git-vscode.worktreeLinkKeepEditorFront`. Better Git waits until the origin becomes active before bringing the same VS Code app back to front. This setting is off by default and requires Worktree Link Return Focus. It uses the same configurable origin and existing links.
+
 
 For chat clients that require HTTPS, encode the complete URI twice as the `url` value of `https://vscode.dev/redirect?url=...`. Microsoft's redirect forwards it to VS Code; the copied link uses this form.
 
