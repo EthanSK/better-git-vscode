@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-09-22 — Reveal worktrees with no unstaged files without opening an editor
+
+The old link picked a staged file when no working changes existed, and skipped expansion entirely when clean. Native `workbench.scm.action.focusNextInput` can select a repository through its commit input; the Git API `repository.ui.selected` and `onDidChange` identify that exact repository even while the editor remains in another worktree. Use one bounded pass through native inputs, with one temporary listener per repository, rather than file previews or generic row traversal. For staged-only targets, focus its resource group, recursively collapse once, clear selection, then reopen the same now-hidden input. Completely clean targets need only repository collapse followed by that input reveal. No editor/tab, index, file, workspace-folder or user-setting mutation is needed.
+
+The resource-group focus command returns before its queued tree work finishes. The explicit link retains the existing 500 ms Git-to-SCM resource allowance and adds a bounded 100 ms group-focus settle; these are presentation margins, not renderer acknowledgements. The input pass has a two-second safety bound and aborts on window/editor changes. Auto Reveal off or hidden commit inputs skip this route. Startup and the ordinary manual collapse command retain their independent contracts.
+
+Verification: 89 non-GUI tests, TypeScript, ESLint and packaging passed. The Mini VS Code 1.132.0 suite passed 32 Worktree-link integration cases; native visible tests passed eight no-unstaged cases plus six existing dirty-worktree cases, including repeat, clean, staged deletions, large staged groups and newly discovered staged/clean worktrees via the real URI handler with Graph initially focused. Native checks assert only the exact repository expanded, Staged Changes collapsed, no selected file, no transient editor/tab change and unchanged Git status. Screenshots were inspected. Final production bundle SHA-256: `8101c1fffa6b2d3c8a030ef2788e2e598a84f5cf51b91a3ec37e92fa22455c7f`.
+
 ## 2026-09-22 — Keep the exhausted staging review in its worktree
 
 Stage + Next/Previous computed targets within the correct repository, but its no-target branch closed the active editor. VS Code then activated a background tab from another linked worktree. The held-batch no-target branch had the same behavior. Keep the final review tab open in both branches, retain navigation invalidation so queued presses cannot escape the completed review, and preserve the successful transaction for exact Undo. No delay, new setting or Agentic Mouse change is needed.

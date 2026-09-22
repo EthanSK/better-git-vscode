@@ -293,8 +293,8 @@ try {
   // Only the explicit link recursively collapses the focused Changes tree and clears selection.
   // Startup and the manual button still forbid all list commands in their runtime traces above.
   const listCalls = [...productionSource.matchAll(/executeScmTreeCommand\([^,]+,\s*["'](list\.[^"']+)["']/g)];
-  assert.deepEqual(listCalls.map(match => match[1]), ['list.collapseAll', 'list.clear']);
-  const linkStart = productionSource.indexOf('const openWorktreeInSourceControl =');
+  assert.deepEqual(listCalls.map(match => match[1]), ['list.collapseAll', 'list.clear', 'list.collapseAll', 'list.clear']);
+  const linkStart = productionSource.indexOf('const revealWorktreeWithoutUnstagedFiles =');
   const linkEnd = productionSource.indexOf('const revealUndoneStageTransaction =', linkStart);
   assert.ok(listCalls.every(call => call.index > linkStart && call.index < linkEnd),
     'recursive collapse and selection clearing must stay inside the explicit Worktree link action');
