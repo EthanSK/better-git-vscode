@@ -101,6 +101,21 @@ suite('Worktree link E2E', () => {
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(actual));
         assert.strictEqual(fs.realpathSync(activePath()!), path.join(actual, 'new.txt'));
     });
+    test('staged-only links leave editor tabs and the index unchanged', async () => {
+        await resetTarget();
+        fs.writeFileSync(path.join(target, 'review.txt'), 'staged only\n');
+        runGit(target, 'add', 'review.txt');
+        const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        const before = runGit(target, 'status', '--porcelain=v1');
+        let events = 0;
+        const listener = vscode.window.tabGroups.onDidChangeTabs(() => { events++; });
+        try {
+            await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+            assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab);
+            assert.strictEqual(events, 0, 'must not temporarily preview a staged file');
+            assert.strictEqual(runGit(target, 'status', '--porcelain=v1'), before);
+        } finally { listener.dispose(); await resetTarget(); }
+    });
     test('copies a chat-compatible link for the selected header, including path punctuation', async () => {
         const previous = await vscode.env.clipboard.readText();
         let copied = '';
@@ -125,7 +140,7 @@ suite('Worktree link E2E', () => {
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', { rootUri: vscode.Uri.file(path.join(root, 'missing')) });
         assert.strictEqual(activePath(), before);
         assert.deepStrictEqual(git.repositories.map((repo: any) => repo.rootUri.fsPath).sort(), repositories);
-        assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(traceStart), []);
+        assert.ok(api.getScmTreeCommandTrace().slice(traceStart).includes('workbench.view.scm'));
     });
     for (const command of ['stage-current-file-and-advance', 'stage-and-next-changed-file']) {
         test(`link-opened review: ${command} stages the highlighted file and opens the next`, async () => {
@@ -268,7 +283,7 @@ suite('Worktree link E2E', () => {
             fs.writeFileSync(path.join(root, 'review.txt'), 'base\n');
         }
     });
-    test('the last file closes without queued releases staging an older editor from another worktree', async () => {
+    test('the last file stays open without queued releases staging an older editor from another worktree', async () => {
         await resetTarget();
         runGit(target, 'clean', '-fd');
         fs.writeFileSync(path.join(root, 'review.txt'), 'other worktree\n');
@@ -278,7 +293,7 @@ suite('Worktree link E2E', () => {
         await Promise.all(Array.from({ length: 3 }, () => vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file')));
         assert.strictEqual(runGit(target, 'diff', '--cached', '--name-only').trim(), 'review.txt');
         assert.strictEqual(runGit(root, 'diff', '--cached', '--name-only'), '');
-        assert.notStrictEqual(activePath(), path.join(target, 'review.txt'));
+        assert.strictEqual(activePath(), path.join(target, 'review.txt'));
         fs.writeFileSync(path.join(root, 'review.txt'), 'base\n');
     });
     test('a staged-only link ignores hold-to-stage and preserves its index', async () => {
@@ -288,7 +303,7 @@ suite('Worktree link E2E', () => {
         runGit(target, 'add', 'review.txt');
         const traceStart = api.getScmTreeCommandTrace().length;
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
-        assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(traceStart), [], 'Keep Git-only fallback repositories visible');
+        assert.ok(api.getScmTreeCommandTrace().slice(traceStart).includes('list.collapseAll'), 'Collapse staged groups without opening a file');
         const before = runGit(target, 'diff', '--cached', '--binary');
         const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
         await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');

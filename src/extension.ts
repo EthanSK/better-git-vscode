@@ -2290,6 +2290,65 @@ interface FileChange {
     originalUri?: vscode.Uri; // staged RENAME/COPY: the HEAD-side blob lives at this old path, not `uri`
 }
 
+// Commit-input focus identifies repositories through the Git API without selecting/opening files.
+// Only explicit links use this bounded route; startup and the manual collapse button stay unchanged.
+const revealWorktreeWithoutUnstagedFiles = async (repository: any, repositories: any[], hasStaged: boolean): Promise<void> => {
+    await executeScmTreeCommand("manual", "workbench.view.scm");
+    if (!vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true)
+        || repositories.some(candidate => !vscode.workspace.getConfiguration("git", candidate.rootUri).get<boolean>("showCommitInput", true))) {
+        return;
+    }
+    // Let Git's resource-state batch reach SCM before focusing newly discovered inputs/groups.
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const stillOwned = () => vscode.window.state.focused
+        && vscode.window.tabGroups.activeTabGroup.activeTab === originalTab;
+    let finishCurrentFocus: (() => void) | undefined;
+    const listeners = repositories.map(candidate => candidate.ui.onDidChange(() => {
+        if (candidate.ui.selected) { finishCurrentFocus?.(); }
+    }));
+    const focusInput = async (): Promise<void> => {
+        let finish!: () => void;
+        const settled = new Promise<void>(resolve => { finish = resolve; });
+        finishCurrentFocus = finish;
+        // Focusing the already-selected input emits no change. Also bounds hosts with hidden inputs.
+        const timer = setTimeout(finish, 100);
+        try {
+            await executeScmTreeCommand("manual", "workbench.scm.action.focusNextInput");
+            await settled;
+        } finally {
+            clearTimeout(timer);
+            finishCurrentFocus = undefined;
+        }
+    };
+    try {
+        let found = false;
+        const deadline = Date.now() + 2000;
+        for (let attempt = 0; attempt <= repositories.length && Date.now() < deadline; attempt++) {
+            if (!stillOwned()) { return; }
+            await focusInput();
+            if (repository.ui.selected) { found = true; break; }
+        }
+        if (!found || !stillOwned()) { return; }
+        if (hasStaged) {
+            // This command focuses the target's group in the Changes tree even if Graph owned focus.
+            // VS Code queues its tree work but returns void; allow a bounded presentation settle before
+            // the one recursive collapse. Never infer group focus from source-control selection alone.
+            await executeScmTreeCommand("manual", "workbench.scm.action.focusNextResourceGroup");
+            await new Promise(resolve => setTimeout(resolve, 100));
+            if (!stillOwned()) { return; }
+            await executeScmTreeCommand("manual", "list.collapseAll");
+            await executeScmTreeCommand("manual", "list.clear");
+        } else {
+            await executeScmTreeCommand("manual", SCM_COLLAPSE_ALL_REPOS_COMMAND);
+        }
+        // The input was removed by collapse, so this reopens the same repository, not its neighbour.
+        if (stillOwned()) { await focusInput(); }
+    } finally {
+        listeners.forEach(listener => listener.dispose());
+    }
+};
+
 const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<boolean> => {
     let root = requestedRoot;
     try {
@@ -2347,10 +2406,9 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         // nested path above root files and item-10 above item-2, unlike the visible SCM review order.
         // Keep this lookup tied to the validated repository, including an already-open path alias.
         const changes = await getFileChanges(repository.rootUri);
-        const target = changes.find(change => !change.staged) ?? changes[0];
+        const target = changes.find(change => !change.staged);
         if (!target) {
-            await vscode.commands.executeCommand("workbench.view.scm");
-            void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}, but it has no changes to reveal. You may need to expand its section.`);
+            await revealWorktreeWithoutUnstagedFiles(repository, git.repositories, changes.length > 0);
             return true;
         }
         const autoReveal = vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true);

@@ -21,6 +21,7 @@ const testLinkBackground = process.argv.includes('--link-background');
 const testReturnApp = process.argv.includes('--return-app');
 const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
 const testHeldClick = process.argv.includes('--held-click');
+const testNoUnstaged = process.argv.includes('--no-unstaged');
 const testStageReveal = process.argv.includes('--stage-reveal');
 async function until(read, accept, description, timeout = 15_000) {
     const end = Date.now() + timeout;
@@ -205,7 +206,58 @@ try {
     fs.writeFileSync(path.join(roots[1], 'staged-late.txt'), 'late staged change\n'); git(roots[1], 'add', 'staged-late.txt');
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'switch-after-staged-refresh');
-    if (testLinkBackground) {
+    if (testNoUnstaged) {
+        const original = await request('state');
+        for (const [repo, kind] of [[2, 'staged'], [2, 'repeat'], [3, 'clean'], [3, 'clean-repeat'], [4, 'deleted'], [8, 'large-staged']]) {
+            if (kind === 'clean') { git(roots[repo], 'reset', '--hard', 'HEAD'); }
+            else if (kind === 'deleted') {
+                git(roots[repo], 'reset', '--hard', 'HEAD');
+                for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) { fs.unlinkSync(path.join(roots[repo], file)); }
+                git(roots[repo], 'add', '-u');
+            } else if (!kind.includes('repeat')) { git(roots[repo], 'add', '.'); }
+            await request('refresh', { repo });
+            await request('command', { command: 'workbench.scm.action.expandAllRepositories' });
+            await request('command', { command: 'workbench.scm.history.focus' });
+            const before = roots.map(r => git(r, 'status', '--porcelain=v1'));
+            await request('watch-tabs');
+            await request('open', { repo });
+            await pause(500);
+            await capture(`no-unstaged-${kind}`);
+            const rows = await evaluate(rowsExpression);
+            assert.deepEqual(rows.filter(r => r.level === '1' && /^repo-/.test(r.aria) && r.expanded === 'true').map(r => r.aria), [`repo-${repo} Git`], kind);
+            assert.ok(rows.filter(r => r.aria === 'Staged Changes').every(r => r.expanded === 'false'), `${kind}: staged group`);
+            assert.ok(!rows.some(r => r.level === '3' && r.selected === 'true'), `${kind}: selected a file`);
+            const after = await request('state');
+            assert.equal(after.active, original.active, `${kind}: changed editor`);
+            assert.deepEqual(after.tabs, original.tabs, `${kind}: changed tabs`);
+            assert.deepEqual((await request('watched-tabs')).value, [], `${kind}: transient editor change`);
+            assert.deepEqual(roots.map(r => git(r, 'status', '--porcelain=v1')), before, `${kind}: modified Git`);
+            console.log(`PASS no-unstaged-${kind}`);
+        }
+        for (const kind of ['staged', 'clean']) {
+            const fresh = path.join(root, `fresh-${kind}`);
+            git(roots[0], 'worktree', 'add', '--detach', fresh);
+            if (kind === 'staged') {
+                fs.writeFileSync(path.join(fresh, 'a.txt'), 'fresh staged\n');
+                git(fresh, 'add', 'a.txt');
+            }
+            const before = git(fresh, 'status', '--porcelain=v1');
+            await request('command', { command: 'workbench.scm.history.focus' });
+            await request('watch-tabs');
+            await request('uri', { uri: `vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(fresh)}` });
+            await pause(500);
+            await capture(`no-unstaged-fresh-${kind}`);
+            const rows = await evaluate(rowsExpression);
+            assert.ok(rows.some(r => r.aria === `fresh-${kind} Git` && r.expanded === 'true'));
+            assert.ok(!rows.some(r => r.level === '1' && r.aria?.endsWith(' Git') && r.aria !== `fresh-${kind} Git` && r.expanded === 'true'));
+            assert.ok(rows.filter(r => r.aria === 'Staged Changes').every(r => r.expanded === 'false'));
+            assert.deepEqual((await request('watched-tabs')).value, []);
+            assert.equal((await request('state')).active, original.active);
+            assert.equal(git(fresh, 'status', '--porcelain=v1'), before);
+            console.log(`PASS no-unstaged-fresh-${kind}`);
+        }
+        console.log('BETTER_GIT_NO_UNSTAGED_REVEAL_VERIFIED');
+    } else if (testLinkBackground) {
         const jxa = code => execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit'); ${code}`], { encoding: 'utf8' });
         const focusCode = () => jxa(`$.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`);
         for (const [repo, delay] of [[2, 1200], [3, 50], [2, 0]]) {
@@ -459,7 +511,7 @@ try {
         console.log('BETTER_GIT_KEYBOARD_REPEAT_VERIFIED repeated-keydown=one-stage release-and-repress=next-stage untagged-F18=unchanged');
     }
     }
-    for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
+    if (!testNoUnstaged) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
         assert.equal(fs.readFileSync(path.join(repo, file), 'utf8'), 'modified\n');
     }
     console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);

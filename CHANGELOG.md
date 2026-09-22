@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.98
+
+- Expand a linked worktree with no unstaged files without opening or selecting a staged file. Keep Staged Changes collapsed and preserve the current editor, including completely clean worktrees and staged deletions. This uses native commit-input focus when Auto Reveal and commit inputs are enabled.
+
 ## 1.2.97
 
 - Keep the final review tab open when Stage + Next or Stage + Previous stages the last unstaged file in a worktree. The same behavior applies when a held batch stages all remaining files, so another worktree is not activated by closing the review tab.
