@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.97
+
+- Keep the final review tab open when Stage + Next or Stage + Previous stages the last unstaged file in a worktree. The same behavior applies when a held batch stages all remaining files, so another worktree is not activated by closing the review tab.
+
 ## 1.2.96
 
 - Wait for the VS Code window to become frontmost before a Worktree link drives Source Control reveal and collapse. This keeps Chrome-to-VS Code handoffs from acting on a partially rendered SCM tree.

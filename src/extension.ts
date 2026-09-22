@@ -4678,14 +4678,9 @@ const stageSelectedFilesAndAdvance = async (
     check();
 
     if (!target) {
-        if (!activeWasSelected) { return true; }
-        navigationOwnTabChange = true;
-        try {
-            await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
-        } finally {
-            observeNavigationTab();
-            navigationOwnTabChange = false;
-        }
+        // Keep the current view when this worktree is exhausted. Closing it would
+        // activate an arbitrary background tab, potentially in another worktree.
+        // Invalidate already-queued navigation without touching the staged receipt.
         invalidateChangeNavigation();
         return true;
     }
@@ -4765,7 +4760,7 @@ const stageCurrentFileAndAdvance = async (
     //   "previous" -> the file BEFORE the current one (bottom-to-top review); if it was the FIRST, fall back
     //                 to the NEXT one. Not in the list -> the LAST unstaged file.
     // The ?? handles the boundary; for the only-file case the fallback index is out of range and returns
-    // undefined (-> close the editor below, nothing left to review). NOTE: this end-of-list guard is exactly
+    // undefined (-> keep the editor below, nothing left to review). NOTE: this end-of-list guard is exactly
     // what the mouse (F18/F19) + the "+" button inherit for free — they call this SAME function, so the
     // at-the-end/at-the-bottom behavior is identical no matter how stage-and-advance is triggered.
     let targetUnstagedChange: FileChange | undefined;
@@ -4787,15 +4782,9 @@ const stageCurrentFileAndAdvance = async (
     check(); // Finish the exact stage, but never pull the user back after a manual tab/worktree switch.
 
     if (!targetUnstagedChange) {
-        // Current was the ONLY unstaged file (no next and no previous) — nothing left to review, so close.
-        navigationOwnTabChange = true;
-        try {
-            await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
-        } finally {
-            observeNavigationTab();
-            navigationOwnTabChange = false;
-        }
-        // Exhausting this review must not let already queued releases stage an unrelated revealed tab.
+        // Nothing remains in this worktree: keep the final review tab open. Closing
+        // it can reveal another worktree and make the next stage press act there.
+        // Still discard already-queued navigation; the successful stage stays undoable.
         invalidateChangeNavigation();
         return;
     }

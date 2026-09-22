@@ -3079,7 +3079,63 @@ suite('SCM change navigation E2E', () => {
 		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('hold_a.txt').fsPath);
 	});
 
-	test('button-down hold at the only file boundary stages once and closes the exhausted review', async () => {
+	for (const direction of ['next', 'previous'] as const) {
+		for (const batch of [false, true]) {
+			for (const preview of [false, true]) {
+				test(`exhausted stage review stays in its worktree: ${direction} batch=${batch} preview=${preview}`, async () => {
+					const sibling = process.env.BGV_LAST_STAGED_WORKTREE_PATH!;
+					const siblingUri = vscode.Uri.file(path.join(sibling, 'boundary_a.txt'));
+					const config = vscode.workspace.getConfiguration('better-git-vscode');
+					await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+					const names = batch ? ['boundary_a.txt', 'boundary_b.txt'] : ['boundary_a.txt'];
+					try {
+						await vscode.commands.executeCommand('better-git-vscode.add-worktree-to-workspace', { rootUri: vscode.Uri.file(sibling) });
+						fs.writeFileSync(siblingUri.fsPath, 'Unstaged sibling must never be selected or staged.\n');
+						const api = vscode.extensions.getExtension<any>('vscode.git')!.exports.getAPI(1);
+						const siblingRepo = await poll(() => api.getRepository(siblingUri), 'sibling repository');
+						await siblingRepo.status();
+						for (const name of names) { write(name, 'Only this worktree is being staged.\n'); }
+						await refreshUntil(() => names.every(isUntracked), 'last unstaged files');
+						await vscode.window.showTextDocument(siblingUri, { preview: false });
+						const start = direction === 'next' ? names[0] : names[names.length - 1];
+						await vscode.window.showTextDocument(wsUri(start), { preview });
+						if (batch) {
+							await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction });
+							await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+							await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', direction === 'next' ? 'down' : 'up');
+						}
+						const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab!;
+						const originalPath = activeTabPath();
+						const activations: string[] = [];
+						const listener = vscode.window.tabGroups.onDidChangeTabs(() => {
+							const current = activeTabPath(); if (current) { activations.push(current); }
+						});
+						try {
+							if (batch) {
+								await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction });
+							} else {
+								await vscode.commands.executeCommand(`better-git-vscode.stage-and-${direction}-changed-file`);
+							}
+							await extensionApi.whenStageTransactionsSettled();
+							await sleep(150); // Catch delayed tab activation after the Git refresh.
+							assert.strictEqual(git('diff --cached --name-only'), names.join('\n'));
+							assert.strictEqual(activeTabPath(), originalPath, 'exhaustion must keep the final review file');
+							assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, originalTab, 'do not close or replace the final review tab');
+							assert.ok(!activations.includes(siblingUri.path), 'never transiently activate another worktree');
+							assert.strictEqual(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: sibling, encoding: 'utf8' }).trim(), '');
+						} finally { listener.dispose(); }
+						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+						assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the final stage or whole batch');
+					} finally {
+						fs.rmSync(siblingUri.fsPath, { force: true });
+						await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+					}
+				});
+			}
+		}
+	}
+
+	test('button-down hold at the only file boundary stages once and keeps the exhausted review', async () => {
 		write('hold_only.txt', 'only');
 		await refreshUntil(() => isUntracked('hold_only.txt'), 'only hold file');
 		await openPlainAt('hold_only.txt', 0);
