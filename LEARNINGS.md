@@ -1,5 +1,11 @@
 # Learnings
 
+## 2026-09-25 — Pull fresh AgentFlow selections through the editor API
+
+VS Code's Monaco code/diff editors can expose an inaccessible AX text control while screen-reader mode is off. AgentFlow must not enable that mode, synthesize Copy, or treat earlier generic AX tests as actual VS Code coverage. The optional macOS bridge responds over a private same-user Unix socket only to a versioned request matching the focused main PID and a fresh mouse-selection event. It retains coordinates, not selected text; reads at most 8,192 UTF-16 units only on demand; never logs the text; and clears eligibility on document, focus or editor changes. Programmatic Better Git hunk movement is deliberately excluded. No Git navigation debounce, network listener, polling or clipboard mutation is introduced.
+
+Verification: 91 non-GUI tests, TypeScript and ESLint passed. Isolated Mini VS Code 1.132.0 and 1.138.0 workbenches, with screen-reader mode off, passed mouse selections in plain and diff editors through the production bridge and AgentFlow's production Swift socket reader. Malformed/wrong-PID/stale requests and programmatic selections returned null; original fixture files stayed unchanged. Terminal/webview, remote and multi-cursor selection support is not claimed.
+
 ## 2026-09-22 — Reveal worktrees with no unstaged files without opening an editor
 
 The old link picked a staged file when no working changes existed, and skipped expansion entirely when clean. Native `workbench.scm.action.focusNextInput` can select a repository through its commit input; the Git API `repository.ui.selected` and `onDidChange` identify that exact repository even while the editor remains in another worktree. Use one bounded pass through native inputs, with one temporary listener per repository, rather than file previews or generic row traversal. For staged-only targets, focus its resource group, recursively collapse once, clear selection, then reopen the same now-hidden input. Completely clean targets need only repository collapse followed by that input reveal. No editor/tab, index, file, workspace-folder or user-setting mutation is needed.

@@ -4,6 +4,8 @@
 
 <h1 align="center">Better Git VS Code</h1>
 
+AgentFlow can also use Better Git 1.2.99+ to capture a fresh mouse highlight from a local VS Code code or diff editor while dictating. This optional macOS bridge uses VS Code's selection API and a private per-user Unix socket; it does not enable screen-reader mode, use the clipboard, send text over the network, or store selected text. Automatic Git hunk movements, old/background selections, terminals, webviews, remote hosts and multi-cursor selections are excluded. Install AgentFlow separately from [its website](https://ethansk.github.io/AgentFlow/).
+
 <p align="center">
   <b>Fast, keyboard-driven Git change review in VS Code.</b>
 </p>
