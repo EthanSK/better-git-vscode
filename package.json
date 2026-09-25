@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.100",
+  "version": "1.2.101",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -377,6 +377,17 @@
           "default": false,
           "scope": "application",
           "description": "Experimental. Move on mouse button-down, then restore the original review view when a hold becomes ready to stage. Off keeps the review view still until release decides between navigation and staging."
+        },
+        "better-git-vscode.inlineDiffOnDisplay": {
+          "type": "object",
+          "default": {},
+          "scope": "application",
+          "properties": {
+            "uuid": { "type": "string" },
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
+          },
+          "description": "macOS only. Set a display UUID and its width and height to use Inline diff view while that display is connected, and Automatic diff view when it is disconnected. An empty value turns this off. This changes VS Code's diff view setting across all windows."
         },
         "better-git-vscode.worktreeLinkReturnFocus": {
           "type": "boolean",
