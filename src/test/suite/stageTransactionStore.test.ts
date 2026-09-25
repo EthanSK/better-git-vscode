@@ -99,6 +99,43 @@ suite("StageTransactionStore", () => {
         assert.deepStrictEqual(history[0].uris, uris);
     });
 
+    test("keeps the reviewed cursor and viewport when another window observes the same stage", async () => {
+        const store = new StageTransactionStore(receiptPath);
+        const view: NonNullable<StoredStageTransaction["view"]> = {
+            fileUri: "file:///tmp/example-worktree/file.ts",
+            documentUri: "file:///tmp/example-worktree/file.ts",
+            selections: [{ anchor: { line: 27, character: 2 }, active: { line: 27, character: 8 } }],
+            topLine: 19,
+        };
+        const stage = { ...receipt(0), kind: "betterGitStage" as const, uri: view.fileUri, view };
+        await store.append(stage);
+        await new StageTransactionStore(receiptPath).append(receipt(0));
+
+        const restored = await new StageTransactionStore(receiptPath).loadLatest();
+        assert.strictEqual(restored?.kind, "betterGitStage");
+        assert.deepStrictEqual(restored?.view, view);
+    });
+
+    test("enriches an already-observed batch with its complete view and file list", async () => {
+        const store = new StageTransactionStore(receiptPath);
+        const observed = await store.append(receipt(0));
+        const uris = ["file:///tmp/example-worktree/a.ts", "file:///tmp/example-worktree/b.ts"];
+        const view: NonNullable<StoredStageTransaction["view"]> = {
+            fileUri: uris[1], documentUri: uris[1],
+            selections: [{ anchor: { line: 9, character: 0 }, active: { line: 9, character: 4 } }],
+            topLine: 5,
+        };
+
+        await store.observeSnapshot(observed.repoRoot,
+            async () => ({ headTree: observed.headTree, indexTree: observed.afterIndexTree }),
+            undefined, { kind: "betterGitStage", uri: uris[0], uris, view });
+
+        const enriched = await new StageTransactionStore(receiptPath).loadLatest();
+        assert.strictEqual(enriched?.kind, "betterGitStage");
+        assert.deepStrictEqual(enriched?.uris, uris);
+        assert.deepStrictEqual(enriched?.view, view);
+    });
+
     test("compacts an old 100-entry history on first read and does not rewrite unchanged state", async () => {
         const entries = Array.from({ length: 100 }, (_, sequence) => receipt(sequence));
         const baseline = { repoRoot: entries[0].repoRoot, snapshot: { headTree: "head-tree", indexTree: "tree-100" } };

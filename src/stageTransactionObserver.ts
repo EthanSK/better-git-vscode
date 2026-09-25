@@ -5,6 +5,7 @@ export interface StageTransactionDetails {
     kind: "betterGitStage" | "observedIndexChange";
     uri?: string;
     uris?: string[];
+    view?: StoredStageTransaction["view"];
 }
 
 /// Observes exact Git-index tree transitions instead of assuming that staging
@@ -43,9 +44,9 @@ export class StageTransactionObserver {
 
     /// Fire-and-forget entry point for vscode.git state events. Suppression is
     /// captured when the event arrives, not when its queued work later runs.
-    notify(repoRoot: string): void {
+    notify(repoRoot: string, details?: StageTransactionDetails): void {
         const suppressed = this.suppressedRoots.has(repoRoot);
-        void this.enqueue(() => this.observeNow(repoRoot, undefined, suppressed))
+        void this.enqueue(() => this.observeNow(repoRoot, details, suppressed))
             .catch(this.onBackgroundError);
     }
 

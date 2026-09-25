@@ -2312,6 +2312,7 @@ suite('SCM change navigation E2E', () => {
 			for (const name of ['batch_a.txt', 'batch_b.txt', 'batch_c.txt', 'batch_d.txt', 'batch_existing.txt']) {
 				write(name, name);
 			}
+			write('batch_c.txt', lines(120, 'batch_c') + '\n');
 			await refreshUntil(
 				() => ['batch_a.txt', 'batch_b.txt', 'batch_c.txt', 'batch_d.txt', 'batch_existing.txt'].every(isUntracked),
 				'batch selection files'
@@ -2334,6 +2335,11 @@ suite('SCM change navigation E2E', () => {
 			await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'up');
 			assert.strictEqual(activeTabPath(), wsUri('batch_c.txt').path, 'contracting the range must preview the current endpoint');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('batch_d.txt')), undefined, 'reverse wheel must contract the range');
+			const endpointEditor = await poll(() => visibleEditorFor(wsUri('batch_c.txt')), 'batch endpoint editor');
+			endpointEditor.selection = new vscode.Selection(20, 2, 20, 8);
+			endpointEditor.revealRange(new vscode.Range(10, 0, 10, 0), vscode.TextEditorRevealType.AtTop);
+			await sleep(100);
+			const endpointView = { selection: endpointEditor.selection, top: endpointEditor.visibleRanges[0].start.line };
 
 			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
 			assert.deepStrictEqual(git('diff --cached --name-only').split('\n'), [
@@ -2342,6 +2348,11 @@ suite('SCM change navigation E2E', () => {
 			assert.strictEqual(activeTabPath(), wsUri('batch_d.txt').path, 'release must land after the staged range');
 			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 			assert.strictEqual(git('diff --cached --name-only'), 'batch_existing.txt', 'one Undo must restore the full batch and keep older staged work');
+			assert.strictEqual(activeTabPath(), wsUri('batch_c.txt').path, 'Undo must return to the last previewed batch file');
+			const undoneEndpoint = await poll(() => visibleEditorFor(wsUri('batch_c.txt')), 'undone batch endpoint');
+			assert.deepStrictEqual(undoneEndpoint.selection, endpointView.selection);
+			await poll(() => undoneEndpoint.visibleRanges[0]?.start.line === endpointView.top,
+				'batch endpoint viewport to return');
 		} finally {
 			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
 		}
@@ -2956,6 +2967,15 @@ suite('SCM change navigation E2E', () => {
         await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
         assert.strictEqual(git('diff --cached --name-only'), 'committed/tall_e.txt');
         assert.strictEqual(activeTabPath(), wsUri('zz_after.txt').path);
+        await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+        await refreshUntil(() => !inIndex('committed/tall_e.txt') && inWorkingTree('committed/tall_e.txt', 5),
+            'mouse-held stage to be undone');
+        await expectActiveTab('committed/tall_e.txt');
+        const undone = await poll(() => visibleEditorFor(wsUri('committed/tall_e.txt')),
+            'mouse-held staged diff to return');
+        assert.deepStrictEqual(undone.selection, selection, 'Undo must restore the pre-hold cursor selection');
+        await poll(() => undone.visibleRanges[0]?.start.line === top,
+            'Undo to restore the pre-hold viewport');
     });
 
     test('hold readiness queued immediately after button-down restores the pre-press view', async () => {
@@ -3245,6 +3265,33 @@ suite('SCM change navigation E2E', () => {
 		assert.strictEqual(vscode.window.activeTextEditor?.document.uri.fsPath, wsUri('mouse_b.txt').fsPath);
 	});
 
+	test('late mouse stage undo restores the view before navigation crossed files', async () => {
+		const rel = 'committed/tall_e.txt';
+		const content = lines(260, 'tall_e').split('\n');
+		content[160] = 'tall_e LATE MOUSE STAGE';
+		write(rel, content.join('\n') + '\n');
+		write('zz_after.txt', 'next review file\n');
+		await refreshUntil(() => inWorkingTree(rel, 5) && isUntracked('zz_after.txt'), 'late mouse view files');
+		const editor = await openWorkingDiffAt(rel, 160);
+		editor.selection = new vscode.Selection(160, 2, 160, 12);
+		editor.revealRange(new vscode.Range(145, 0, 145, 0), vscode.TextEditorRevealType.AtTop);
+		await sleep(150);
+		const before = { selection: editor.selection, top: editor.visibleRanges[0].start.line };
+
+		await vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'corsair');
+		await expectActiveTab('zz_after.txt');
+		await vscode.commands.executeCommand('better-git-vscode.stage-before-mouse-navigation',
+			{ source: 'corsair', direction: 'next' });
+		assert.strictEqual(git('diff --cached --name-only'), rel);
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await refreshUntil(() => !inIndex(rel) && inWorkingTree(rel, 5), 'late mouse stage to be undone');
+		await expectActiveTab(rel);
+		const restored = await poll(() => visibleEditorFor(wsUri(rel)), 'late mouse origin diff to return');
+		assert.deepStrictEqual(restored.selection, before.selection);
+		await poll(() => restored.visibleRanges[0]?.start.line === before.top,
+			'late mouse origin viewport to return');
+	});
+
 	test('expired, opposite-source, and wrong-direction mouse receipts never stage the current file', async () => {
 		write('mouse_a.txt', 'first');
 		write('mouse_b.txt', 'second');
@@ -3328,6 +3375,37 @@ suite('SCM change navigation E2E', () => {
 		assert.ok(input instanceof vscode.TabInputTextDiff && input.modified.scheme === 'file',
 			'Undo must select the restored working-tree diff, not the remaining staged copy');
 	});
+
+	for (const stageCommand of ['better-git-vscode.stage-and-next-changed-file', 'git.stage']) {
+		test(`undo ${stageCommand} returns to the prior cursor and viewport`, async () => {
+			const rel = 'committed/tall_e.txt';
+			const content = lines(260, 'tall_e').split('\n');
+			content[160] = 'tall_e RESTORE MY REVIEW POSITION';
+			write(rel, content.join('\n') + '\n');
+			write('zz_after.txt', 'next review file\n');
+			await refreshUntil(() => inWorkingTree(rel, 5) && isUntracked('zz_after.txt'),
+				'undo view fixture to appear');
+			const editor = await openWorkingDiffAt(rel, 160);
+			editor.selection = new vscode.Selection(160, 2, 160, 15);
+			editor.revealRange(new vscode.Range(145, 0, 145, 0), vscode.TextEditorRevealType.AtTop);
+			await sleep(150);
+			const before = { selection: editor.selection, top: editor.visibleRanges[0].start.line };
+			assert.ok(before.top > 0 && before.top < 160, 'fixture needs a meaningful saved viewport');
+
+			await vscode.commands.executeCommand(stageCommand);
+			await refreshUntil(() => inIndex(rel, 0), `${stageCommand} to stage the tall file`);
+			if (stageCommand === 'git.stage') {
+				await vscode.window.showTextDocument(wsUri('zz_after.txt'), { preview: true });
+			}
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			await refreshUntil(() => !inIndex(rel) && inWorkingTree(rel, 5), 'undo to restore the tall file');
+			await expectActiveTab(rel);
+			const restored = await poll(() => visibleEditorFor(wsUri(rel)), `${rel} restored diff editor`);
+			await poll(() => restored.visibleRanges[0]?.start.line === before.top,
+				`${rel} viewport restored to line ${before.top}`);
+			assert.deepStrictEqual(restored.selection, before.selection, 'Undo must restore the exact cursor selection');
+		});
+	}
 
 	test('undo waits for a stage performed by VS Code built-in Git rather than Better Git', async () => {
 		const content = lines(24, 'mod_a').split('\n');
