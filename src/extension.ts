@@ -9,7 +9,7 @@ import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./
 import { returnToApp } from "./gitWorktreeFocus";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
-import { StageTransactionStore, StoredStageTransaction } from "./stageTransactionStore";
+import { StageTransactionStore, StageUndoView, StoredStageTransaction } from "./stageTransactionStore";
 import { StageTransactionObserver } from "./stageTransactionObserver";
 import { readIndexSnapshot, readStageTransactionPaths, restoreStageTransaction } from "./gitStageUndo";
 import { extractFileDiffSection } from "./gitDiffSection";
@@ -215,7 +215,10 @@ const startIndexTransitionObservation = async (context: vscode.ExtensionContext)
         });
         if (typeof repo?.state?.onDidChange === "function") {
             context.subscriptions.push(repo.state.onDidChange(() => {
-                stageTransactionObserver?.notify(repoRoot);
+                // Native Git staging keeps the reviewed editor visible while it
+                // changes the index. Save that view with the observed receipt.
+                const view = captureActiveStageUndoView();
+                stageTransactionObserver?.notify(repoRoot, view ? { kind: "observedIndexChange", view } : undefined);
             }));
         }
     };
@@ -287,8 +290,46 @@ const recordLastStaged = (uri: vscode.Uri): void => recordLastStagedBatch([uri])
 // nothing to stage) never updates the indicator — so the bar never shows a file that wasn't actually
 // staged. Capture the staged URI here, BEFORE callers advance the active editor, so we record the file we
 // staged rather than whatever the editor switches to after the jump.
-const stageBatchThroughExtension = async (repo: any, uris: readonly vscode.Uri[]): Promise<void> => {
+const stageUndoViewFromMouseReview = (fileUri: vscode.Uri, view?: MouseReviewView): StageUndoView | undefined => {
+    const saved = view?.editors.find(editor => editor.uri === fileUri.toString());
+    if (!saved || saved.selections.length === 0) { return undefined; }
+    return {
+        fileUri: fileUri.toString(), documentUri: saved.uri,
+        selections: saved.selections.slice(0, 16).map(selection => ({
+            anchor: { line: selection.anchor.line, character: selection.anchor.character },
+            active: { line: selection.active.line, character: selection.active.character },
+        })),
+        topLine: saved.top?.line,
+    };
+};
+
+const captureActiveStageUndoView = (): StageUndoView | undefined => {
+    const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    const fileUri = input instanceof vscode.TabInputTextDiff ? input.modified
+        : input instanceof vscode.TabInputText ? input.uri : undefined;
+    if (fileUri?.scheme !== "file") { return undefined; }
+    const editor = visibleEditorForActiveTab();
+    if (!editor || editor.document.uri.toString() !== fileUri.toString()) { return undefined; }
+    return {
+        fileUri: fileUri.toString(), documentUri: editor.document.uri.toString(),
+        selections: editor.selections.slice(0, 16).map(selection => ({
+            anchor: { line: selection.anchor.line, character: selection.anchor.character },
+            active: { line: selection.active.line, character: selection.active.character },
+        })),
+        topLine: editor.visibleRanges[0]?.start.line,
+    };
+};
+
+const stageBatchThroughExtension = async (
+    repo: any, uris: readonly vscode.Uri[], priorView?: StageUndoView
+): Promise<void> => {
     if (uris.length === 0) { return; }
+    const selectedUris = new Set(uris.map(uri => uri.toString()));
+    const activeView = captureActiveStageUndoView();
+    // A held batch may be previewing its latest endpoint at release. Prefer
+    // that live view; the saved mouse origin covers button-down navigation
+    // that already moved to an unrelated file before the stage begins.
+    const view = [activeView, priorView].find(candidate => candidate && selectedUris.has(candidate.fileUri));
     const repoRoot = String(repo.rootUri?.fsPath ?? "");
     let receiptCaptureError: unknown;
     if (repoRoot) {
@@ -307,6 +348,7 @@ const stageBatchThroughExtension = async (repo: any, uris: readonly vscode.Uri[]
                 kind: "betterGitStage",
                 uri: uris[0].toString(),
                 uris: uris.map(uri => uri.toString()),
+                view,
             });
         } catch (error) {
             receiptCaptureError = error;
@@ -325,8 +367,8 @@ const stageBatchThroughExtension = async (repo: any, uris: readonly vscode.Uri[]
     }
     recordLastStagedBatch(uris); // success -> update the status bar with the files we just staged
 };
-const stageThroughExtension = (repo: any, uri: vscode.Uri): Promise<void> =>
-    stageBatchThroughExtension(repo, [uri]);
+const stageThroughExtension = (repo: any, uri: vscode.Uri, priorView?: StageUndoView): Promise<void> =>
+    stageBatchThroughExtension(repo, [uri], priorView);
 
 // Undo the latest observed stage/index transaction from a bounded persistent
 // LIFO history, and only while HEAD and the index are still byte-for-byte the
@@ -2478,7 +2520,8 @@ const revealUndoneStageTransaction = async (transaction: StoredStageTransaction)
     const unstaged = entries.filter(entry => !entry.staged);
     const candidates = unstaged.length > 0 ? unstaged : entries;
     const currentUri = candidates.length > 1 ? await currentReviewFileUriAsync() : undefined;
-    const target = candidates.find(entry => entry.uri.toString() === transaction.uri)
+    const target = candidates.find(entry => entry.uri.toString() === transaction.view?.fileUri)
+        ?? candidates.find(entry => entry.uri.toString() === transaction.uri)
         ?? candidates.find(entry => entry.uri.toString() === currentUri?.toString())
         ?? candidates[0]; // A multi-file external transaction follows the SCM sort order.
     if (target) {
@@ -2490,7 +2533,26 @@ const revealUndoneStageTransaction = async (transaction: StoredStageTransaction)
             await vscode.commands.executeCommand("vscode.open", target.uri, { preview: true, preserveFocus: true });
         }
         await openChangeEntry(target, true);
+        if (transaction.view?.fileUri === target.uri.toString()) {
+            await restoreStageUndoView(transaction.view);
+        }
     }
+};
+
+const restoreStageUndoView = async (view: StageUndoView): Promise<void> => {
+    const editor = visibleEditorForActiveTab();
+    if (!editor || editor.document.uri.toString() !== view.documentUri) { return; }
+    editor.selections = view.selections.map(selection => new vscode.Selection(
+        editor.document.validatePosition(new vscode.Position(selection.anchor.line, selection.anchor.character)),
+        editor.document.validatePosition(new vscode.Position(selection.active.line, selection.active.character))));
+    if (view.topLine === undefined) { return; }
+    // The same AtTop padding used by held-mouse view restoration compensates
+    // for VS Code's sticky-scroll/cursor context without a jump-away/jump-back.
+    const config = vscode.workspace.getConfiguration("editor", editor.document);
+    const padding = Math.max(config.get<number>("cursorSurroundingLines", 0),
+        config.get<boolean>("stickyScroll.enabled", true) ? config.get<number>("stickyScroll.maxLineCount", 5) : 0);
+    const top = editor.document.validatePosition(new vscode.Position(view.topLine + padding, 0));
+    await revealRangeAndWaitForViewport(editor, new vscode.Range(top, top), vscode.TextEditorRevealType.AtTop);
 };
 
 // Unstaged file uris for a repo = tracked working-tree changes PLUS untracked (new) files, deduped by path
@@ -4373,10 +4435,9 @@ const navigateWithMouseOrigin = (
         if (isMouseReviewSource(source)) {
             mouseNavigationOrigins.delete(source);
             const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
-            // A release-only hold normally stays on this view until button-up, but wheel range selection now
-            // previews its moving endpoint. Capture every held origin so cancellation can restore the exact
-            // pre-selection tab, diff side, cursor selection and viewport.
-            const view = held ? captureMouseReviewView() : undefined;
+            // Holds need this for cancellation; the separate tagged Next/Stage
+            // route also needs it when navigation crosses files before Stage.
+            const view = captureMouseReviewView();
             const active = await getActiveChange();
             const uri = await getActiveFileUri();
             check();
@@ -4434,7 +4495,7 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         if (!repo) { mouseDebug(`${label} release ignored, repository is no longer open.`); return; } // A closed repository must not redirect the captured file to the first workspace repo.
         if (heldSelection?.length) {
             mouseDebug(`${label} release committing ${heldSelection.length} marked files.`);
-            await stageSelectedFilesAndAdvance(direction, heldSelection, check);
+            await stageSelectedFilesAndAdvance(direction, heldSelection, check, origin.view);
             return;
         }
         const selected = [origin.change];
@@ -4449,9 +4510,10 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         if (selected.length > 1) {
             await stageSelectedFilesAndAdvance(direction, selected, check);
         } else if (shown?.toString() === origin.change.uri.toString()) {
-            await stageCurrentFileAndAdvance(direction, origin.change, check);
+            await stageCurrentFileAndAdvance(direction, origin.change, check, origin.view);
         } else {
-            await stageThroughExtension(repo, origin.change.uri); // Navigation already crossed files: stage the origin without a second jump.
+            await stageThroughExtension(repo, origin.change.uri,
+                stageUndoViewFromMouseReview(origin.change.uri, origin.view)); // Stage the saved origin without a second jump.
         }
         mouseDebug(selected.length > 1
             ? `${label} release staged ${selected.length} files.`
@@ -4705,7 +4767,8 @@ const distinctUnstagedChanges = (changes: readonly FileChange[]): FileChange[] =
 const stageSelectedFilesAndAdvance = async (
     direction: "next" | "previous",
     selected: readonly FileChange[],
-    check: NavigationCheckpoint = noNavigationCheckpoint
+    check: NavigationCheckpoint = noNavigationCheckpoint,
+    priorView?: MouseReviewView
 ): Promise<boolean> => {
     if (selected.length === 0) { return false; }
     const selectedKeys = selected.map(change => change.uri.toString());
@@ -4734,7 +4797,8 @@ const stageSelectedFilesAndAdvance = async (
         ? after ?? before ?? remaining[0]
         : before ?? after ?? remaining[remaining.length - 1];
     const activeWasSelected = selectedKeys.includes((await getActiveFileUri())?.toString() ?? "");
-    await stageBatchThroughExtension(repo, selected.map(change => change.uri));
+    await stageBatchThroughExtension(repo, selected.map(change => change.uri),
+        selected.map(change => stageUndoViewFromMouseReview(change.uri, priorView)).find(view => view));
     check();
 
     if (!target) {
@@ -4756,7 +4820,8 @@ const stageSelectedFilesAndAdvance = async (
 // staged-side no-op, the safety guard, the untracked-aware list, the editor handling) is identical.
 const stageCurrentFileAndAdvance = async (
     direction: "next" | "previous", capturedChange?: FileChange,
-    check: NavigationCheckpoint = noNavigationCheckpoint
+    check: NavigationCheckpoint = noNavigationCheckpoint,
+    priorView?: MouseReviewView
 ) => {
     const gitExtension = vscode.extensions.getExtension<any>("vscode.git")!.exports;
     const git = gitExtension.getAPI(1);
@@ -4838,7 +4903,7 @@ const stageCurrentFileAndAdvance = async (
     // this function) now — the advance switches the editor to the NEXT file, so reading the active file
     // afterwards would record the wrong file. stageThroughExtension only updates the status bar if add()
     // succeeds, so a no-op/failed stage won't show a file in the bar.
-    await stageThroughExtension(activeRepo, currentUri);
+    await stageThroughExtension(activeRepo, currentUri, stageUndoViewFromMouseReview(currentUri, priorView));
     check(); // Finish the exact stage, but never pull the user back after a manual tab/worktree switch.
 
     if (!targetUnstagedChange) {

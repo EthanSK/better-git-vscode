@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.100
+
+- Undo a stage back to the reviewed file's saved cursor selection and scroll position, including Stage + Next, VS Code Git staging, and mouse staging after navigation or batch preview.
+- Keep the existing exact Git-index Undo and three-entry history; older receipts without a saved text view still reopen the restored file normally.
+
 ## 1.2.98
 
 - Expand a linked worktree with no unstaged files without opening or selecting a staged file. Keep Staged Changes collapsed and preserve the current editor, including completely clean worktrees and staged deletions. This uses native commit-input focus when Auto Reveal and commit inputs are enabled.

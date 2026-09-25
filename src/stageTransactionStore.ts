@@ -9,6 +9,15 @@ export const STAGE_TRANSACTION_HISTORY_LIMIT = 3;
 // existing bound so visiting a fourth repository cannot revive a stale baseline.
 const REPOSITORY_BASELINE_LIMIT = 100;
 
+export interface StageUndoView {
+    // The file: resource identifies the reviewed file; documentUri identifies
+    // the exact text side whose cursor and viewport were captured.
+    fileUri: string;
+    documentUri: string;
+    selections: { anchor: { line: number; character: number }; active: { line: number; character: number } }[];
+    topLine?: number;
+}
+
 export interface StoredStageTransaction {
     schema: 2;
     id?: string;
@@ -20,6 +29,7 @@ export interface StoredStageTransaction {
     afterIndexTree: string;
     uri?: string;
     uris?: string[];
+    view?: StageUndoView;
     recordedAt: string;
 }
 
@@ -62,8 +72,26 @@ const isStoredStageTransaction = (value: unknown): value is StoredStageTransacti
             receipt.uris.every(uri => typeof uri === "string" && uri.length > 0) &&
             new Set(receipt.uris).size === receipt.uris.length
         )) &&
+        (receipt.view === undefined || isStageUndoView(receipt.view)) &&
         typeof receipt.recordedAt === "string" && receipt.recordedAt.length > 0
     );
+};
+
+const isPosition = (value: unknown): value is { line: number; character: number } => {
+    if (typeof value !== "object" || value === null) { return false; }
+    const position = value as { line?: unknown; character?: unknown };
+    return Number.isSafeInteger(position.line) && (position.line as number) >= 0 &&
+        Number.isSafeInteger(position.character) && (position.character as number) >= 0;
+};
+
+const isStageUndoView = (value: unknown): value is StageUndoView => {
+    if (typeof value !== "object" || value === null) { return false; }
+    const view = value as Partial<StageUndoView>;
+    return typeof view.fileUri === "string" && view.fileUri.startsWith("file:") &&
+        typeof view.documentUri === "string" && view.documentUri.length > 0 &&
+        Array.isArray(view.selections) && view.selections.length > 0 && view.selections.length <= 16 &&
+        view.selections.every(selection => isPosition(selection?.anchor) && isPosition(selection?.active)) &&
+        (view.topLine === undefined || (Number.isSafeInteger(view.topLine) && view.topLine >= 0));
 };
 
 const sameTransaction = (left: StoredStageTransaction, right: StoredStageTransaction): boolean => {
@@ -125,11 +153,13 @@ export class StageTransactionStore {
                         : "observedIndexChange",
                     uri: receipt.uri ?? latestRepositoryReceipt.uri,
                     uris: receipt.uris ?? latestRepositoryReceipt.uris,
+                    view: receipt.view ?? latestRepositoryReceipt.view,
                 };
                 if (
                     mergedReceipt.kind !== latestRepositoryReceipt.kind ||
                     mergedReceipt.uri !== latestRepositoryReceipt.uri ||
-                    JSON.stringify(mergedReceipt.uris) !== JSON.stringify(latestRepositoryReceipt.uris)
+                    JSON.stringify(mergedReceipt.uris) !== JSON.stringify(latestRepositoryReceipt.uris) ||
+                    JSON.stringify(mergedReceipt.view) !== JSON.stringify(latestRepositoryReceipt.view)
                 ) {
                     history[latestRepositoryIndex] = mergedReceipt;
                 }
@@ -167,7 +197,7 @@ export class StageTransactionStore {
         repoRoot: string,
         headTree: string,
         afterIndexTree: string,
-        details: Pick<StoredStageTransaction, "kind" | "uri" | "uris">
+        details: Pick<StoredStageTransaction, "kind" | "uri" | "uris" | "view">
     ): Promise<boolean> {
         return this.update(async (state) => {
             const history = state.entries;
@@ -185,6 +215,7 @@ export class StageTransactionStore {
                 kind: details.kind,
                 uri: details.uri ?? receipt.uri,
                 uris: details.uris ?? receipt.uris,
+                view: details.view ?? receipt.view,
             };
             return true;
         });
@@ -216,7 +247,7 @@ export class StageTransactionStore {
         repoRoot: string,
         readSnapshot: () => Promise<IndexSnapshot>,
         fallback: IndexSnapshot | undefined,
-        details?: Pick<StoredStageTransaction, "kind" | "uri" | "uris">,
+        details?: Pick<StoredStageTransaction, "kind" | "uri" | "uris" | "view">,
         suppressed = false
     ): Promise<IndexSnapshot> {
         return this.update(async (state) => {
@@ -230,9 +261,12 @@ export class StageTransactionStore {
                 state.entries = state.entries.filter((entry) => entry.repoRoot !== repoRoot);
             } else if (previous.indexTree === current.indexTree) {
                 const latest = state.entries[findLastMatchingIndex(state.entries, (entry) => entry.repoRoot === repoRoot)];
-                if (latest && sameHead(latest, current) && latest.afterIndexTree === current.indexTree && details) {
+                if (latest && sameHead(latest, current) && latest.afterIndexTree === current.indexTree &&
+                    details?.kind === "betterGitStage") {
                     latest.kind = details.kind;
                     latest.uri = details.uri ?? latest.uri;
+                    latest.uris = details.uris ?? latest.uris;
+                    latest.view = details.view ?? latest.view;
                 }
             } else if (!suppressed) {
                 state.entries.push({
@@ -240,6 +274,7 @@ export class StageTransactionStore {
                     headTree: current.headTree, headCommit: current.headCommit,
                     beforeIndexTree: previous.indexTree, afterIndexTree: current.indexTree,
                     kind: details?.kind ?? "observedIndexChange", uri: details?.uri,
+                    uris: details?.uris, view: details?.view,
                     recordedAt: new Date().toISOString(),
                 });
                 state.entries = state.entries.slice(-STAGE_TRANSACTION_HISTORY_LIMIT);
