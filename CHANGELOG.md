@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.101
+
+- Optionally switch VS Code diffs to Inline while a chosen macOS display is connected, and Automatic when it is unplugged. Match its display ID or unique dimensions across restarts. Other users keep their current diff settings by default.
+
 ## 1.2.100
 
 - Undo a stage back to the reviewed file's saved cursor selection and scroll position, including Stage + Next, VS Code Git staging, and mouse staging after navigation or batch preview.

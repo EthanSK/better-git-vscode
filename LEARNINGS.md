@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-09-25 — Select diff view by a chosen macOS display
+
+VS Code's Diff View commands only affect an active diff, so an extension must update `diffEditor.renderSideBySide` and `diffEditor.useInlineViewWhenSpaceIsLimited` to establish a mode at startup. Inline uses `renderSideBySide=false`; Automatic uses `renderSideBySide=true` with `useInlineViewWhenSpaceIsLimited=true`. These settings affect VS Code diffs across the application, not only Source Control. Keep the feature off by default through an empty application-scoped display target.
+
+The Dell capture chain currently appears to macOS as `AVT GC553G2`, not as a Dell name. Match its saved CoreGraphics display UUID first, then a unique external display with the configured dimensions if the UUID changes. An ambiguous same-size match or failed probe leaves the current mode alone. A short asynchronous JXA screen-list probe every five seconds while opted in handles unplugging without adding work to any navigation or staging input path. Recheck the configured target after probing to avoid applying a stale target. Do not use `system_profiler` in that polling path.
+
+Verification: 97 non-GUI tests, TypeScript, ESLint and webpack passed. The isolated Mini VS Code host passed connected, disconnected and disabled setting transitions with no diff editor open; the disabled mode retained a manual setting change. The locally built and Mini-tested production JavaScript were byte-identical at SHA-256 `6633ae10071c1357c167f0b4b00a8a823e3174135e782ecbd12a834485331848`. Physical Dell hot-plug on Ethan's MacBook remains untested.
+
 ## 2026-09-25 — Pull fresh AgentFlow selections through the editor API
 
 VS Code's Monaco code/diff editors can expose an inaccessible AX text control while screen-reader mode is off. AgentFlow must not enable that mode, synthesize Copy, or treat earlier generic AX tests as actual VS Code coverage. The optional macOS bridge responds over a private same-user Unix socket only to a versioned request matching the focused main PID and a fresh mouse-selection event. It retains coordinates, not selected text; reads at most 8,192 UTF-16 units only on demand; never logs the text; and clears eligibility on document, focus or editor changes. Programmatic Better Git hunk movement is deliberately excluded. No Git navigation debounce, network listener, polling or clipboard mutation is introduced.

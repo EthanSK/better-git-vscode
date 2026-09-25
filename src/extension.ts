@@ -24,6 +24,7 @@ import { MouseHoldChordState, registerMouseShortRelease, resolveAdjacentMouseCho
 import { KeyboardStageRepeatGuard, parseKeyboardStageArgs } from "./keyboardStageRepeatGuard";
 import { MacKeyReleaseMonitor } from "./macKeyReleaseMonitor";
 import { registerAgentFlowSelectionBridge } from "./agentFlowSelectionBridge";
+import { registerDiffViewDisplay } from "./diffViewDisplay";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -771,6 +772,7 @@ const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefine
 
 export function activate(context: vscode.ExtensionContext): BetterGitExtensionApi {
     registerAgentFlowSelectionBridge(context);
+    registerDiffViewDisplay(context, (message) => debugLog("diff-display", message));
     const commitMessageGenerator = new CommitMessageGenerator(context.globalState);
     stageTransactionStore = new StageTransactionStore(
         path.join(context.globalStorageUri.fsPath, "last-stage-next-transaction.json")
