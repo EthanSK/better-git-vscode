@@ -1,6 +1,6 @@
 # Change Log
 
-## 1.2.99
+## 1.2.100
 
 - Undo a stage back to the reviewed file's saved cursor selection and scroll position, including Stage + Next, VS Code Git staging, and mouse staging after navigation or batch preview.
 - Keep the existing exact Git-index Undo and three-entry history; older receipts without a saved text view still reopen the restored file normally.
