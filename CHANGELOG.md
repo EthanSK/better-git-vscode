@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.102
+
+- Keep linked worktrees expanded when the first review file is in Merge Changes, including repeated links and both plain conflict views and the three-way merge editor. Keep Staged Changes and other worktrees collapsed.
+
 ## 1.2.101
 
 - Optionally switch VS Code diffs to Inline while a chosen macOS display is connected, and Automatic when it is unplugged. Match its display ID or unique dimensions across restarts. Other users keep their current diff settings by default.

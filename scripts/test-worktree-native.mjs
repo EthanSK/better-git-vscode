@@ -21,6 +21,7 @@ const testLinkBackground = process.argv.includes('--link-background');
 const testReturnApp = process.argv.includes('--return-app');
 const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
 const testHeldClick = process.argv.includes('--held-click');
+const testMergeLink = process.argv.includes('--merge-link');
 const testNoUnstaged = process.argv.includes('--no-unstaged');
 const testStageReveal = process.argv.includes('--stage-reveal');
 async function until(read, accept, description, timeout = 15_000) {
@@ -206,7 +207,43 @@ try {
     fs.writeFileSync(path.join(roots[1], 'staged-late.txt'), 'late staged change\n'); git(roots[1], 'add', 'staged-late.txt');
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'switch-after-staged-refresh');
-    if (testNoUnstaged) {
+    if (testMergeLink) {
+        const repo = roots[1];
+        git(repo, 'reset', '--hard', 'HEAD');
+        git(repo, 'clean', '-fd');
+        const base = git(repo, 'rev-parse', 'HEAD').trim();
+        fs.writeFileSync(path.join(repo, 'a.txt'), 'incoming conflict\n');
+        git(repo, 'add', 'a.txt'); git(repo, 'commit', '-m', 'incoming');
+        const incoming = git(repo, 'rev-parse', 'HEAD').trim();
+        git(repo, 'reset', '--hard', base);
+        fs.writeFileSync(path.join(repo, 'a.txt'), 'local conflict\n');
+        git(repo, 'add', 'a.txt'); git(repo, 'commit', '-m', 'local');
+        try { git(repo, 'merge', incoming); } catch { /* expected unresolved conflict */ }
+        assert.ok(git(repo, 'ls-files', '-u').includes('a.txt'));
+        for (let i = 0; i < 319; i++) { fs.writeFileSync(path.join(repo, `staged-${i}.txt`), 'staged\n'); }
+        git(repo, 'add', ...Array.from({length:319},(_,i)=>`staged-${i}.txt`));
+        await request('refresh', {repo:1});
+        const before = git(repo, 'status', '--porcelain=v1');
+        for (const mode of [false, true]) {
+            await request('git-config', {settings:{mergeEditor:mode}});
+            for (const repeat of [false, true]) {
+                if (!repeat) { await request('plain', {repo:0}); }
+                await request('command', {command:'workbench.scm.action.expandAllRepositories'});
+                await request('uri', {uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(repo)}`});
+                const name=`merge-link-${mode?'three-way':'plain'}-${repeat?'repeat':'switch'}`;
+                await pause(500);
+                await capture(name);
+                const rows=await evaluate(rowsExpression);
+                assert.deepEqual(rows.filter(r=>r.level==='1' && r.expanded==='true' && / Git$/.test(r.aria)).map(r=>r.aria), ['repo-1 Git'], name);
+                assert.equal(rows.find(r=>r.aria==='Merge Changes')?.expanded,'true',name+': merge group');
+                assert.equal(rows.find(r=>r.aria==='Staged Changes')?.expanded,'false',name+': staged group');
+                assert.ok(rows.some(r=>r.selected==='true' && r.aria?.startsWith('a.txt,')),name+': conflict selected');
+                assert.equal((await request('state')).mergeEditor,mode,name+': native conflict editor preserved');
+                assert.equal(git(repo,'status','--porcelain=v1'),before,name+': Git unchanged');
+                console.log(`PASS ${name}`);
+            }
+        }
+    } else if (testNoUnstaged) {
         const original = await request('state');
         for (const [repo, kind] of [[2, 'staged'], [2, 'repeat'], [3, 'clean'], [3, 'clean-repeat'], [4, 'deleted'], [8, 'large-staged']]) {
             if (kind === 'clean') { git(roots[repo], 'reset', '--hard', 'HEAD'); }
@@ -511,7 +548,7 @@ try {
         console.log('BETTER_GIT_KEYBOARD_REPEAT_VERIFIED repeated-keydown=one-stage release-and-repress=next-stage untagged-F18=unchanged');
     }
     }
-    if (!testNoUnstaged) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
+    if (!testNoUnstaged && !testMergeLink) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
         assert.equal(fs.readFileSync(path.join(repo, file), 'utf8'), 'modified\n');
     }
     console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);

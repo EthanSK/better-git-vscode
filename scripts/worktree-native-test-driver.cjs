@@ -20,7 +20,7 @@ exports.run = async () => {
  let previous=0, busy=false;
  let watchedTabs=[];
  let tabWatch;
- const state=()=>({ focused:vscode.window.state.focused, badge:api.getCurrentReviewUri() ? api.getReviewDecorationBadge(vscode.Uri.parse(api.getCurrentReviewUri())) : undefined, trace:api.getScmTreeCommandTrace(), active:String(vscode.window.activeTextEditor?.document.uri), tabs:vscode.window.tabGroups.activeTabGroup.tabs.map(t=>({label:t.label,active:t.isActive})) });
+ const state=()=>({ mergeEditor: Boolean(vscode.window.tabGroups.activeTabGroup.activeTab?.input?.result), focused:vscode.window.state.focused, badge:api.getCurrentReviewUri() ? api.getReviewDecorationBadge(vscode.Uri.parse(api.getCurrentReviewUri())) : undefined, trace:api.getScmTreeCommandTrace(), active:String(vscode.window.activeTextEditor?.document.uri), tabs:vscode.window.tabGroups.activeTabGroup.tabs.map(t=>({label:t.label,active:t.isActive})) });
  fs.writeFileSync(path.join(root,'ready.json'),JSON.stringify({ roots, version:vscode.version, ...state() }));
  await new Promise(resolve=> {
   const timer=setInterval(async()=> {
@@ -43,6 +43,9 @@ exports.run = async () => {
     else if(request.action==='uri') {
      if(!uriHandler) throw new Error('Better Git URI handler was not captured');
      value=await uriHandler.handleUri(vscode.Uri.parse(request.uri));
+    }
+    else if(request.action==='git-config') {
+     for(const [key,setting] of Object.entries(request.settings)) await vscode.workspace.getConfiguration('git').update(key,setting,vscode.ConfigurationTarget.Workspace);
     }
     else if(request.action==='config') {
      const config=vscode.workspace.getConfiguration('better-git-vscode');
