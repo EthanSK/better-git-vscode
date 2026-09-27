@@ -1,5 +1,23 @@
 # Learnings
 
+## 2026-09-27 — Distinguish inline deletions from real editor selections
+
+Agent Flow's original selection fixture tested the modified side of a side-by-side
+diff only. A Mini reproduction of 1.2.101 (`0f12512`) on VS Code 1.132.0 confirms
+plain editor text, both side-by-side sides and inline modified text reach the
+private bridge for file and Git originals. Highlighting inline deleted text makes
+a DOM selection but emits no `onDidChangeTextEditorSelection` event; the bridge
+correctly returns null. The focused modified editor can still retain its earlier
+selection, so removing the gesture/focus checks would return unrelated code.
+
+Microsoft renders inline deletions in selectable DOM view zones rather than a
+TextEditor. The normal native AX selected-text/range/text-marker probes did not
+expose their code either. Offline inspection of Ethan's installed VS Code 1.138.0
+confirms the same selectable deleted-line DOM and aria-hidden view zones, not a
+live test of that version. Do not call this surface supported from a green-side
+test, add Copy/pasteboard mutation, or change the user's chosen diff view silently.
+No production extension change or release was made by this investigation.
+
 ## 2026-09-25 — Select diff view by a chosen macOS display
 
 VS Code's Diff View commands only affect an active diff, so an extension must update `diffEditor.renderSideBySide` and `diffEditor.useInlineViewWhenSpaceIsLimited` to establish a mode at startup. Inline uses `renderSideBySide=false`; Automatic uses `renderSideBySide=true` with `useInlineViewWhenSpaceIsLimited=true`. These settings affect VS Code diffs across the application, not only Source Control. Keep the feature off by default through an empty application-scoped display target.
