@@ -2483,7 +2483,13 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         if (!target.staged && target.status !== GitStatus.DELETED && shown?.toString() === target.uri.toString()) {
             // Auto Reveal also needs a real editor-input change on repeat clicks. Use the shared
             // resolver so image/custom previews receive the same handling as ordinary text tabs.
-            if (target.status === GitStatus.UNTRACKED || target.status === GitStatus.INTENT_TO_ADD) {
+            if (target.status === GitStatus.UNTRACKED || target.status === GitStatus.INTENT_TO_ADD
+                || (target.status !== undefined && target.status >= GitStatus.ADDED_BY_US
+                    && vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputText)) {
+                // Conflicts commonly open as the plain working file. Reopening that same input
+                // after collapse emits no editor change, leaving Merge Changes hidden. Use a
+                // temporary empty-side comparison, then let Git reopen its native conflict view.
+                // Never read the unresolved stage-0 index: it has no blob for this path.
                 const empty = await getEmptyTreeRef(target.uri);
                 if (empty) {
                     await vscode.commands.executeCommand("vscode.diff", toGitUri(target.uri, empty), target.uri, undefined,
@@ -2632,9 +2638,9 @@ const getFileChanges = async (preferredUri?: vscode.Uri): Promise<FileChange[]> 
     // opened via git.openChange (the staged:false path), which brings up the conflict / 3-way merge editor.
     // Empty array when there's no merge in progress, so this is a no-op in the normal case.
     const mergeChanges: FileChange[] = (activeRepo.state.mergeChanges ?? [])
-        .map((file: any) => file.uri as vscode.Uri)
-        .sort(isTreeView ? orderFilesForTreeView : orderFilesForListView)
-        .map((uri: vscode.Uri) => ({ uri, staged: false }));
+        .map((file: any) => ({ uri: file.uri as vscode.Uri, status: file.status as number }))
+        .sort((a: { uri: vscode.Uri }, b: { uri: vscode.Uri }) => (isTreeView ? orderFilesForTreeView : orderFilesForListView)(a.uri, b.uri))
+        .map((entry: { uri: vscode.Uri; status: number }) => ({ ...entry, staged: false }));
 
     // BUG FIX: a file that is partially staged (or staged and then edited again) appears in BOTH
     // indexChanges and workingTreeChanges with the SAME on-disk path — so it shows twice here, just as it

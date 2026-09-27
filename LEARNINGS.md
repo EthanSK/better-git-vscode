@@ -1,5 +1,11 @@
 # Learnings
 
+## 2026-09-27 — Reveal Merge Changes after opening a worktree link
+
+With `git.mergeEditor=false`, Git opens an unresolved conflict as a plain working-file editor. The Worktree link recursively collapsed SCM and then reopened the same plain input; no editor-change event reached Auto Reveal, so even the target repository stayed collapsed. Conflict entries also lost their status in `getFileChanges`, preventing the link from distinguishing this shape. Preserve the conflict status and briefly use an empty-side comparison only when the current conflict input is plain text, then reopen Git's native view. Keep the existing plain-input transition for three-way merge editors so the workaround does not leave an extra comparison tab. This does not read an unresolved stage-0 blob or change the index.
+
+The unmodified 1.2.101 native Mini test reproduced all repositories collapsed with one unresolved conflict and 319 staged files. The regression fixture opens the real URI handler, checks switch/repeat links with merge-editor mode off/on, verifies the selected conflict, expanded Merge Changes, collapsed Staged Changes and peer repositories, native editor type and unchanged Git status. The focused integration run passed 33 cases including worktree links, plain conflict navigation and staging with unavailable exact Undo. Non-GUI tests (97), TypeScript, lint and production packaging passed. One initial native run hit the existing ordinary-file staged-collapse timing failure before conflict coverage; the repeat passed that unchanged path. The final production native run passed all six ordinary-link checks and four conflict checks; local and Mini bundles match SHA-256 `3c06bbee2b62aba59529ef76ce45ea49e14e696d853661623425a5c98cfeaafe`. Screenshots were inspected. No MacBook E2E or Extension Host restart was performed.
+
 ## 2026-09-27 — Distinguish inline deletions from real editor selections
 
 Agent Flow's original selection fixture tested the modified side of a side-by-side
