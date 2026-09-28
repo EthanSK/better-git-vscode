@@ -6,7 +6,7 @@ import Mocha from "mocha";
 // These suites use real Git but never import VS Code or launch a GUI host.
 const suites = new URL("../out/test/suite/", import.meta.url);
 const files = (await readdir(suites))
-    .filter((file) => /^(git|stageTransaction).*\.test\.js$/.test(file))
+    .filter((file) => /^(git|stageTransaction|commitMessageModels).*\.test\.js$/.test(file))
     .sort();
 if (files.length === 0) { throw new Error("No compiled unit test suites found."); }
 const mocha = new Mocha({ ui: "tdd", timeout: 10_000 });

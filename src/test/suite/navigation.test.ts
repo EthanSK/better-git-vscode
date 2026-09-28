@@ -553,6 +553,7 @@ suite('SCM change navigation E2E', () => {
 			const capture = readFakeAiCapture(capturePath);
 			assert.ok(path.basename(capture.cwd).startsWith('better-git-ai-'));
 			assert.notStrictEqual(capture.cwd, ws);
+			assert.strictEqual(capture.args[capture.args.indexOf('--model') + 1], 'gpt-6-luna');
 			assert.ok(capture.args.includes('--ephemeral'));
 			assert.ok(capture.args.includes('--ignore-user-config'));
 			assert.ok(capture.args.includes('--ignore-rules'));
@@ -665,6 +666,7 @@ suite('SCM change navigation E2E', () => {
 			const capture = readFakeAiCapture(capturePath);
 			assert.ok(path.basename(capture.cwd).startsWith('better-git-ai-'));
 			assert.notStrictEqual(capture.cwd, ws);
+			assert.strictEqual(capture.args[capture.args.indexOf('--model') + 1], 'opus');
 			assert.ok(capture.args.includes('-p'));
 			assert.strictEqual(capture.args[capture.args.indexOf('--output-format') + 1], 'json');
 			assert.strictEqual(capture.args[capture.args.indexOf('--effort') + 1], 'low');
@@ -677,6 +679,60 @@ suite('SCM change navigation E2E', () => {
 			assert.ok(capture.prompt.includes('The scope is working tree.'));
 			assert.ok(capture.prompt.includes('CLAUDE_REPOSITORY_INPUT_MARKER'));
 		} finally {
+			repo.inputBox.value = '';
+			await config.update('codexExecutablePath', previousCodexExecutable, vscode.ConfigurationTarget.Global);
+			await config.update('claudeExecutablePath', previousClaudeExecutable, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('Codex commit message falls back to Claude once with the same selected repository context', async () => {
+		const fakeClaudePath = process.env.BGV_FAKE_CLAUDE_PATH;
+		const capturePath = process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH;
+		assert.ok(fakeClaudePath, 'runTest.ts must provide the fake Claude executable');
+		assert.ok(capturePath, 'runTest.ts must provide the fake Claude capture path');
+		const fakeCodexPath = process.env.BGV_FAKE_CODEX_PATH;
+		assert.ok(fakeCodexPath, 'runTest.ts must provide the fake Codex executable');
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousCodexExecutable = config.inspect<string>('codexExecutablePath')?.globalValue;
+		const previousClaudeExecutable = config.inspect<string>('claudeExecutablePath')?.globalValue;
+		try {
+			await config.update('codexExecutablePath', fakeCodexPath, vscode.ConfigurationTarget.Global);
+			await config.update('claudeExecutablePath', fakeClaudePath, vscode.ConfigurationTarget.Global);
+			await chooseCommitMessageProvider('codex');
+			process.env.BGV_FAKE_CODEX_FAIL = '1';
+			const working = lines(40, 'mod_a').split('\n');
+			working[4] = 'CLAUDE_REPOSITORY_INPUT_MARKER';
+			write('committed/mod_a.txt', working.join('\n'));
+			await refreshUntil(
+				() => inWorkingTree('committed/mod_a.txt', 5),
+				'Claude working-tree fixture to appear'
+			);
+			repo.inputBox.value = '';
+			fs.rmSync(capturePath, { force: true });
+
+			await vscode.commands.executeCommand(
+				'better-git-vscode.generate-commit-message-with-ai',
+				{ rootUri: vscode.Uri.file(ws) }
+			);
+
+			assert.strictEqual(repo.inputBox.value, 'test: generated working message with Claude');
+			const capture = readFakeAiCapture(capturePath);
+			assert.ok(path.basename(capture.cwd).startsWith('better-git-ai-'));
+			assert.notStrictEqual(capture.cwd, ws);
+			assert.strictEqual(capture.args[capture.args.indexOf('--model') + 1], 'opus');
+			assert.ok(capture.args.includes('-p'));
+			assert.strictEqual(capture.args[capture.args.indexOf('--output-format') + 1], 'json');
+			assert.strictEqual(capture.args[capture.args.indexOf('--effort') + 1], 'low');
+			assert.strictEqual(capture.args[capture.args.indexOf('--tools') + 1], '');
+			assert.strictEqual(capture.args[capture.args.indexOf('--setting-sources') + 1], '');
+			assert.ok(capture.args.includes('--no-session-persistence'));
+			const schema = JSON.parse(capture.args[capture.args.indexOf('--json-schema') + 1]);
+			assert.deepStrictEqual(schema.required, ['commitMessage']);
+			assert.strictEqual(schema.additionalProperties, false);
+			assert.ok(capture.prompt.includes('The scope is working tree.'));
+			assert.ok(capture.prompt.includes('CLAUDE_REPOSITORY_INPUT_MARKER'));
+		} finally {
+			delete process.env.BGV_FAKE_CODEX_FAIL;
 			repo.inputBox.value = '';
 			await config.update('codexExecutablePath', previousCodexExecutable, vscode.ConfigurationTarget.Global);
 			await config.update('claudeExecutablePath', previousClaudeExecutable, vscode.ConfigurationTarget.Global);
