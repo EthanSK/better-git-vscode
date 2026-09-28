@@ -159,6 +159,13 @@ async function main() {
 			`#!/usr/bin/env node
 const fs = require('fs');
 const args = process.argv.slice(2);
+if (args.includes('app-server')) {
+ require('readline').createInterface({input:process.stdin}).on('line',line=>{
+  const m=JSON.parse(line);
+  if(m.method==='initialize') console.log(JSON.stringify({id:m.id,result:{}}));
+  if(m.method==='model/list') console.log(JSON.stringify({id:m.id,result:{data:[{model:'gpt-6-luna',displayName:'GPT-6 Luna',supportedReasoningEfforts:[{reasoningEffort:'none'}]}],nextCursor:null}}));
+ });
+} else {
 const outputIndex = args.indexOf('--output-last-message');
 if (outputIndex === -1 || !args[outputIndex + 1]) {
 	process.exit(2);
@@ -168,8 +175,10 @@ fs.writeFileSync(
 	process.env.BGV_FAKE_CODEX_CAPTURE_PATH,
 	JSON.stringify({ args, cwd: process.cwd(), prompt })
 );
+if (process.env.BGV_FAKE_CODEX_FAIL === '1') { console.error('not signed in'); process.exit(1); }
 const scope = prompt.includes('The scope is staged.') ? 'staged' : 'working';
 fs.writeFileSync(args[outputIndex + 1], JSON.stringify({ commitMessage: \`test: generated \${scope} message\` }));
+}
 `
 		);
 		fs.chmodSync(fakeCodexPath, 0o755);
@@ -182,6 +191,12 @@ fs.writeFileSync(args[outputIndex + 1], JSON.stringify({ commitMessage: \`test: 
 			`#!/usr/bin/env node
 const fs = require('fs');
 const args = process.argv.slice(2);
+if (args.includes('--input-format')) {
+ require('readline').createInterface({input:process.stdin}).on('line',line=>{
+  const m=JSON.parse(line);
+  console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{models:[{value:'opus',resolvedModel:'claude-opus-5-5',displayName:'Opus 5.5',supportsEffort:true,supportedEffortLevels:['low']}]}}}));
+ });
+} else {
 const prompt = fs.readFileSync(0, 'utf8');
 fs.writeFileSync(
 	process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH,
@@ -191,6 +206,7 @@ const scope = prompt.includes('The scope is staged.') ? 'staged' : 'working';
 process.stdout.write(JSON.stringify({
 	structured_output: { commitMessage: \`test: generated \${scope} message with Claude\` }
 }));
+}
 `
 		);
 		fs.chmodSync(fakeClaudePath, 0o755);

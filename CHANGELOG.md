@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.103
+
+- Select an explicit small Codex model starting with GPT-6 Luna, and discover newer supported models from the installed CLI.
+- Fall back once from Codex to Claude Code using the newest advertised generation, then its smallest model family. Keep Claude-only selection available.
+- Show the selected model and fallback in progress and Better Git AI output; cancellation stops both providers.
+
 ## 1.2.102
 
 - Keep linked worktrees expanded when the first review file is in Merge Changes, including repeated links and both plain conflict views and the three-way merge editor. Keep Staged Changes and other worktrees collapsed.

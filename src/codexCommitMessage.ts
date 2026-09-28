@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { GitStatus } from "./gitStatus";
+import { CommitModel, codexBaseline, discoverCommitModels, selectClaudeCommitModel, selectCodexCommitModel } from "./commitMessageModels";
 
 interface GitChange {
     readonly status: number;
@@ -45,6 +46,8 @@ interface ProviderExecution {
     readonly provider: CommitMessageProvider;
     readonly displayName: "Codex" | "Claude Code";
     readonly executable: string;
+    model?: CommitModel;
+    fallbackFromCodex?: boolean;
 }
 
 interface ProcessOutput {
@@ -66,6 +69,9 @@ export class CommitMessageGenerator implements vscode.Disposable {
     private readonly commandDisposables: readonly vscode.Disposable[];
     private readonly runningRepositoryPaths = new Set<string>();
     private readonly runningProcesses = new Set<ChildProcessWithoutNullStreams>();
+    private disposed = false;
+    private readonly discoveries = new Set<AbortController>();
+    private readonly output = vscode.window.createOutputChannel("Better Git AI");
 
     constructor(private readonly globalState: vscode.Memento) {
         this.commandDisposables = [
@@ -79,7 +85,7 @@ export class CommitMessageGenerator implements vscode.Disposable {
                     const provider = await this.chooseProvider();
                     if (provider) {
                         vscode.window.setStatusBarMessage(
-                            `Better Git: Commit messages will use ${this.providerName(provider)}.`,
+                            `Better Git: Commit messages will use ${provider === "codex" ? "Codex, then Claude Code if needed" : "Claude Code"}.`,
                             4000
                         );
                     }
@@ -89,6 +95,7 @@ export class CommitMessageGenerator implements vscode.Disposable {
     }
 
     dispose(): void {
+        this.disposed = true;
         for (const disposable of this.commandDisposables) {
             disposable.dispose();
         }
@@ -96,6 +103,9 @@ export class CommitMessageGenerator implements vscode.Disposable {
             child.kill();
         }
         this.runningProcesses.clear();
+        for (const controller of this.discoveries) { controller.abort(); }
+        this.discoveries.clear();
+        this.output.dispose();
     }
 
     private async execute(targets: readonly unknown[]): Promise<void> {
@@ -135,7 +145,7 @@ export class CommitMessageGenerator implements vscode.Disposable {
                 return;
             }
 
-            const execution = await this.resolveProviderExecution();
+            let execution = await this.resolveProviderExecution();
             if (!execution) {
                 return;
             }
@@ -143,10 +153,19 @@ export class CommitMessageGenerator implements vscode.Disposable {
             const commitMessage = await vscode.window.withProgress(
                 {
                     location: vscode.ProgressLocation.Notification,
-                    title: `Generating a commit message for ${path.basename(repositoryPath)} with ${execution.displayName}...`,
+                    title: `Generating a commit message for ${path.basename(repositoryPath)}...`,
                     cancellable: true,
                 },
-                async (_progress, token) => this.generate(execution, changeContext, token)
+                async (progress, token) => {
+                    const report = (selected: ProviderExecution) => {
+                        execution = selected;
+                        providerExecution = selected;
+                        const message = `${selected.fallbackFromCodex ? "Codex unavailable; using " : "Using "}${selected.displayName}: ${selected.model?.name ?? "checking models"}`;
+                        progress.report({ message });
+                        this.output.appendLine(message);
+                    };
+                    return this.generateWithFallback(execution!, changeContext, token, report);
+                }
             );
 
             if (!commitMessage) {
@@ -165,7 +184,7 @@ export class CommitMessageGenerator implements vscode.Disposable {
 
             repository.inputBox.value = commitMessage;
             vscode.window.setStatusBarMessage(
-                `Better Git: Commit message generated with ${execution.displayName}.`,
+                `Better Git: Commit message generated with ${execution.displayName} (${execution.model?.name ?? "default"}).`,
                 4000
             );
         } catch (error) {
@@ -327,6 +346,10 @@ export class CommitMessageGenerator implements vscode.Disposable {
         }
 
         const executable = await this.findExecutable(provider);
+        if (!executable && provider === "codex") {
+            const fallback = await this.findExecutable("claude");
+            if (fallback) { return { provider: "claude", displayName: "Claude Code", executable: fallback, fallbackFromCodex: true }; }
+        }
         if (!executable) {
             const settingName = provider === "codex" ? "Codex Executable Path" : "Claude Executable Path";
             throw new Error(
@@ -370,9 +393,9 @@ export class CommitMessageGenerator implements vscode.Disposable {
         );
         const selected = await vscode.window.showQuickPick(
             detected.map(({ provider, executable }) => ({
-                label: this.providerName(provider),
+                label: provider === "codex" ? "Codex, then Claude Code" : "Claude Code",
                 description: currentProvider === provider ? "Current provider" : undefined,
-                detail: executable,
+                detail: provider === "codex" ? `Use Claude Code if Codex fails. ${executable}` : executable,
                 provider,
             })),
             {
@@ -460,13 +483,60 @@ export class CommitMessageGenerator implements vscode.Disposable {
         }
     }
 
+    private async generateWithFallback(
+        execution: ProviderExecution,
+        context: CommitChangeContext,
+        token: vscode.CancellationToken,
+        report: (execution: ProviderExecution) => void
+    ): Promise<string> {
+        try {
+            return await this.generate(execution, context, token, report);
+        } catch (error) {
+            if (this.disposed || token.isCancellationRequested || error instanceof vscode.CancellationError) { throw new vscode.CancellationError(); }
+            if (execution.provider !== "codex") { throw error; }
+            const executable = await this.findExecutable("claude");
+            if (!executable) { throw error; }
+            if (this.disposed || token.isCancellationRequested) { throw new vscode.CancellationError(); }
+            const fallback: ProviderExecution = { provider: "claude", displayName: "Claude Code", executable, fallbackFromCodex: true };
+            // Do not log the prompt, diff, CLI stderr or generated message.
+            this.output.appendLine("Codex failed; trying Claude Code once.");
+            return this.generate(fallback, context, token, report);
+        }
+    }
+
+    private async selectModel(execution: ProviderExecution, cwd: string, token: vscode.CancellationToken): Promise<CommitModel> {
+        if (this.disposed || token.isCancellationRequested) { throw new vscode.CancellationError(); }
+        const controller = new AbortController();
+        this.discoveries.add(controller);
+        const cancellation = token.onCancellationRequested(() => controller.abort());
+        try {
+            const models = await discoverCommitModels(execution.provider, execution.executable, cwd, controller.signal);
+            if (this.disposed || token.isCancellationRequested) { throw new vscode.CancellationError(); }
+            if (execution.provider === "codex") { return selectCodexCommitModel(models); }
+            const model = selectClaudeCommitModel(models);
+            if (!model) { throw new Error("No supported Claude model found"); }
+            return model;
+        } catch (error) {
+            if (controller.signal.aborted || token.isCancellationRequested) { throw new vscode.CancellationError(); }
+            this.output.appendLine(`${execution.displayName} model catalogue unavailable; using compatibility model.`);
+            return execution.provider === "codex" ? codexBaseline : { id: "opus", name: "Opus (latest alias)", effort: "low" };
+        } finally {
+            cancellation.dispose();
+            this.discoveries.delete(controller);
+        }
+    }
+
     private async generate(
         providerExecution: ProviderExecution,
         changeContext: CommitChangeContext,
-        token: vscode.CancellationToken
+        token: vscode.CancellationToken,
+        report: (execution: ProviderExecution) => void = () => undefined
     ): Promise<string> {
         const temporaryDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "better-git-ai-"));
         try {
+            report(providerExecution);
+            providerExecution.model = await this.selectModel(providerExecution, temporaryDirectory, token);
+            report(providerExecution);
             let generated: unknown;
             switch (providerExecution.provider) {
                 case "codex":
@@ -503,6 +573,8 @@ export class CommitMessageGenerator implements vscode.Disposable {
         await fs.promises.writeFile(schemaPath, this.commitMessageSchema(), "utf8");
         const args = [
             "exec",
+            "--model",
+            providerExecution.model!.id,
             "--ephemeral",
             "--ignore-user-config",
             "--ignore-rules",
@@ -511,7 +583,7 @@ export class CommitMessageGenerator implements vscode.Disposable {
             "--color",
             "never",
             "-c",
-            "model_reasoning_effort=\"none\"",
+            `model_reasoning_effort=${JSON.stringify(providerExecution.model!.effort)}`,
             "-C",
             temporaryDirectory,
             "--skip-git-repo-check", // The diff is the only input, so an empty workspace prevents accidental repository reads.
@@ -542,12 +614,13 @@ export class CommitMessageGenerator implements vscode.Disposable {
     ): Promise<unknown> {
         const args = [
             "-p",
+            "--model",
+            providerExecution.model!.id,
             "--output-format",
             "json",
             "--json-schema",
             this.commitMessageSchema(),
-            "--effort",
-            "low",
+            ...(providerExecution.model!.effort ? ["--effort", providerExecution.model!.effort] : []),
             "--tools",
             "",
             "--setting-sources",
@@ -565,6 +638,7 @@ export class CommitMessageGenerator implements vscode.Disposable {
         if (
             typeof envelope !== "object" ||
             envelope === null ||
+            ("is_error" in envelope && envelope.is_error === true) ||
             !("structured_output" in envelope)
         ) {
             throw new Error("Claude Code returned an invalid commit message.");
