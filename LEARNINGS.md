@@ -1,5 +1,11 @@
 # Learnings
 
+## 2026-09-29 — Reset image zoom and pan when review switches
+
+Ethan corrected the image Undo behavior after 1.2.107: changing image review should start with VS Code's native fit-to-window zoom and default pan, including when Undo returns to the previously staged image. Revert the image-tab retention introduced in 1.2.107; the existing Undo receipt still returns to the correct image file, while ordinary text Undo still restores its selection and scroll position. VS Code's media preview initializes a fresh webview with `scale: 'fit', offsetX: 0, offsetY: 0`; the extension has no public API to set or inspect those private fields. Do not preserve an old image tab merely to restore its view state. The old 1.2.107 entry below records what was released at that time, not the current desired image behavior.
+
+Verification: focused Mini VS Code E2Es passed for both temporary-preview and previously kept image tabs switching to another image and returning through Undo in a fresh tab, plus two text cursor/viewport Undo regressions. Non-GUI tests (112), TypeScript, lint and production webpack passed. The tests verify fresh webview identity rather than private scale/offset values; physical visual acceptance on Ethan's Mac remains separate. No MacBook E2E or Extension Development Host was run.
+
 ## 2026-09-29 — Retain image review state across Better Git Stage + Next and Undo
 
 The existing Undo receipt saves a text editor's selection and top line, but an image comparison has no `TextEditor` or public zoom/pan getter. In an isolated VS Code host, Stage + Next followed by Undo reopened the correct image in a new tab; the old preview webview, including its zoom/pan, had been discarded. VS Code's built-in image preview stores its own state in the webview and registers the provider with `retainContextWhenHidden`. Before navigating away after a successful Better Git stage, convert only the reviewed image's temporary preview to a regular tab (or leave an already regular tab alone). Undo then reactivates the same image tab and webview. Keep automatically retained image tabs bounded to the existing three-entry Undo history, closing the oldest only when clean, not sticky-pinned, and inactive. The extension never reads image pixels or stores a large view snapshot.
