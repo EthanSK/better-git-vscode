@@ -115,12 +115,12 @@ export const registerStagedLfsImageProvider = (context: vscode.ExtensionContext)
     // Git's own Source Control click opens staged images in its custom image editor, bypassing our
     // navigation command. Replace only an active staged LFS pointer tab with the same image editor
     // backed by the local object. This leaves ordinary images and working-tree previews untouched.
-    const inspected = new WeakSet<vscode.Tab>();
+    const resolving = new WeakSet<vscode.Tab>();
     const revealNativeStagedImage = async (): Promise<void> => {
         const group = vscode.window.tabGroups.activeTabGroup;
         const tab = group.activeTab;
         const input = tab?.input;
-        if (!tab || inspected.has(tab) || !(input instanceof vscode.TabInputCustom)
+        if (!tab || resolving.has(tab) || !(input instanceof vscode.TabInputCustom)
             || input.viewType !== "imagePreview.previewEditor" || input.uri.scheme !== "git") {
             return;
         }
@@ -130,7 +130,7 @@ export const registerStagedLfsImageProvider = (context: vscode.ExtensionContext)
             if (query?.ref !== "" || typeof query.path !== "string" || !path.isAbsolute(query.path)) { return; }
             stagedPath = query.path;
         } catch { return; }
-        inspected.add(tab);
+        resolving.add(tab);
         try {
             const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
             const root: string | undefined = git?.getRepository(vscode.Uri.file(stagedPath))?.rootUri?.fsPath;
@@ -147,6 +147,9 @@ export const registerStagedLfsImageProvider = (context: vscode.ExtensionContext)
             }
         } catch (error) {
             console.warn("Better Git could not preview the staged LFS image", error);
+        } finally {
+            // A later tab activation may retry if Git/LFS was still loading or the object has since arrived.
+            resolving.delete(tab);
         }
     };
     context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => { void revealNativeStagedImage(); }));
