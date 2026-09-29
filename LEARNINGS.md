@@ -1,5 +1,11 @@
 # Learnings
 
+## 2026-09-29 — Chrome can select a different tab after a Worktree redirect
+
+The existing personal Chrome bridge recorded a real Worktree-link failure: `vscode.dev/redirect` opened an active temporary tab with the original Chrome tab as its opener, but Chrome selected a different surviving tab when it closed the temporary tab. The original tab returned only after a later Chrome activation. Another observed external-protocol handoff kept its launcher open for about 17.5 seconds, so extending Better Git's Source Control wait cannot determine or repair Chrome's post-closure selection. Better Git 1.2.108 link generation and VS Code handling were unchanged.
+
+The fix belongs in the already installed VoiceInk YouTube Bridge Chrome extension, which receives tab-created, tab-removed and tab-activated events. It records the exact opener for a recognized Worktree link and restores that tab after Chrome selects a different one, only while the same-window handoff is still current. It does not focus Chrome or alter VS Code/Codex focus order. Preserve the ordinary Microsoft HTTPS redirect; do not add an arbitrary delay or reintroduce the custom HTML close route. The bridge's focused event tests passed and its updated service worker reported `restoresOpener=true` after reload. A physical Worktree click after that reload remains separate acceptance evidence.
+
 ## 2026-09-29 — Reset image zoom and pan when review switches
 
 Ethan corrected the image Undo behavior after 1.2.107: changing image review should start with VS Code's native fit-to-window zoom and default pan, including when Undo returns to the previously staged image. Revert the image-tab retention introduced in 1.2.107; the existing Undo receipt still returns to the correct image file, while ordinary text Undo still restores its selection and scroll position. VS Code's media preview initializes a fresh webview with `scale: 'fit', offsetX: 0, offsetY: 0`; the extension has no public API to set or inspect those private fields. Do not preserve an old image tab merely to restore its view state. The old 1.2.107 entry below records what was released at that time, not the current desired image behavior.
