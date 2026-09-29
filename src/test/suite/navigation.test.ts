@@ -3508,62 +3508,38 @@ suite('SCM change navigation E2E', () => {
 		});
 	}
 
-	for (const pinned of [false, true]) {
-		test(`image Undo keeps the ${pinned ? 'pinned' : 'preview'} review and its image state`, async () => {
-			const rel = 'committed/image.png';
-			const uri = wsUri(rel);
-			fs.writeFileSync(uri.fsPath, Buffer.from(
-				'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
-			write('zz_after.txt', 'next review file\n');
-			await refreshUntil(() => inWorkingTree(rel, 5) && isUntracked('zz_after.txt'),
-				'image Undo fixture to appear');
-			await vscode.commands.executeCommand('git.openChange', uri);
-			await poll(() => extensionApi.getCurrentReviewUri() === uri.toString(), 'image review to open');
-			await sleep(300); // image webview must render before a zoom command can change its retained state
-			if (pinned) { await vscode.commands.executeCommand('workbench.action.keepEditor'); }
-			const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-			assert.ok(originalTab, 'image review needs an open tab');
-			assert.strictEqual(originalTab.isPreview, !pinned);
+	for (const kept of [false, true]) {
+		test(`image Stage + Next and Undo reset a ${kept ? 'kept' : 'preview'} image view`, async () => {
+			const imageBytes = Buffer.from(
+				'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
+			const originalUri = wsUri('committed/image.png');
+			const nextUri = wsUri('zz_image_after.png');
+			fs.writeFileSync(originalUri.fsPath, imageBytes);
+			fs.writeFileSync(nextUri.fsPath, imageBytes);
+			await refreshUntil(() => inWorkingTree('committed/image.png', 5) && isUntracked('zz_image_after.png'),
+				'image switch fixture to appear');
+			await vscode.commands.executeCommand('git.openChange', originalUri);
+			await poll(() => extensionApi.getCurrentReviewUri() === originalUri.toString(), 'original image review');
+			await sleep(300);
+			if (kept) { await vscode.commands.executeCommand('workbench.action.keepEditor'); }
+			const before = vscode.window.tabGroups.activeTabGroup.activeTab;
+			assert.ok(before, 'image review must have an active tab');
 			await vscode.commands.executeCommand('imagePreview.zoomIn');
 
 			await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
-			await refreshUntil(() => inIndex(rel, 0) && !inWorkingTree(rel, 5), 'image to stage');
-			await expectActiveTab('zz_after.txt');
+			await refreshUntil(() => inIndex('committed/image.png', 0), 'original image to stage');
+			await poll(() => extensionApi.getCurrentReviewUri() === nextUri.toString(), 'next image review');
+			const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+			assert.ok(nextTab && nextTab !== before, 'next image must open its own fresh preview');
+
 			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
-			await refreshUntil(() => !inIndex(rel) && inWorkingTree(rel, 5), 'image stage to undo');
-			await poll(() => extensionApi.getCurrentReviewUri() === uri.toString(), 'image review to return');
-			assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, originalTab,
-				'Undo should reactivate the same image webview so its zoom and pan survive');
+			await refreshUntil(() => !inIndex('committed/image.png') && inWorkingTree('committed/image.png', 5),
+				'original image stage to undo');
+			await poll(() => extensionApi.getCurrentReviewUri() === originalUri.toString(), 'original image to return');
+			assert.notStrictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, before,
+				'Undo must open a fresh image webview rather than retain its old zoom and pan');
 		});
 	}
-
-	test('image Undo retention keeps at most three automatically pinned image tabs', async () => {
-		const imageBytes = Buffer.from(
-			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
-		const names = [1, 2, 3, 4].map(index => `image-undo-${index}.png`);
-		for (const rel of names) { fs.writeFileSync(wsUri(rel).fsPath, imageBytes); }
-		write('zzzz_image_after.txt', 'leave another unstaged review target\n');
-		await refreshUntil(() => names.every(isUntracked) && isUntracked('zzzz_image_after.txt'),
-			'four image changes and the remaining review target');
-		const originalTabs: vscode.Tab[] = [];
-		for (const rel of names) {
-			const uri = wsUri(rel);
-			await vscode.commands.executeCommand('vscode.open', uri, { preview: true });
-			await poll(() => extensionApi.getCurrentReviewUri() === uri.toString(), `${rel} image review`);
-			await sleep(300);
-			const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
-			assert.ok(tab?.isPreview, `${rel} should start as a preview`);
-			originalTabs.push(tab);
-			await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
-			await refreshUntil(() => inIndex(rel, 1), `${rel} to stage`);
-			assert.ok(!tab.isPinned, 'temporary image retention must not create a user-pinned tab');
-		}
-		const openTabs = vscode.window.tabGroups.all.flatMap(group => group.tabs);
-		assert.ok(!openTabs.includes(originalTabs[0]), 'the oldest auto-pinned image must leave with expired Undo history');
-		for (const tab of originalTabs.slice(1)) {
-			assert.ok(openTabs.includes(tab), 'the three undoable image webviews must retain their state');
-		}
-	});
 
 	test('undo waits for a stage performed by VS Code built-in Git rather than Better Git', async () => {
 		const content = lines(24, 'mod_a').split('\n');
