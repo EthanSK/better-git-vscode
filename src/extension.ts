@@ -9,7 +9,7 @@ import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./
 import { returnToApp } from "./gitWorktreeFocus";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
-import { StageTransactionStore, StageUndoView, StoredStageTransaction } from "./stageTransactionStore";
+import { STAGE_TRANSACTION_HISTORY_LIMIT, StageTransactionStore, StageUndoView, StoredStageTransaction } from "./stageTransactionStore";
 import { StageTransactionObserver } from "./stageTransactionObserver";
 import { readIndexSnapshot, readStageTransactionPaths, restoreStageTransaction } from "./gitStageUndo";
 import { extractFileDiffSection } from "./gitDiffSection";
@@ -25,7 +25,7 @@ import { KeyboardStageRepeatGuard, parseKeyboardStageArgs } from "./keyboardStag
 import { MacKeyReleaseMonitor } from "./macKeyReleaseMonitor";
 import { registerAgentFlowSelectionBridge } from "./agentFlowSelectionBridge";
 import { registerDiffViewDisplay } from "./diffViewDisplay";
-import { registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedLfsImage";
+import { isImageFile, registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedLfsImage";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -303,6 +303,35 @@ const stageUndoViewFromMouseReview = (fileUri: vscode.Uri, view?: MouseReviewVie
         })),
         topLine: saved.top?.line,
     };
+};
+
+// VS Code's native image preview keeps zoom and pan in its webview, which has no public state getter.
+// Keep that tab alive across Stage + Next so Undo can reactivate the same webview rather than create
+// a fresh fit-to-window preview. Bound tabs we pin ourselves to the three-entry Undo history; tabs the
+// user already pinned are never owned or closed here. Text editors retain their compact snapshot path.
+const retainedImageUndoTabs: vscode.Tab[] = [];
+const preserveImageReviewTabForUndo = async (fileUri: vscode.Uri): Promise<boolean> => {
+    if (!isImageFile(fileUri)) { return false; }
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (!tab || tab.input instanceof vscode.TabInputText || tab.input instanceof vscode.TabInputTextDiff) {
+        return false;
+    }
+    if ((await currentReviewFileUriAsync())?.toString() !== fileUri.toString()
+        || vscode.window.tabGroups.activeTabGroup.activeTab !== tab) { return false; }
+    if (tab.isPreview) {
+        try { await vscode.commands.executeCommand("workbench.action.keepEditor"); }
+        catch { return false; } // Staging already succeeded; a presentation failure cannot turn it into a false stage error.
+        if (tab.isPreview) { return false; }
+        retainedImageUndoTabs.push(tab);
+        while (retainedImageUndoTabs.length > STAGE_TRANSACTION_HISTORY_LIMIT) {
+            const expired = retainedImageUndoTabs.shift()!;
+            if (!expired.isDirty && !expired.isPinned && expired !== vscode.window.tabGroups.activeTabGroup.activeTab
+                && vscode.window.tabGroups.all.some(group => group.tabs.includes(expired))) {
+                try { await vscode.window.tabGroups.close(expired, true); } catch { /* Undo tab cleanup cannot block staging. */ }
+            }
+        }
+    }
+    return true;
 };
 
 const captureActiveStageUndoView = (): StageUndoView | undefined => {
@@ -4895,7 +4924,8 @@ const stageSelectedFilesAndAdvance = async (
     const target = direction === "next"
         ? after ?? before ?? remaining[0]
         : before ?? after ?? remaining[remaining.length - 1];
-    const activeWasSelected = selectedKeys.includes((await getActiveFileUri())?.toString() ?? "");
+    const activeUri = await getActiveFileUri();
+    const activeWasSelected = selectedKeys.includes(activeUri?.toString() ?? "");
     await stageBatchThroughExtension(repo, selected.map(change => change.uri),
         selected.map(change => stageUndoViewFromMouseReview(change.uri, priorView)).find(view => view));
     check();
@@ -4907,8 +4937,10 @@ const stageSelectedFilesAndAdvance = async (
         invalidateChangeNavigation();
         return true;
     }
+    const preservedImageTab = activeWasSelected && activeUri
+        ? await preserveImageReviewTabForUndo(activeUri) : false;
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
-    await openNavigationTarget(target, check, activeWasSelected && !isPreview);
+    await openNavigationTarget(target, check, activeWasSelected && !isPreview && !preservedImageTab);
     if (direction === "previous") { await landChangeForBackwardReview(target, check); }
     return true;
 };
@@ -5013,6 +5045,8 @@ const stageCurrentFileAndAdvance = async (
         return;
     }
 
+    const preservedImageTab = await preserveImageReviewTabForUndo(currentUri);
+
     // Mirror openNextFile's editor handling: replace a pinned (non-preview) editor, keep a preview tab.
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
     // BUG 11 FIX (v1.2.9 — stage-and-advance landed nowhere on an untracked target with
@@ -5022,7 +5056,7 @@ const stageCurrentFileAndAdvance = async (
     // the target never opened and the user was stranded on a blank/closed editor. openChangeEntry's unstaged
     // path has a shown-tab verification + showTextDocument fallback that handles exactly this silent-no-op —
     // so the mouse/keyboard/"+" stage-and-advance now inherits it for free, matching plain navigation.
-    await openNavigationTarget(targetUnstagedChange, check, !isPreview);
+    await openNavigationTarget(targetUnstagedChange, check, !isPreview && !preservedImageTab);
     if (direction === "previous") {
         // Stage-and-Previous is a cross-file backward transition too: land new files at EOF and tall diff hunks
         // at their last line, exactly like openPreviousFile/openLastFile.
