@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const scheme = "better-git-staged-image";
 const maxImageBytes = 50 * 1024 * 1024;
 const imageExtensions = new Set([".jpg", ".jpe", ".jpeg", ".png", ".bmp", ".gif", ".ico", ".webp", ".avif", ".svg"]);
+export const isImageFile = (uri: vscode.Uri): boolean => imageExtensions.has(path.extname(uri.path).toLowerCase());
 const lfsPointer = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\r?\noid sha256:([a-f0-9]{64})\r?\nsize ([0-9]+)\r?\n?$/;
 
 type StoredImage = { mediaDir: string; oid: string; size: number };
