@@ -65,8 +65,8 @@ suite('Worktree link E2E', () => {
                 assert.strictEqual(activePath(), path.join(target, 'review.txt'));
             }
             assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), [
-                'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'list.clear',
-                'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'list.clear',
+                'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'workbench.scm.action.collapseAllRepositories', 'list.clear',
+                'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'workbench.scm.action.collapseAllRepositories', 'list.clear',
             ]);
         } finally {
             await config.update('experimentalScmTreeStateManagement', beforeSetting, vscode.ConfigurationTarget.Workspace);

@@ -44,6 +44,10 @@ exports.run = async () => {
      if(!uriHandler) throw new Error('Better Git URI handler was not captured');
      value=await uriHandler.handleUri(vscode.Uri.parse(request.uri));
     }
+    else if(request.action==='uri-burst') {
+     if(!uriHandler) throw new Error('Better Git URI handler was not captured');
+     value=await Promise.all(request.uris.map(uri=>uriHandler.handleUri(vscode.Uri.parse(uri))));
+    }
     else if(request.action==='git-config') {
      for(const [key,setting] of Object.entries(request.settings)) await vscode.workspace.getConfiguration('git').update(key,setting,vscode.ConfigurationTarget.Workspace);
     }

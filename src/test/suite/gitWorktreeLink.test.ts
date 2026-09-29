@@ -23,6 +23,13 @@ suite('Git worktree links', () => {
         assert.strictEqual(worktreeLinkReturnApp(link, false, 'com.apple.TextEdit'), undefined);
         assert.strictEqual(worktreeLinkReturnApp(link, true), 'com.openai.codex');
     });
+    test('the AIMVS worktree redirect reaches the exact root and Codex return app', () => {
+        const url = 'https://vscode.dev/redirect?url=vscode%253A%252F%252Fethansk.better-git-vscode%252Fopen-worktree%253Fpath%253D%25252FUsers%25252Fethansarif-kattan%25252FProjects%25252Faimvs24-main-api-restore-readiness%2526returnTo%253Dcodex';
+        const inner = new URL(decodeURIComponent(new URL(url).searchParams.get('url')!));
+        const link = { authority: inner.hostname, path: inner.pathname, fragment: inner.hash.slice(1), query: inner.search.slice(1) };
+        assert.strictEqual(parseWorktreeLink(link), '/Users/ethansarif-kattan/Projects/aimvs24-main-api-restore-readiness');
+        assert.strictEqual(worktreeLinkReturnApp(link, true), 'com.openai.codex');
+    });
     test('link app overrides the local fallback and survives both redirect encoding layers', () => {
         const outer = new URL(createWorktreeLink(path.resolve('work + 100% # & 日本'), 'vscode', 'com.apple.TextEdit'));
         const inner = new URL(decodeURIComponent(outer.searchParams.get('url')!));
