@@ -297,7 +297,7 @@ try {
     } else if (testLinkBackground) {
         const jxa = code => execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit'); ${code}`], { encoding: 'utf8' });
         const focusCode = () => jxa(`$.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`);
-        for (const [repo, delay] of [[2, 1200], [3, 50], [2, 0]]) {
+        for (const [repo, delay] of [[2, 2600], [3, 1200], [2, 50], [3, 0]]) {
             await request('command', { command: 'workbench.scm.action.expandAllRepositories' });
             await request('plain', { repo: 0 });
             await request('command', { command: 'workbench.scm.history.focus' });

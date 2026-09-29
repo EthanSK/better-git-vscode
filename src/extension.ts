@@ -1078,9 +1078,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // External links and the palette share one ordered, on-demand path. There
     // are no startup scans, expansion loops or configuration writes.
     let worktreeLinkQueue: Promise<void> = Promise.resolve();
+    let worktreeLinkGeneration = 0;
     const openWorktree = (root?: vscode.Uri, sourceLink?: vscode.Uri): Promise<void> => {
+        const generation = ++worktreeLinkGeneration;
+        const isCurrent = () => generation === worktreeLinkGeneration;
         const next = worktreeLinkQueue.then(async () => {
-            if (await openWorktreeInSourceControl(root) && sourceLink) {
+            if (!isCurrent()) { return; }
+            if (await openWorktreeInSourceControl(root, isCurrent) && sourceLink && isCurrent()) {
                 // Read after reveal so disabling the setting during a queued open wins.
                 // Application-scoped settings cannot be enabled by the opened repository.
                 const config = vscode.workspace.getConfiguration("better-git-vscode");
@@ -2124,7 +2128,7 @@ const waitForFileWorkspaceFolder = async (fileUri: vscode.Uri, timeout = 2000): 
 // dispatching view actions then observes only a partial tree. Wait for the
 // actual focus event instead of guessing with a fixed delay. A bounded timeout
 // keeps a background window from holding the serialized link queue forever.
-const waitForWindowFocus = async (timeout = 2000): Promise<boolean> => {
+const waitForWindowFocus = async (timeout = 8000): Promise<boolean> => {
     if (vscode.window.state.focused) {
         return true;
     }
@@ -2142,7 +2146,59 @@ const waitForWindowFocus = async (timeout = 2000): Promise<boolean> => {
             listener?.dispose();
             resolve(true);
         });
+        // Focus can arrive between the initial check and listener registration.
+        if (vscode.window.state.focused) {
+            clearTimeout(timer);
+            listener.dispose();
+            resolve(true);
+        }
     });
+};
+
+const waitForWorktreeLinkFocus = async (isCurrent: () => boolean): Promise<boolean> => {
+    if (!isCurrent()) { return false; }
+    if (await waitForWindowFocus()) { return isCurrent(); }
+    if (isCurrent()) {
+        debugLog("worktree-link", "The receiving VS Code window did not gain focus before the link timed out.");
+        void vscode.window.showErrorMessage("Better Git: VS Code did not come to the front. Open the worktree link again.");
+    }
+    return false;
+};
+
+// Git publishes SCM resource changes in a batch. A fixed delay can expire while
+// another worktree is still refreshing, leaving newly rendered headers expanded.
+// This listener exists only during an explicit link and has a firm upper bound.
+const observeWorktreeScmActivity = (git: any) => {
+    const listeners: vscode.Disposable[] = [];
+    const watched = new Set<any>();
+    let revision = 0;
+    let lastChange = Date.now();
+    const changed = () => { revision++; lastChange = Date.now(); };
+    const watch = (repository: any) => {
+        if (watched.has(repository)) { return; }
+        watched.add(repository);
+        const listener = repository?.state?.onDidChange?.(changed);
+        if (listener) { listeners.push(listener); }
+    };
+    for (const repository of git.repositories) { watch(repository); }
+    const opened = git.onDidOpenRepository?.((repository: any) => { watch(repository); changed(); });
+    if (opened) { listeners.push(opened); }
+    const closed = git.onDidCloseRepository?.(changed);
+    if (closed) { listeners.push(closed); }
+    return {
+        get revision() { return revision; },
+        async settle(minimumMs = 500): Promise<void> {
+            const start = Date.now();
+            const deadline = start + 2500;
+            while (true) {
+                const now = Date.now();
+                const ready = Math.max(start + minimumMs, lastChange + 180);
+                if (now >= ready || now >= deadline) { return; }
+                await new Promise(resolve => setTimeout(resolve, Math.min(ready - now, deadline - now)));
+            }
+        },
+        dispose() { listeners.forEach(listener => listener.dispose()); }
+    };
 };
 
 // SHARED merge-editor predicate (v1.2.9). A 3-way MERGE editor (git conflict) is a TabInputTextMerge tab.
@@ -2340,14 +2396,18 @@ interface FileChange {
 
 // Commit-input focus identifies repositories through the Git API without selecting/opening files.
 // Only explicit links use this bounded route; startup and the manual collapse button stay unchanged.
-const revealWorktreeWithoutUnstagedFiles = async (repository: any, repositories: any[], hasStaged: boolean): Promise<void> => {
+const revealWorktreeWithoutUnstagedFiles = async (
+    repository: any, repositories: any[], hasStaged: boolean,
+    settle: () => Promise<void>, isCurrent: () => boolean
+): Promise<boolean> => {
     await executeScmTreeCommand("manual", "workbench.view.scm");
     if (!vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true)
         || repositories.some(candidate => !vscode.workspace.getConfiguration("git", candidate.rootUri).get<boolean>("showCommitInput", true))) {
-        return;
+        return true; // Source Control is open; the native commit-input reveal is unavailable by configuration.
     }
     // Let Git's resource-state batch reach SCM before focusing newly discovered inputs/groups.
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await settle();
+    if (!await waitForWorktreeLinkFocus(isCurrent)) { return false; }
     const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab;
     const stillOwned = () => vscode.window.state.focused
         && vscode.window.tabGroups.activeTabGroup.activeTab === originalTab;
@@ -2371,20 +2431,20 @@ const revealWorktreeWithoutUnstagedFiles = async (repository: any, repositories:
     };
     try {
         let found = false;
-        const deadline = Date.now() + 2000;
+        const deadline = Date.now() + Math.max(2000, 150 * (repositories.length + 1));
         for (let attempt = 0; attempt <= repositories.length && Date.now() < deadline; attempt++) {
-            if (!stillOwned()) { return; }
+            if (!isCurrent() || !stillOwned()) { return false; }
             await focusInput();
             if (repository.ui.selected) { found = true; break; }
         }
-        if (!found || !stillOwned()) { return; }
+        if (!found || !isCurrent() || !stillOwned()) { return false; }
         if (hasStaged) {
             // This command focuses the target's group in the Changes tree even if Graph owned focus.
             // VS Code queues its tree work but returns void; allow a bounded presentation settle before
             // the one recursive collapse. Never infer group focus from source-control selection alone.
             await executeScmTreeCommand("manual", "workbench.scm.action.focusNextResourceGroup");
             await new Promise(resolve => setTimeout(resolve, 100));
-            if (!stillOwned()) { return; }
+            if (!isCurrent() || !stillOwned()) { return false; }
             await executeScmTreeCommand("manual", "list.collapseAll");
             await executeScmTreeCommand("manual", "list.clear");
         } else {
@@ -2392,18 +2452,17 @@ const revealWorktreeWithoutUnstagedFiles = async (repository: any, repositories:
         }
         // The input was removed by collapse, so this reopens the same repository, not its neighbour.
         if (stillOwned()) { await focusInput(); }
+        return isCurrent() && stillOwned() && repository.ui.selected;
     } finally {
         listeners.forEach(listener => listener.dispose());
     }
 };
 
-const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<boolean> => {
+const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent: () => boolean = () => true): Promise<boolean> => {
     let root = requestedRoot;
+    let scmActivity: ReturnType<typeof observeWorktreeScmActivity> | undefined;
     try {
-        if (!await waitForWindowFocus()) {
-            debugLog("worktree-link", "Skipped Source Control reveal because the receiving VS Code window never became focused.");
-            return false;
-        }
+        if (!await waitForWorktreeLinkFocus(isCurrent)) { return false; }
         const extension = vscode.extensions.getExtension<any>("vscode.git");
         const git = (await extension?.activate())?.getAPI(1);
         if (!git) {
@@ -2446,18 +2505,21 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
         if (!repository || await fs.promises.realpath(repository.rootUri.fsPath) !== canonicalRoot) {
             throw new Error("No git worktree found at this path.");
         }
+        scmActivity = observeWorktreeScmActivity(git);
         // openRepository returns before its first status scan settles. Await
         // that one repository, otherwise a new dirty worktree appears clean.
         await repository.status();
+        if (!await waitForWorktreeLinkFocus(isCurrent)) { return false; }
         const name = path.basename(canonicalRoot);
         // Use the same sorted entries as Stage and Next/Previous. Git's raw state arrays can put a
         // nested path above root files and item-10 above item-2, unlike the visible SCM review order.
         // Keep this lookup tied to the validated repository, including an already-open path alias.
         const changes = await getFileChanges(repository.rootUri);
+        if (!isCurrent()) { return false; }
         const target = changes.find(change => !change.staged);
         if (!target) {
-            await revealWorktreeWithoutUnstagedFiles(repository, git.repositories, changes.length > 0);
-            return true;
+            return await revealWorktreeWithoutUnstagedFiles(repository, git.repositories, changes.length > 0,
+                () => scmActivity!.settle(), isCurrent);
         }
         const autoReveal = vscode.workspace.getConfiguration("scm").get<boolean>("autoReveal", true);
         // Git-only editors cannot reliably trigger native reveal. Keep their existing fallback,
@@ -2469,18 +2531,23 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
             // groups; Auto Reveal then recreates Staged Changes in its default expanded state.
             // Allow the requested 500 ms margin for that batch and a busy workbench before
             // revealing/collapsing. This is a bounded wait, not a native-render acknowledgement.
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await scmActivity.settle();
+            if (!await waitForWorktreeLinkFocus(isCurrent)) { return false; }
             // Reveal first so native SCM focus belongs to this resource instead of a commit input
             // or Graph. A recursive collapse must precede repository-header collapse: refreshing
             // a collapsed repository can discard its groups before they can be closed.
             await openChangeEntry(target, true);
             await executeScmTreeCommand("manual", "workbench.scm.focus");
             await executeScmTreeCommand("manual", "list.collapseAll");
+            // The generic list command closes resource groups; this view-scoped command
+            // closes every repository header, even when another list owned focus.
+            await executeScmTreeCommand("manual", SCM_COLLAPSE_ALL_REPOS_COMMAND);
             // Auto Reveal skips a still-selected resource even when its parent is collapsed.
             await executeScmTreeCommand("manual", "list.clear");
         } else {
             await vscode.commands.executeCommand("workbench.view.scm");
         }
+        if (!isCurrent()) { return false; }
         const shown = await currentReviewFileUriAsync();
         if (!target.staged && target.status !== GitStatus.DELETED && shown?.toString() === target.uri.toString()) {
             // Auto Reveal also needs a real editor-input change on repeat clicks. Use the shared
@@ -2502,6 +2569,8 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
             }
         }
         await openChangeEntry(target, true);
+        if (!isCurrent()) { return false; }
+        if (autoReveal) { await scmActivity.settle(180); }
         if (!autoReveal) {
             void vscode.window.showInformationMessage(`Better Git: Opened Source Control for ${name}. Auto reveal is off, so expand its section manually.`);
         }
@@ -2509,6 +2578,8 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri): Promise<
     } catch (error) {
         void vscode.window.showErrorMessage(`Better Git: Failed to open ${root?.fsPath ?? "worktree"}: ${error instanceof Error ? error.message : String(error)}`);
         return false;
+    } finally {
+        scmActivity?.dispose();
     }
 };
 
