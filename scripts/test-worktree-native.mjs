@@ -128,9 +128,10 @@ async function check(repo, name, file = 'a.txt') {
         // Inspect the top of the same tree without changing selection or issuing another collapse.
         await capture(`${name}-selected`);
         const point = await evaluate(`(()=>{const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');const b=tree.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+Math.min(100,b.height/2)};})()`);
-        // Scroll in bounded steps and inspect each resulting viewport.
+        // Scroll toward the unseen headers and inspect each resulting viewport.
+        const direction = repo > roots.length / 2 ? -1 : 1;
         for (let i = 0; i < 16 && headers.size < roots.length; i++) {
-            await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: -1000 });
+            await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: direction * 1000 });
             await pause(100);
             rows = await evaluate(rowsExpression);
             collectHeaders();
