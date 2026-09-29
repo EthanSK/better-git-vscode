@@ -215,6 +215,15 @@ try {
     await request('open', { repo: 0 }); await check(0, 'repeat-open');
     await request('open', { repo: 1 }); await check(1, 'switch-worktree');
     async function expandStagedGroup() {
+        const treePoint = await evaluate(`(()=>{const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');const b=tree.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+Math.min(100,b.height/2)};})()`);
+        for (const direction of [1, -1]) {
+            for (let attempt = 0; attempt < 20; attempt++) {
+                if ((await evaluate(rowsExpression)).some(row => row.aria === 'Staged Changes')) { break; }
+                await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...treePoint, deltaX: 0, deltaY: direction * 700 });
+                await pause(70);
+            }
+            if ((await evaluate(rowsExpression)).some(row => row.aria === 'Staged Changes')) { break; }
+        }
         const point = await evaluate(`(()=>{const row=[...document.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')==='Staged Changes');const r=row.querySelector('.monaco-tl-twistie').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
         for (const type of ['mousePressed', 'mouseReleased']) { await send('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 }); }
         assert.ok((await evaluate(rowsExpression)).some(r => r.aria === 'Staged Changes' && r.expanded === 'true'));
