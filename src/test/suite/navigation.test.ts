@@ -2,7 +2,9 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, execSync } from 'child_process';
+import { createHash } from 'crypto';
 import * as vscode from 'vscode';
+import { resolveStagedLfsImage } from '../../stagedLfsImage';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // E2E suite for next/previous-scm-change navigation (v1.2.1).
@@ -1132,6 +1134,42 @@ suite('SCM change navigation E2E', () => {
 		await extensionApi.whenReviewDecorationSettled();
 		assert.strictEqual(git('diff --cached --binary'), before);
 		assert.notStrictEqual(extensionApi.getReviewDecorationBadge(b), '💥💥');
+	});
+
+	test('staged LFS image preview uses exact local index bytes without changing Git state', async () => {
+		const rel = 'staged-lfs-preview.png';
+		const stagedBytes = Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'
+		);
+		const otherBytes = Buffer.from(stagedBytes);
+		otherBytes[otherBytes.length - 1] ^= 1;
+		const oid = createHash('sha256').update(stagedBytes).digest('hex');
+		const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${stagedBytes.length}\n`;
+		const mediaDir = /^LocalMediaDir=(.+)$/m.exec(git('lfs env'))?.[1];
+		assert.ok(mediaDir, 'Git LFS must expose local media storage in the Mini fixture');
+		const object = path.join(mediaDir!, oid.slice(0, 2), oid.slice(2, 4), oid);
+		const uri = write(rel, pointer);
+		fs.mkdirSync(path.dirname(object), { recursive: true });
+		fs.writeFileSync(object, stagedBytes);
+		try {
+			git(`add -- ${rel}`);
+			fs.writeFileSync(uri.fsPath, otherBytes); // working copy differs; preview must still use the index image
+			await refreshUntil(() => inIndex(rel) && inWorkingTree(rel), 'staged and working image versions');
+			const indexUri = toGitUri(uri, '');
+			const resolved = await resolveStagedLfsImage(indexUri, ws);
+			assert.strictEqual(resolved.scheme, 'better-git-staged-image');
+			assert.deepStrictEqual(Buffer.from(await vscode.workspace.fs.readFile(resolved)), stagedBytes);
+			const before = git('status --porcelain=v1');
+			await vscode.commands.executeCommand('better-git-vscode.next-changed-file');
+			await poll(() => vscode.window.tabGroups.activeTabGroup.activeTab?.label.includes(`${rel} (Index)`), 'staged image review tab');
+			assert.strictEqual(git('status --porcelain=v1'), before, 'preview does not stage, unstage, or edit the image');
+			await sleep(300); // let VS Code's image webview finish reading before deleting its fixture object
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			fs.rmSync(object);
+			assert.strictEqual((await resolveStagedLfsImage(indexUri, ws)).scheme, 'git', 'missing local object retains native fallback');
+		} finally {
+			fs.rmSync(object, { force: true });
+		}
 	});
 
 	test('current-review fire badge covers every image Git state and rapid tab switches', async () => {
