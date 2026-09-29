@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
 import * as vscode from "vscode";
 import { MacDisplay, matchDisplay, parseDisplayTarget } from "./gitDiffViewDisplayMatch";
+import { parseDisplayZoomLevels } from "./displayZoomLevels";
 
 // A fresh, short-lived probe sees hot-plug changes even when the extension host stays open.
 // It never reads window titles, screen content, or the frontmost application.
@@ -39,6 +40,7 @@ export function registerDiffViewDisplay(context: vscode.ExtensionContext, log: (
     let disposed = false;
     let running = false;
     let pending = false;
+    let lastZoomState: string | undefined;
 
     const refresh = async (): Promise<void> => {
         if (disposed) { return; }
@@ -49,14 +51,17 @@ export function registerDiffViewDisplay(context: vscode.ExtensionContext, log: (
                 pending = false;
                 const target = parseDisplayTarget(vscode.workspace.getConfiguration("better-git-vscode")
                     .get<unknown>("inlineDiffOnDisplay"));
-                if (!target) { continue; }
+                if (!target) { lastZoomState = undefined; continue; }
                 try {
                     const connected = matchDisplay(target, await probeDisplays());
                     if (disposed || connected === undefined) { continue; }
                     const currentTarget = parseDisplayTarget(vscode.workspace.getConfiguration("better-git-vscode")
                         .get<unknown>("inlineDiffOnDisplay"));
                     if (!currentTarget || currentTarget.uuid !== target.uuid
-                        || currentTarget.width !== target.width || currentTarget.height !== target.height) { continue; }
+                        || currentTarget.width !== target.width || currentTarget.height !== target.height) {
+                        lastZoomState = undefined;
+                        continue;
+                    }
                     // VS Code's diff-view commands require an active diff. Settings also work at startup,
                     // before any editor is open. Automatic is side-by-side with inline on narrow editors.
                     const diff = vscode.workspace.getConfiguration("diffEditor");
@@ -71,6 +76,22 @@ export function registerDiffViewDisplay(context: vscode.ExtensionContext, log: (
                         await diff.update("renderSideBySide", desiredSideBySide, vscode.ConfigurationTarget.Global);
                         log(`Display ${connected ? "connected" : "disconnected"}; diff view set to ${connected ? "Inline" : "Automatic"}.`);
                     }
+
+                    const levels = parseDisplayZoomLevels(vscode.workspace.getConfiguration("better-git-vscode")
+                        .get<unknown>("zoomLevelOnDisplay"));
+                    if (!levels) { lastZoomState = undefined; continue; }
+                    const zoomState = `${target.uuid}:${target.width}x${target.height}:${levels.connected}:${levels.disconnected}:${connected}`;
+                    // Apply on startup, display transition or preference change. A manual zoom change
+                    // during the same display state remains Ethan's until the next transition.
+                    if (zoomState !== lastZoomState) {
+                        const desiredZoom = connected ? levels.connected : levels.disconnected;
+                        const window = vscode.workspace.getConfiguration("window");
+                        if (window.get<number>("zoomLevel") !== desiredZoom) {
+                            await window.update("zoomLevel", desiredZoom, vscode.ConfigurationTarget.Global);
+                            log(`Display ${connected ? "connected" : "disconnected"}; VS Code zoom set to ${desiredZoom}.`);
+                        }
+                        lastZoomState = zoomState;
+                    }
                 } catch (error) { log(`Display check failed: ${String(error)}`); }
             } while (pending && !disposed);
         } finally { running = false; }
@@ -80,7 +101,8 @@ export function registerDiffViewDisplay(context: vscode.ExtensionContext, log: (
     context.subscriptions.push(
         { dispose: () => { disposed = true; clearInterval(interval); } },
         vscode.workspace.onDidChangeConfiguration((event) => {
-            if (event.affectsConfiguration("better-git-vscode.inlineDiffOnDisplay")) { void refresh(); }
+            if (event.affectsConfiguration("better-git-vscode.inlineDiffOnDisplay")
+                || event.affectsConfiguration("better-git-vscode.zoomLevelOnDisplay")) { void refresh(); }
         }),
         vscode.window.onDidChangeWindowState((state) => {
             if (state.focused) { void refresh(); }

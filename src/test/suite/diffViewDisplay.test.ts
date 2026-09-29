@@ -11,6 +11,15 @@ async function waitForSetting(name: string, expected: boolean): Promise<void> {
     assert.strictEqual(vscode.workspace.getConfiguration("diffEditor").get<boolean>(name), expected);
 }
 
+async function waitForZoom(expected: number): Promise<void> {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+        if (vscode.workspace.getConfiguration("window").get<number>("zoomLevel") === expected) { return; }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.strictEqual(vscode.workspace.getConfiguration("window").get<number>("zoomLevel"), expected);
+}
+
 suite("Display-aware diff view E2E", () => {
     test("updates on connected, disconnected and disabled target without an active diff", async () => {
         const display = (await probeDisplays()).find((candidate) => !candidate.builtIn);
@@ -42,6 +51,56 @@ suite("Display-aware diff view E2E", () => {
             await betterGit.update("inlineDiffOnDisplay", originalTarget, vscode.ConfigurationTarget.Global);
             await diff.update("renderSideBySide", originalSideBySide, vscode.ConfigurationTarget.Global);
             await diff.update("useInlineViewWhenSpaceIsLimited", originalNarrow, vscode.ConfigurationTarget.Global);
+        }
+    });
+
+    test("switches zoom with the selected display, but preserves manual zoom until the next change", async () => {
+        const display = (await probeDisplays()).find((candidate) => !candidate.builtIn);
+        assert.ok(display, "Mini must have an external display");
+        const betterGit = vscode.workspace.getConfiguration("better-git-vscode");
+        const window = vscode.workspace.getConfiguration("window");
+        const originalTarget = betterGit.inspect<unknown>("inlineDiffOnDisplay")?.globalValue;
+        const originalLevels = betterGit.inspect<unknown>("zoomLevelOnDisplay")?.globalValue;
+        const originalZoom = window.inspect<number>("zoomLevel")?.globalValue;
+        const originalSideBySide = vscode.workspace.getConfiguration("diffEditor")
+            .inspect<boolean>("renderSideBySide")?.globalValue;
+        const originalNarrow = vscode.workspace.getConfiguration("diffEditor")
+            .inspect<boolean>("useInlineViewWhenSpaceIsLimited")?.globalValue;
+        const extension = vscode.extensions.getExtension("ethansk.better-git-vscode");
+        assert.ok(extension);
+        await extension.activate();
+        try {
+            await betterGit.update("zoomLevelOnDisplay", { connected: 1, disconnected: -2 },
+                vscode.ConfigurationTarget.Global);
+            await betterGit.update("inlineDiffOnDisplay", display, vscode.ConfigurationTarget.Global);
+            await waitForZoom(1);
+
+            await betterGit.update("inlineDiffOnDisplay", {
+                uuid: "00000000-0000-0000-0000-000000000000", width: 1, height: 1,
+            }, vscode.ConfigurationTarget.Global);
+            await waitForZoom(-2);
+
+            await window.update("zoomLevel", -1, vscode.ConfigurationTarget.Global);
+            await new Promise((resolve) => setTimeout(resolve, 5500));
+            assert.strictEqual(vscode.workspace.getConfiguration("window").get<number>("zoomLevel"), -1,
+                "manual zoom must survive the next display check");
+
+            await betterGit.update("inlineDiffOnDisplay", display, vscode.ConfigurationTarget.Global);
+            await waitForZoom(1);
+
+            await betterGit.update("zoomLevelOnDisplay", {}, vscode.ConfigurationTarget.Global);
+            await window.update("zoomLevel", -3, vscode.ConfigurationTarget.Global);
+            await new Promise((resolve) => setTimeout(resolve, 5500));
+            assert.strictEqual(vscode.workspace.getConfiguration("window").get<number>("zoomLevel"), -3,
+                "disabled zoom switching must leave manual zoom alone");
+        } finally {
+            await betterGit.update("zoomLevelOnDisplay", originalLevels, vscode.ConfigurationTarget.Global);
+            await betterGit.update("inlineDiffOnDisplay", originalTarget, vscode.ConfigurationTarget.Global);
+            await window.update("zoomLevel", originalZoom, vscode.ConfigurationTarget.Global);
+            await vscode.workspace.getConfiguration("diffEditor").update("renderSideBySide", originalSideBySide,
+                vscode.ConfigurationTarget.Global);
+            await vscode.workspace.getConfiguration("diffEditor").update("useInlineViewWhenSpaceIsLimited", originalNarrow,
+                vscode.ConfigurationTarget.Global);
         }
     });
 });

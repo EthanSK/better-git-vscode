@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-09-29 — Use the existing display probe for optional VS Code zoom
+
+The opt-in `inlineDiffOnDisplay` watcher already identifies the chosen external display by UUID or unambiguous size. Reuse its five-second probe for `zoomLevelOnDisplay`, rather than adding another watcher. A complete pair of finite VS Code zoom levels from -8 to 8 is required; an empty or invalid pair leaves zoom alone. Apply the selected level on startup, display transition or preference change, then remember that display/configuration state so a manual zoom is not overwritten by the next poll or window-focus check. An ambiguous display match leaves both diff view and zoom unchanged. The setting updates VS Code's `window.zoomLevel` globally and affects the application, not only Better Git's Source Control view.
+
+Ethan's saved VS Code `window.zoomLevel` is `-1`, while the last active normal Code window's persisted `uiState.zoomLevel` is `1`; the latter matches its current window bounds. His `coffee_shop_coding` OBS profile points to recordings on the mounted SD card. Four sampled frames of the 2026-09-29 recording showed the laptop layout, but VS Code was largely behind Codex and did not provide a numeric zoom reading. Use the actual Code state and saved setting for his connected `-1` / disconnected `1` pair, without claiming the video proves those numbers.
+
+Verification: 112 non-GUI tests and ESLint passed. The focused isolated Mini VS Code run passed connected, disconnected and disabled diff-view behavior plus zoom transitions, a manual zoom retained through the next probe, and disabled zoom retaining a manual change. The final production JavaScript matched locally and on the Mini at SHA-256 `f425f973dd49be1adc62e2cfc22eb7b8ed61cc0a358b9b077371a38c3770f4c6`. Physical monitor hot-plug on Ethan's MacBook remains unverified.
+
 ## 2026-09-29 — Keep a linked worktree selected through focus and SCM refresh races
 
 An external `vscode.dev/redirect` Worktree link could silently do nothing when Code took more than two seconds to gain focus. Rapid links also shared a queue with the prior link's Codex focus return, so an older handoff could take Code out of focus before the newer link ran. The link now accepts the latest request in order, skips obsolete requests before their next tree action, waits up to eight seconds for Code to focus, rechecks focus after Git status and SCM settling, and reports a genuine focus timeout. The ordinary mouse staging, navigation, and Undo paths are unchanged.
