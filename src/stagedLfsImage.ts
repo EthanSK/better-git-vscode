@@ -111,4 +111,44 @@ export const resolveStagedLfsImage = async (gitUri: vscode.Uri, repositoryRoot: 
 export const registerStagedLfsImageProvider = (context: vscode.ExtensionContext): void => {
     const provider = new StagedLfsImageProvider();
     context.subscriptions.push(provider, vscode.workspace.registerFileSystemProvider(scheme, provider, { isReadonly: true }));
+
+    // Git's own Source Control click opens staged images in its custom image editor, bypassing our
+    // navigation command. Replace only an active staged LFS pointer tab with the same image editor
+    // backed by the local object. This leaves ordinary images and working-tree previews untouched.
+    const inspected = new WeakSet<vscode.Tab>();
+    const revealNativeStagedImage = async (): Promise<void> => {
+        const group = vscode.window.tabGroups.activeTabGroup;
+        const tab = group.activeTab;
+        const input = tab?.input;
+        if (!tab || inspected.has(tab) || !(input instanceof vscode.TabInputCustom)
+            || input.viewType !== "imagePreview.previewEditor" || input.uri.scheme !== "git") {
+            return;
+        }
+        let stagedPath: string;
+        try {
+            const query = JSON.parse(input.uri.query);
+            if (query?.ref !== "" || typeof query.path !== "string" || !path.isAbsolute(query.path)) { return; }
+            stagedPath = query.path;
+        } catch { return; }
+        inspected.add(tab);
+        try {
+            const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+            const root: string | undefined = git?.getRepository(vscode.Uri.file(stagedPath))?.rootUri?.fsPath;
+            if (!root) { return; }
+            const resolved = await resolveStagedLfsImage(input.uri, root);
+            if (resolved.scheme !== scheme || group.activeTab !== tab) { return; }
+            await vscode.commands.executeCommand("vscode.openWith", resolved, input.viewType, {
+                viewColumn: group.viewColumn, preview: tab.isPreview,
+            });
+            // A pinned source tab remains alongside the replacement. Close only that captured tab,
+            // after the new preview is active, so no unrelated editor is briefly selected.
+            if (group.tabs.includes(tab) && group.activeTab !== tab) {
+                await vscode.window.tabGroups.close(tab, true);
+            }
+        } catch (error) {
+            console.warn("Better Git could not preview the staged LFS image", error);
+        }
+    };
+    context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => { void revealNativeStagedImage(); }));
+    void revealNativeStagedImage();
 };

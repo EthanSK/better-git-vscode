@@ -1163,6 +1163,13 @@ suite('SCM change navigation E2E', () => {
 			await vscode.commands.executeCommand('better-git-vscode.next-changed-file');
 			await poll(() => vscode.window.tabGroups.activeTabGroup.activeTab?.label.includes(`${rel} (Index)`), 'staged image review tab');
 			assert.strictEqual(git('status --porcelain=v1'), before, 'preview does not stage, unstage, or edit the image');
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			await vscode.commands.executeCommand('vscode.openWith', indexUri, 'imagePreview.previewEditor', { preview: true });
+			await poll(() => {
+				const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+				return input instanceof vscode.TabInputCustom && input.uri.scheme === 'better-git-staged-image';
+			}, 'native staged-image click to show the local image');
+			assert.strictEqual(git('status --porcelain=v1'), before, 'native preview does not alter Git state');
 			await sleep(300); // let VS Code's image webview finish reading before deleting its fixture object
 			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 			fs.rmSync(object);
