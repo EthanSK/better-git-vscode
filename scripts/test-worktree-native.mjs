@@ -115,26 +115,33 @@ async function check(repo, name, file = 'a.txt') {
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ',')), name);
     await pause(350); // Observe late resource publication after the command has returned.
     let rows = await evaluate(rowsExpression);
-    if (rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria)).length < roots.length) {
+    const selectedRows = rows;
+    const headers = new Map();
+    const collectHeaders = () => {
+        for (const row of rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria))) {
+            headers.set(row.aria, row.expanded);
+        }
+    };
+    collectHeaders();
+    if (headers.size < roots.length) {
         // A large selected worktree scrolls its preceding repository headers out of the DOM.
         // Inspect the top of the same tree without changing selection or issuing another collapse.
         await capture(`${name}-selected`);
         const point = await evaluate(`(()=>{const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');const b=tree.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+Math.min(100,b.height/2)};})()`);
         // Scroll in bounded steps and inspect each resulting viewport.
-        for (let i = 0; i < 16; i++) {
+        for (let i = 0; i < 16 && headers.size < roots.length; i++) {
             await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: -1000 });
             await pause(100);
             rows = await evaluate(rowsExpression);
-            if (rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria)).length === roots.length) { break; }
+            collectHeaders();
         }
     }
     await capture(name);
-    assert.equal(rows.find(r => r.aria === 'Staged Changes')?.expanded, 'false', `${name}: Staged Changes remained expanded`);
-    const repositories = rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria));
-    assert.equal(repositories.length, roots.length, `${name}: missing repository headers`);
-    assert.deepEqual(repositories.filter(r => r.expanded === 'true').map(r => r.aria), [`repo-${repo} Git`], `${name}: expanded repositories`);
-    assert.equal(rows.find(r => r.aria === 'Changes')?.expanded, 'true', `${name}: Changes must stay expanded`);
-    assert.ok(rows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ',')), `${name}: wrong selected file`);
+    assert.equal(selectedRows.find(r => r.aria === 'Staged Changes')?.expanded, 'false', `${name}: Staged Changes remained expanded`);
+    assert.equal(headers.size, roots.length, `${name}: missing repository headers`);
+    assert.deepEqual([...headers].filter(([, expanded]) => expanded === 'true').map(([aria]) => aria), [`repo-${repo} Git`], `${name}: expanded repositories`);
+    assert.equal(selectedRows.find(r => r.aria === 'Changes')?.expanded, 'true', `${name}: Changes must stay expanded`);
+    assert.ok(selectedRows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ',')), `${name}: wrong selected file`);
     console.log(`PASS ${name}`);
 }
 async function key(key, code, virtualKey, modifiers = 0) {
