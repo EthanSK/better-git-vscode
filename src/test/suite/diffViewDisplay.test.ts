@@ -82,7 +82,7 @@ suite("Display-aware diff view E2E", () => {
 
             await window.update("zoomLevel", -1, vscode.ConfigurationTarget.Global);
             await new Promise((resolve) => setTimeout(resolve, 5500));
-            assert.strictEqual(window.get<number>("zoomLevel"), -1,
+            assert.strictEqual(vscode.workspace.getConfiguration("window").get<number>("zoomLevel"), -1,
                 "manual zoom must survive the next display check");
 
             await betterGit.update("inlineDiffOnDisplay", display, vscode.ConfigurationTarget.Global);
@@ -91,7 +91,7 @@ suite("Display-aware diff view E2E", () => {
             await betterGit.update("zoomLevelOnDisplay", {}, vscode.ConfigurationTarget.Global);
             await window.update("zoomLevel", -3, vscode.ConfigurationTarget.Global);
             await new Promise((resolve) => setTimeout(resolve, 5500));
-            assert.strictEqual(window.get<number>("zoomLevel"), -3,
+            assert.strictEqual(vscode.workspace.getConfiguration("window").get<number>("zoomLevel"), -3,
                 "disabled zoom switching must leave manual zoom alone");
         } finally {
             await betterGit.update("zoomLevelOnDisplay", originalLevels, vscode.ConfigurationTarget.Global);
