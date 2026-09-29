@@ -1081,10 +1081,17 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let worktreeLinkGeneration = 0;
     const openWorktree = (root?: vscode.Uri, sourceLink?: vscode.Uri): Promise<void> => {
         const generation = ++worktreeLinkGeneration;
+        const receivedAt = Date.now();
+        debugLog("worktree-link", `Received #${generation} for ${root?.fsPath ?? "selected worktree"}.`);
         const isCurrent = () => generation === worktreeLinkGeneration;
         const next = worktreeLinkQueue.then(async () => {
-            if (!isCurrent()) { return; }
-            if (await openWorktreeInSourceControl(root, isCurrent) && sourceLink && isCurrent()) {
+            if (!isCurrent()) {
+                debugLog("worktree-link", `Skipped superseded #${generation}.`);
+                return;
+            }
+            const revealed = await openWorktreeInSourceControl(root, isCurrent);
+            debugLog("worktree-link", `Finished #${generation}: revealed=${revealed}, current=${isCurrent()}, elapsed=${Date.now() - receivedAt}ms.`);
+            if (revealed && sourceLink && isCurrent()) {
                 // Read after reveal so disabling the setting during a queued open wins.
                 // Application-scoped settings cannot be enabled by the opened repository.
                 const config = vscode.workspace.getConfiguration("better-git-vscode");
