@@ -136,6 +136,12 @@ async function check(repo, name, file = 'a.txt') {
             rows = await evaluate(rowsExpression);
             collectHeaders();
         }
+        for (let i = 0; i < 16 && headers.size < roots.length; i++) {
+            await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: -direction * 1000 });
+            await pause(100);
+            rows = await evaluate(rowsExpression);
+            collectHeaders();
+        }
     }
     await capture(name);
     assert.equal(selectedRows.find(r => r.aria === 'Staged Changes')?.expanded, 'false', `${name}: Staged Changes remained expanded`);
