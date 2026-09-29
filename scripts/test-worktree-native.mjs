@@ -33,7 +33,9 @@ async function until(read, accept, description, timeout = 15_000) {
     }
     throw new Error(`${description}: ${JSON.stringify(last)}`);
 }
-const roots = Array.from({ length: 9 }, (_, i) => path.join(root, `repo-${i}`));
+const repositoryCount = Number(process.env.BGV_NATIVE_REPOSITORY_COUNT ?? 9);
+assert.ok(Number.isInteger(repositoryCount) && repositoryCount >= 9 && repositoryCount <= 32);
+const roots = Array.from({ length: repositoryCount }, (_, i) => path.join(root, `repo-${i}`));
 fs.mkdirSync(roots[0]);
 git(roots[0], 'init', '-b', 'main');
 for (const [key, value] of [['user.name', 'Test'], ['user.email', 'test@local.invalid'], ['commit.gpgsign', 'false']]) {
@@ -119,7 +121,7 @@ async function check(repo, name, file = 'a.txt') {
         await capture(`${name}-selected`);
         const point = await evaluate(`(()=>{const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');const b=tree.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+Math.min(100,b.height/2)};})()`);
         // Scroll in bounded steps and inspect each resulting viewport.
-        for (let i = 0; i < 8; i++) {
+        for (let i = 0; i < 16; i++) {
             await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: -1000 });
             await pause(100);
             rows = await evaluate(rowsExpression);
@@ -129,7 +131,7 @@ async function check(repo, name, file = 'a.txt') {
     await capture(name);
     assert.equal(rows.find(r => r.aria === 'Staged Changes')?.expanded, 'false', `${name}: Staged Changes remained expanded`);
     const repositories = rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria));
-    assert.equal(repositories.length, 9, `${name}: missing repository headers`);
+    assert.equal(repositories.length, roots.length, `${name}: missing repository headers`);
     assert.deepEqual(repositories.filter(r => r.expanded === 'true').map(r => r.aria), [`repo-${repo} Git`], `${name}: expanded repositories`);
     assert.equal(rows.find(r => r.aria === 'Changes')?.expanded, 'true', `${name}: Changes must stay expanded`);
     assert.ok(rows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ',')), `${name}: wrong selected file`);
@@ -190,7 +192,7 @@ try {
     for (const type of ['mousePressed', 'mouseReleased']) { await send('Input.dispatchMouseEvent', { type, ...graph, button: 'left', clickCount: 1 }); }
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.aria === 'base, Test' && r.selected === 'true'), 'Graph has native selection');
     await capture('graph-focused');
-    await request('open', { repo: 8 }); await check(8, 'new-worktree-first-open');
+    await request('open', { repo: roots.length - 1 }); await check(roots.length - 1, 'new-worktree-first-open');
     await request('open', { repo: 0 }); await check(0, 'first-open');
     await request('open', { repo: 0 }); await check(0, 'repeat-open');
     await request('open', { repo: 1 }); await check(1, 'switch-worktree');
@@ -309,6 +311,10 @@ try {
             await opening;
             await check(repo, `background-link-${repo}-${delay}`);
         }
+        await request('command', { command: 'workbench.scm.action.expandAllRepositories' });
+        await request('uri-burst', { uris: [2, 3, 2, 3, 2].map(repo =>
+            `vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}&returnTo=codex`) });
+        await check(2, 'rapid-links-last-target');
         console.log('BETTER_GIT_BACKGROUND_LINK_VERIFIED');
     } else if (testHeldClick) {
         await request('command', { command: 'better-git-vscode.begin-mouse-navigation-hold', args: [{ source: 'corsair', direction: 'next' }] });
