@@ -383,17 +383,9 @@
           "default": {},
           "scope": "application",
           "properties": {
-            "uuid": {
-              "type": "string"
-            },
-            "width": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "height": {
-              "type": "integer",
-              "minimum": 1
-            }
+            "uuid": { "type": "string" },
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
           },
           "description": "macOS only. Set a display UUID and its width and height to use Inline diff view while that display is connected, and Automatic diff view when it is disconnected. An empty value turns this off. This changes VS Code's diff view setting across all windows."
         },
