@@ -25,6 +25,7 @@ import { KeyboardStageRepeatGuard, parseKeyboardStageArgs } from "./keyboardStag
 import { MacKeyReleaseMonitor } from "./macKeyReleaseMonitor";
 import { registerAgentFlowSelectionBridge } from "./agentFlowSelectionBridge";
 import { registerDiffViewDisplay } from "./diffViewDisplay";
+import { registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedLfsImage";
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -771,6 +772,7 @@ const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefine
 };
 
 export function activate(context: vscode.ExtensionContext): BetterGitExtensionApi {
+    registerStagedLfsImageProvider(context);
     registerAgentFlowSelectionBridge(context);
     registerDiffViewDisplay(context, (message) => debugLog("diff-display", message));
     const commitMessageGenerator = new CommitMessageGenerator(context.globalState);
@@ -2671,7 +2673,7 @@ const getActiveChange = async (): Promise<ActiveChange | null> => {
     // vscode/extensions/git/src/repository.ts), so the scheme tells us the side unambiguously.
     const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
     if (input instanceof vscode.TabInputTextDiff || input instanceof vscode.TabInputNotebookDiff) {
-        return { path: input.modified.path, staged: input.modified.scheme === "git" };
+        return { path: input.modified.path, staged: input.modified.scheme === "git" || input.modified.scheme === "better-git-staged-image" };
     }
     // 3-way merge editor (conflict) — recognised via the shared isMergeEditorInput predicate. `result` is the
     // working-tree file. Treat as the unstaged side for matching (a conflict is never a "staged" view here).
@@ -2887,6 +2889,17 @@ const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promis
         // so it's the correct HEAD side for every case.
         left = toGitUri(entry.originalUri ?? entry.uri, "HEAD");
         right = toGitUri(entry.uri, ""); // index content at the (new) path
+    }
+    // A staged LFS image is a pointer in Git. VS Code intentionally refuses to render that pointer in its
+    // media preview, even when the exact image is already present in local LFS storage. Swap only locally
+    // resolvable image sides for a read-only provider of the indexed bytes; leave all other diff shapes alone.
+    const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+    const repositoryRoot: string | undefined = git?.getRepository(entry.uri)?.rootUri?.fsPath;
+    if (repositoryRoot) {
+        [left, right] = await Promise.all([
+            resolveStagedLfsImage(left, repositoryRoot),
+            resolveStagedLfsImage(right, repositoryRoot),
+        ]);
     }
     const title = `${entry.uri.path.split("/").pop()} (Index)`;
     await vscode.commands.executeCommand("vscode.diff", left, right, title, { preview: true, preserveFocus });
