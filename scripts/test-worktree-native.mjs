@@ -116,6 +116,8 @@ async function check(repo, name, file = 'a.txt') {
     await pause(350); // Observe late resource publication after the command has returned.
     let rows = await evaluate(rowsExpression);
     const selectedRows = rows;
+    const scrollableExpression = `document.querySelector('[role="tree"][aria-label="Source Control Management"]')?.closest('.monaco-scrollable-element')`;
+    const originalScrollTop = await evaluate(`${scrollableExpression}?.scrollTop ?? 0`);
     const headers = new Map();
     const collectHeaders = () => {
         for (const row of rows.filter(r => r.level === '1' && /^repo-\d+ Git$/.test(r.aria))) {
@@ -144,6 +146,8 @@ async function check(repo, name, file = 'a.txt') {
         }
     }
     await capture(name);
+    await evaluate(`(()=>{const scroller=${scrollableExpression};if(scroller)scroller.scrollTop=${originalScrollTop};})()`);
+    await pause(100);
     assert.equal(selectedRows.find(r => r.aria === 'Staged Changes')?.expanded, 'false', `${name}: Staged Changes remained expanded`);
     assert.equal(headers.size, roots.length, `${name}: missing repository headers`);
     assert.deepEqual([...headers].filter(([, expanded]) => expanded === 'true').map(([aria]) => aria), [`repo-${repo} Git`], `${name}: expanded repositories`);
