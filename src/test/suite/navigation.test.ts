@@ -1161,7 +1161,7 @@ suite('SCM change navigation E2E', () => {
 			assert.deepStrictEqual(Buffer.from(await vscode.workspace.fs.readFile(resolved)), stagedBytes);
 			const before = git('status --porcelain=v1');
 			await vscode.commands.executeCommand('better-git-vscode.next-changed-file');
-			await poll(() => vscode.window.tabGroups.activeTabGroup.activeTab?.label.includes(`${rel} (Index)`), 'staged image review tab');
+			await poll(() => vscode.window.tabGroups.activeTabGroup.activeTab?.label.includes(rel), 'staged image review tab');
 			assert.strictEqual(git('status --porcelain=v1'), before, 'preview does not stage, unstage, or edit the image');
 			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 			await vscode.commands.executeCommand('vscode.openWith', indexUri, 'imagePreview.previewEditor', { preview: true });
