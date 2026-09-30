@@ -1,10 +1,10 @@
 # Learnings
 
-## 2026-09-29 — Chrome can select a different tab after a Worktree redirect
+## 2026-09-30 — Leave Chrome tab selection to Chrome during Worktree redirects
 
 The existing personal Chrome bridge recorded a real Worktree-link failure: `vscode.dev/redirect` opened an active temporary tab with the original Chrome tab as its opener, but Chrome selected a different surviving tab when it closed the temporary tab. The original tab returned only after a later Chrome activation. Another observed external-protocol handoff kept its launcher open for about 17.5 seconds, so extending Better Git's Source Control wait cannot determine or repair Chrome's post-closure selection. Better Git 1.2.108 link generation and VS Code handling were unchanged.
 
-The fix belongs in the already installed VoiceInk YouTube Bridge Chrome extension, which receives tab-created, tab-removed and tab-activated events. It records the exact opener for a recognized Worktree link and restores that tab after Chrome selects a different one, only while the same-window handoff is still current. It does not focus Chrome or alter VS Code/Codex focus order. Preserve the ordinary Microsoft HTTPS redirect; do not add an arbitrary delay or reintroduce the custom HTML close route. The bridge's focused event tests passed and its updated service worker reported `restoresOpener=true` after reload. A physical Worktree click after that reload remains separate acceptance evidence.
+An experimental Chrome bridge listener restored the opener tab after the redirect. Ethan then reported that a Worktree click appeared to duplicate the current Chrome tab and asked to remove the extra code. The listener, its diagnostics and its tab-history correction were removed. The listener only activated an existing tab, so the duplicate's cause was not proven. Keep the ordinary Microsoft HTTPS redirect and Better Git's VS Code Worktree handler; Better Git 1.2.108 code and Marketplace installation were not changed for this Chrome-tab investigation.
 
 ## 2026-09-29 — Reset image zoom and pan when review switches
 
