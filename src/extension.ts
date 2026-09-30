@@ -18,6 +18,7 @@ import {
     createMouseStageSelection,
     MouseStageSelection,
     moveMouseStageSelection,
+    planMouseStageBoundary,
     selectedMouseStageItems,
 } from "./mouseStageSelection";
 import { MouseHoldChordState, registerMouseShortRelease, resolveAdjacentMouseChord } from "./mouseHoldChord";
@@ -323,7 +324,8 @@ const captureActiveStageUndoView = (): StageUndoView | undefined => {
 };
 
 const stageBatchThroughExtension = async (
-    repo: any, uris: readonly vscode.Uri[], priorView?: StageUndoView
+    repo: any, uris: readonly vscode.Uri[], priorView?: StageUndoView,
+    preferPriorView = false
 ): Promise<void> => {
     if (uris.length === 0) { return; }
     const selectedUris = new Set(uris.map(uri => uri.toString()));
@@ -331,7 +333,8 @@ const stageBatchThroughExtension = async (
     // A held batch may be previewing its latest endpoint at release. Prefer
     // that live view; the saved mouse origin covers button-down navigation
     // that already moved to an unrelated file before the stage begins.
-    const view = [activeView, priorView].find(candidate => candidate && selectedUris.has(candidate.fileUri));
+    const view = (preferPriorView ? [priorView, activeView] : [activeView, priorView])
+        .find(candidate => candidate && selectedUris.has(candidate.fileUri));
     const repoRoot = String(repo.rootUri?.fsPath ?? "");
     let receiptCaptureError: unknown;
     if (repoRoot) {
@@ -1436,14 +1439,81 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
             return;
         }
-        // The Stage button modifies only what the wheel does. It must not move
-        // the batch cursor or replace the source-owned selection that release
-        // will stage as one transaction.
+        // A second held button reviews changes within a file. Crossing its last
+        // change commits the marked range plus that file immediately, then arms
+        // the next unstaged file for the still-held release. Keep this in the
+        // navigation queue so fast ratchets cannot stage the same file twice.
+        const preWheelView = captureActiveStageUndoView();
+        const stageAtFileBoundary = async (boundaryCheck: NavigationCheckpoint): Promise<void> => {
+            // A newly opened text diff can receive a wheel detent before VS Code
+            // has attached its editor. Its built-in next/previous command is then
+            // a no-op, which is not evidence that the file was fully reviewed.
+            const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+            if (activeTab?.input instanceof vscode.TabInputTextDiff && !visibleEditorForActiveTab()) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary deferred, diff editor is not ready.`);
+                return;
+            }
+            const currentUri = await getActiveFileUri();
+            boundaryCheck();
+            const currentIndex = selection.items.findIndex(change => change.uri.toString() === currentUri?.toString());
+            const plan = planMouseStageBoundary(selection, currentIndex, direction);
+            if (!plan || !request.active || stageHoldSelections.get(source) !== selection) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, current file is outside the held worktree.`);
+                return;
+            }
+            const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+            const repo = git?.getRepository(selection.items[currentIndex].uri);
+            const repoRoot = repo?.rootUri?.toString();
+            if (!repoRoot || plan.staged.some(change => git.getRepository(change.uri)?.rootUri?.toString() !== repoRoot)) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, repository changed.`);
+                return;
+            }
+            const live = new Set(distinctUnstagedChanges(await getFileChanges(selection.items[currentIndex].uri))
+                .map(change => change.uri.toString()));
+            if (plan.staged.some(change => !live.has(change.uri.toString()))) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, a marked file is no longer unstaged.`);
+                return;
+            }
+            let staged = false;
+            await runStageCommand(async () => {
+                await stageBatchThroughExtension(repo, plan.staged.map(change => change.uri), preWheelView, true);
+                staged = true;
+            });
+            if (!staged) { return; }
+
+            // Git has already changed: retire those marked files before any
+            // renderer navigation can be superseded by a click or another hold.
+            const before = selectionUris(selection);
+            const targetIndex = plan.remaining.findIndex(change => change.uri.toString() === plan.target?.uri.toString());
+            if (plan.target && targetIndex >= 0 && request.active) {
+                const nextSelection = { ...createMouseStageSelection(plan.remaining, targetIndex)!, request };
+                stageHoldSelections.set(source, nextSelection);
+                origin.change = plan.target;
+                reviewDecoEmitter.fire([...before, ...selectionUris(nextSelection)]);
+                ownedMouseStagePreview = { request, uri: plan.target.uri.toString() };
+                await openNavigationTarget(plan.target, boundaryCheck);
+                if (direction === "previous") { await landChangeForBackwardReview(plan.target, boundaryCheck); }
+                origin.view = captureMouseReviewView();
+                mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; now previewing ${path.basename(plan.target.uri.fsPath)}.`);
+            } else {
+                stageHoldSelections.delete(source);
+                reviewDecoEmitter.fire(before);
+                request.active = false;
+                mouseNavigationOrigins.delete(source);
+                if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
+                if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
+                mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; no unstaged files remain in this worktree.`);
+            }
+        };
         ownedMouseStagePreview = undefined;
-        await (direction === "next" ? goToNextDiffOnce(check) : goToPreviousDiffOnce(check));
+        await (direction === "next"
+            ? goToNextDiffOnce(check, stageAtFileBoundary)
+            : goToPreviousDiffOnce(check, stageAtFileBoundary));
         requestCurrentHunkOverviewMarkerRefresh();
-        const count = selectionUris(selection).length;
-        mouseDebug(`${mouseSourceLabel(source)} stage preview navigated ${direction}; ${count} selected ${count === 1 ? "file remains" : "files remain"} in the batch.`);
+        if (stageHoldSelections.get(source) === selection) {
+            const count = selectionUris(selection).length;
+            mouseDebug(`${mouseSourceLabel(source)} stage preview navigated ${direction} within the file; ${count} marked ${count === 1 ? "file remains" : "files remain"}.`);
+        }
     });
     context.subscriptions.push(new vscode.Disposable(() => {
         if (clearStageHoldFeedbackRequest === clearStageHoldFeedback) {
@@ -4620,7 +4690,10 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
     }), !!heldSelection?.length);
 };
 
-const goToNextDiffOnce = async (check: NavigationCheckpoint) => {
+const goToNextDiffOnce = async (
+    check: NavigationCheckpoint,
+    onFileBoundary: (check: NavigationCheckpoint) => Promise<void> = openNextFile
+) => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath — avoids the clipboard
     // save/blank/restore hack in the hot path when focus is in the SCM panel. activeEditor is still kept for
@@ -4639,7 +4712,7 @@ const goToNextDiffOnce = async (check: NavigationCheckpoint) => {
         if (stepPlainMergeConflict(mergeConflictEditor, "down")) {
             return;
         }
-        await openNextFile(check);
+        await onFileBoundary(check);
         return;
     }
 
@@ -4655,7 +4728,7 @@ const goToNextDiffOnce = async (check: NavigationCheckpoint) => {
         if (await stepThroughNewFile(newFileEditor, "down", check)) {
             return;
         }
-        await openNextFile(check);
+        await onFileBoundary(check);
         return;
     }
 
@@ -4704,7 +4777,7 @@ const goToNextDiffOnce = async (check: NavigationCheckpoint) => {
         // "Jump to next file: ...?" modal would defeat that. (The old promptBeforeNextFile setting +
         // its modal confirmation path were removed entirely — see CHANGELOG v1.0.2.)
         debugLog("nav", `next: no forward change in file (before=L${(lineBefore ?? -1) + 1} after=L${(lineAfter ?? -1) + 1}) -> openNextFile()`);
-        await openNextFile(check);
+        await onFileBoundary(check);
         return;
     }
 
@@ -4716,7 +4789,10 @@ const goToNextDiffOnce = async (check: NavigationCheckpoint) => {
     }
 };
 
-const goToPreviousDiffOnce = async (check: NavigationCheckpoint) => {
+const goToPreviousDiffOnce = async (
+    check: NavigationCheckpoint,
+    onFileBoundary: (check: NavigationCheckpoint) => Promise<void> = openPreviousFile
+) => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath (see goToNextDiff).
     const activePath = await activeNavFilePath();
@@ -4733,7 +4809,7 @@ const goToPreviousDiffOnce = async (check: NavigationCheckpoint) => {
         if (stepPlainMergeConflict(mergeConflictEditor, "up")) {
             return;
         }
-        await openPreviousFile(check);
+        await onFileBoundary(check);
         return;
     }
 
@@ -4745,7 +4821,7 @@ const goToPreviousDiffOnce = async (check: NavigationCheckpoint) => {
         if (await stepThroughNewFile(newFileEditor, "up", check)) {
             return;
         }
-        await openPreviousFile(check);
+        await onFileBoundary(check);
         return;
     }
 
@@ -4786,7 +4862,7 @@ const goToPreviousDiffOnce = async (check: NavigationCheckpoint) => {
         }
         // Out of changes in the current file -> jump straight to the previous changed file, NO prompt.
         // Same rationale as goToNextDiff: the confirmation modal was removed entirely (see CHANGELOG v1.0.2).
-        await openPreviousFile(check);
+        await onFileBoundary(check);
         return;
     }
 

@@ -219,6 +219,7 @@ process.stdout.write(JSON.stringify({
 		// to reuse an already-installed Code binary, avoiding a 280MB download and making it practical to run
 		// the real E2E suite before every release (v1.2.15/v1.2.17 were shipped without it on the MBP).
 		const vscodeExecutablePath = process.env.BGV_VSCODE_EXECUTABLE_PATH;
+		process.env.BGV_TEST_USER_DATA_PATH = testUserDataPath;
 		await runTests({
 			...(vscodeExecutablePath ? { vscodeExecutablePath } : {}),
 			extensionDevelopmentPath,
@@ -247,6 +248,7 @@ process.stdout.write(JSON.stringify({
 		delete process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
 		delete process.env.BGV_FAKE_CLAUDE_PATH;
 		delete process.env.BGV_FAKE_CLAUDE_CAPTURE_PATH;
+		delete process.env.BGV_TEST_USER_DATA_PATH;
 		if (fixturePath) {
 			for (const worktreePath of [
 				revealWorktreePath,

@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.109
+
+- While Stage and its adjacent preview button are held, each wheel step past the end of a file stages the selected files immediately and continues reviewing the next unstaged file. Wheel steps within a file still review its changes.
+- Keep each boundary stage separately undoable, preserve the reviewed file and cursor on Undo, and stop at the final file without entering another worktree or staging twice on release.
+
 ## 1.2.103
 
 - Select an explicit small Codex model starting with GPT-6 Luna, and discover newer supported models from the installed CLI.
