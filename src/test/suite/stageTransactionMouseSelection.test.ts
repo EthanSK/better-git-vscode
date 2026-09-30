@@ -2,6 +2,7 @@ import * as assert from "assert";
 import {
     createMouseStageSelection,
     moveMouseStageSelection,
+    planMouseStageBoundary,
     selectedMouseStageItems,
 } from "../../mouseStageSelection";
 
@@ -38,5 +39,35 @@ suite("Mouse stage selection", () => {
         assert.strictEqual(moveMouseStageSelection(last, 1).cursorIndex, items.length - 1);
         assert.strictEqual(createMouseStageSelection(items, -1), undefined);
         assert.strictEqual(createMouseStageSelection(items, items.length), undefined);
+    });
+
+    test("commits the marked range at a boundary and arms the next file", () => {
+        const marked = moveMouseStageSelection(createMouseStageSelection(items, 1)!, 1);
+        assert.deepStrictEqual(planMouseStageBoundary(marked, 2, "next"), {
+            staged: ["b", "c"], remaining: ["a", "d"], target: "d",
+        });
+    });
+
+    test("includes a reviewed file outside the marked range without staging unmarked gaps", () => {
+        const marked = createMouseStageSelection(items, 0)!;
+        assert.deepStrictEqual(planMouseStageBoundary(marked, 2, "next"), {
+            staged: ["a", "c"], remaining: ["b", "d"], target: "d",
+        });
+        assert.deepStrictEqual(planMouseStageBoundary(marked, 2, "previous"), {
+            staged: ["a", "c"], remaining: ["b", "d"], target: "d",
+        });
+    });
+
+    test("reverse boundary keeps review in the same change list and stops when exhausted", () => {
+        const marked = createMouseStageSelection(items, 1)!;
+        assert.deepStrictEqual(planMouseStageBoundary(marked, 1, "previous"), {
+            staged: ["b"], remaining: ["a", "c", "d"], target: "a",
+        });
+        const all = moveMouseStageSelection(createMouseStageSelection(items, 0)!, 1);
+        const allMarked = moveMouseStageSelection(moveMouseStageSelection(all, 1), 1);
+        assert.deepStrictEqual(planMouseStageBoundary(allMarked, 3, "next"), {
+            staged: items, remaining: [], target: undefined,
+        });
+        assert.strictEqual(planMouseStageBoundary(marked, -1, "next"), undefined);
     });
 });

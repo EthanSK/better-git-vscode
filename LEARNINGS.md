@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-09-30 — Stage at each held preview wheel file boundary
+
+With the Stage button and adjacent preview button held, the Agentic Mouse wheel sends Better Git's existing `navigate-mouse-stage-preview` command. Previously that command only navigated: crossing the final change in a file opened the next file, and the marked group was staged only on release. It now stages the marked group and reviewed file when a ratchet crosses that file boundary, then keeps the same hold stage-ready on the next unstaged file. A ratchet within a modified file still only moves between hunks. At the last unstaged file, the boundary stages it once and release cannot stage it again. Each boundary is its own exact Undo transaction; the existing three-entry Undo cap still applies.
+
+Git's `getRepository(uri)` can return distinct wrapper objects for files in the same repository. Comparing those objects made every boundary stage silently fail; compare their `rootUri` values instead. Save the pre-ratchet editor view for Undo because VS Code's native change command can wrap the caret before the boundary is detected. A text diff without an attached visible editor is not ready to establish a file boundary.
+
+Verification: 115 non-GUI tests, TypeScript, lint and production packaging passed. Three focused isolated Mini VS Code E2Es passed for repeated Corsair boundaries with three Undo receipts, reverse Razer hunk-to-file navigation, and last-file exhaustion without duplicate staging or another worktree. The Mini's macOS authentication UI remained frontmost and prevented the disposable VS Code window from gaining focus, so those diagnostic E2Es bypassed only the existing focus gate in the **disposable test copy**. The production source retains that gate; a normal focused-host run and Ethan's physical mouse acceptance remain pending. No MacBook Extension Development Host was run.
+
 ## 2026-09-30 — Leave Chrome tab selection to Chrome during Worktree redirects
 
 The existing personal Chrome bridge recorded a real Worktree-link failure: `vscode.dev/redirect` opened an active temporary tab with the original Chrome tab as its opener, but Chrome selected a different surviving tab when it closed the temporary tab. The original tab returned only after a later Chrome activation. Another observed external-protocol handoff kept its launcher open for about 17.5 seconds, so extending Better Git's Source Control wait cannot determine or repair Chrome's post-closure selection. Better Git 1.2.108 link generation and VS Code handling were unchanged.

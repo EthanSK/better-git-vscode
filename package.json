@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.108",
+  "version": "1.2.109",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -383,9 +383,17 @@
           "default": {},
           "scope": "application",
           "properties": {
-            "uuid": { "type": "string" },
-            "width": { "type": "integer", "minimum": 1 },
-            "height": { "type": "integer", "minimum": 1 }
+            "uuid": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1
+            }
           },
           "description": "macOS only. Set a display UUID and its width and height to use Inline diff view while that display is connected, and Automatic diff view when it is disconnected. An empty value turns this off. This changes VS Code's diff view setting across all windows."
         },
@@ -394,8 +402,16 @@
           "default": {},
           "scope": "application",
           "properties": {
-            "connected": { "type": "number", "minimum": -8, "maximum": 8 },
-            "disconnected": { "type": "number", "minimum": -8, "maximum": 8 }
+            "connected": {
+              "type": "number",
+              "minimum": -8,
+              "maximum": 8
+            },
+            "disconnected": {
+              "type": "number",
+              "minimum": -8,
+              "maximum": 8
+            }
           },
           "description": "macOS only. Set connected and disconnected VS Code zoom levels for the display in Inline Diff On Display. An empty value turns this off. Manual zoom stays until the display changes."
         },
