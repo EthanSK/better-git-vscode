@@ -1365,6 +1365,50 @@ suite('SCM change navigation E2E', () => {
 		assert.ok(editor.visibleRanges[0].start.line > 0, 'rapid next presses never advanced the viewport');
 	});
 
+	test('untracked new file: manual scrolling makes the next step resume from the viewport', async () => {
+		write('zz_new.txt', lines(240, 'new'));
+		await refreshUntil(() => isUntracked('zz_new.txt'), 'zz_new.txt to appear as untracked');
+		const editor = await openPlainAt('zz_new.txt', 0);
+		await nextChange();
+		await expectCursorAt('zz_new.txt', 5);
+
+		const far = new vscode.Position(100, 0);
+		editor.revealRange(new vscode.Range(far, far), vscode.TextEditorRevealType.AtTop);
+		await poll(() => editor.visibleRanges[0]?.start.line > 60 && !lineIsVisible(editor, 5),
+			'manual scroll to move beyond the old caret');
+		const forwardTop = editor.visibleRanges[0].start.line;
+		await nextChange();
+		await expectCursorAt('zz_new.txt', forwardTop + 4);
+
+		const back = new vscode.Position(35, 0);
+		editor.revealRange(new vscode.Range(back, back), vscode.TextEditorRevealType.AtTop);
+		await poll(() => editor.visibleRanges[0]?.start.line < 60 && !lineIsVisible(editor, forwardTop + 4),
+			'manual scroll to move above the new caret');
+		const backwardBottom = editor.visibleRanges[editor.visibleRanges.length - 1].end.line;
+		await previousChange();
+		await expectCursorAt('zz_new.txt', backwardBottom - 4);
+	});
+
+	test('untracked new file: a small manual scroll wins even while the old caret stays visible', async () => {
+		write('zz_new.txt', lines(240, 'new'));
+		await refreshUntil(() => isUntracked('zz_new.txt'), 'zz_new.txt to appear as untracked');
+		const editor = await openPlainAt('zz_new.txt', 0);
+		const visible = editor.visibleRanges[editor.visibleRanges.length - 1].end.line;
+		assert.ok(visible >= 18, 'fixture needs room to scroll without hiding the caret');
+		const oldCaret = Math.floor(visible / 2);
+		const oldPosition = new vscode.Position(oldCaret, 0);
+		editor.selection = new vscode.Selection(oldPosition, oldPosition);
+		const scrollTo = new vscode.Position(Math.floor(visible / 3), 0);
+		editor.revealRange(new vscode.Range(scrollTo, scrollTo), vscode.TextEditorRevealType.AtTop);
+		await poll(() => editor.visibleRanges[0]?.start.line > 0 && lineIsVisible(editor, oldCaret),
+			'viewport to move while its old caret stays visible');
+		const top = editor.visibleRanges[0].start.line;
+		assert.strictEqual(editor.selection.active.line, oldCaret, 'scrolling must not change selection by itself');
+		assert.notStrictEqual(top + 4, oldCaret + 5, 'fixture must distinguish viewport from caret anchoring');
+		await nextChange();
+		await expectCursorAt('zz_new.txt', top + 4);
+	});
+
 	test('untracked wrapped file: SCM-focused next/previous remain exact five-line steps', async () => {
 		const editorConfig = vscode.workspace.getConfiguration('editor');
 		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
@@ -1660,6 +1704,34 @@ suite('SCM change navigation E2E', () => {
 	// ────────────────────────────────────────────────────────────────────────────────────────
 	// MODIFIED FILE — THE v1.2.0 REGRESSION GUARD
 	// ────────────────────────────────────────────────────────────────────────────────────────
+
+	test('MODIFIED file: manual scrolling re-anchors both hunk directions without changing files', async () => {
+		const rel = 'committed/tall_e.txt';
+		const content = lines(260, 'tall_e').split('\n');
+		for (const line of [10, 100, 200]) {
+			content[line] = `tall_e manually scrolled edit ${line}`;
+		}
+		write(rel, content.join('\n'));
+		await refreshUntil(() => inWorkingTree(rel, 5), 'manual-scroll hunks to appear as modified');
+		const editor = await openWorkingDiffAt(rel, 0);
+		await nextChange();
+		await expectCursorAt(rel, 10);
+
+		const lower = new vscode.Position(90, 0);
+		editor.revealRange(new vscode.Range(lower, lower), vscode.TextEditorRevealType.AtTop);
+		await poll(() => editor.visibleRanges[0]?.start.line > 50 && !lineIsVisible(editor, 10),
+			'modified diff to scroll well below its old caret');
+		await nextChange();
+		await expectCursorAt(rel, 100);
+
+		const upper = new vscode.Position(0, 0);
+		editor.revealRange(new vscode.Range(upper, upper), vscode.TextEditorRevealType.AtTop);
+		await poll(() => editor.visibleRanges[0]?.start.line < 5 && !lineIsVisible(editor, 100),
+			'modified diff to scroll well above its old caret');
+		await previousChange();
+		await expectCursorAt(rel, 10);
+		assert.strictEqual(activeTabPath(), wsUri(rel).path);
+	});
 
 	test('MODIFIED file: next/previous do HUNK navigation, never the 5-line step', async () => {
 		// Two well-separated edits -> hunks starting at 0-based lines 4 and 24. The first spans three lines so
@@ -1991,6 +2063,10 @@ suite('SCM change navigation E2E', () => {
 		await sleep(500);
 		const modifiedSide = visibleEditorFor(wsUri('committed/tall_e.txt'))!;
 		modifiedSide.selection = new vscode.Selection(new vscode.Position(0, 0), new vscode.Position(0, 0));
+		// Navigation now starts from the visible viewport. Explicitly put this regression at line 1;
+		// setting only the caret no longer resets a diff that VS Code opened at its first hunk.
+		modifiedSide.revealRange(new vscode.Range(0, 0, 0, 0), vscode.TextEditorRevealType.AtTop);
+		await poll(() => modifiedSide.visibleRanges[0]?.start.line === 0, 'tall-hunk fixture viewport at line 1');
 
 		// First NEXT lands/pins at the exact tall-hunk start. Sticky context may intentionally keep several source
 		// lines above it, so the invariant is a visible exact caret—not caret===visibleRanges.top.

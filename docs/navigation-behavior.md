@@ -4,7 +4,7 @@ Better Git VS Code treats change review as one continuous, reversible sequence. 
 
 ## The navigation contract
 
-The current caret is the review position. Every press starts from that position; the viewport is used only to present it. Better Git VS Code does not keep a separate forward/backward state machine that can drift away from what the user is reading.
+The visible viewport starts review when an editor first opens or after the user scrolls it independently. Next begins just above the visible top; Previous begins just below the visible bottom, so the first on-screen change remains reachable even if the caret is elsewhere. Consecutive presses then use the exact caret reached by the previous review step until the viewport moves independently again. Better Git VS Code does not keep a separate forward/backward state machine that can drift away from what the user is reading.
 
 An unresolved file opened from Source Control as a plain editor follows that same sequence. Better Git VS Code parses complete standard conflict-marker groups and treats each `<<<<<<<` / `=======` / `>>>>>>>` group as one change. Next selects the following block; Previous selects the preceding block. The blocks do not wrap inside the file: exhausting an edge rolls into the adjacent changed file, with forward navigation landing on its first block and backward navigation landing on its last. Git's live `mergeChanges` state and the active tab's exact visible editor form the gate, so marker-like text in an ordinary file and a stale focused editor cannot enter this mode.
 
@@ -22,7 +22,7 @@ Git's unified diff and VS Code's editor diff can divide one large replacement di
 
 When the next or previous added/replaced run is already fully visible, Better Git selects its start without scrolling. VS Code's native command always centres its range, which can scroll backwards after a tall-hunk page step and then forwards on the following press. The visible-run hand-off avoids that round trip before it occurs. Deleted-only stops in between remain native, trim-whitespace-only replacements are excluded when the editor hides them, and unsaved documents defer to native navigation because Git's on-disk geometry is stale. Turning off tall-hunk staging also disables this hand-off.
 
-Reversing direction always continues from the current caret. Previous does not reset to the bottom of the file, and Next does not restart from the top. When Previous enters a different file, Better Git VS Code deliberately lands at that file's last reviewable position so upward review begins in the right place.
+Reversing direction without a separate scroll continues from the current caret. Previous does not reset to the bottom of the file, and Next does not restart from the top. When Previous enters a different file, Better Git VS Code deliberately lands at that file's last reviewable position so upward review begins in the right place.
 
 ## Late mouse staging
 
@@ -32,9 +32,9 @@ When navigation already crossed files, stage the captured URI through the normal
 
 ## Why the old behavior became jumpy
 
-Earlier implementations let viewport geometry and caret position compete as two sources of truth. Word wrap, sticky scroll, and `editor.cursorSurroundingLines` mean VS Code can legitimately keep a viewport top unchanged after a reveal request, or report a logical top that differs from the requested line. Treating that reported top as the next movement anchor caused repeated presses to drift, stop, overshoot and return, or roll into another file before the final lines had been read.
+Earlier implementations let viewport geometry and caret position compete on every press. Word wrap, sticky scroll, and `editor.cursorSurroundingLines` mean VS Code can legitimately keep a viewport top unchanged after a reveal request, or report a logical top that differs from the requested line. Treating that reported top as every next movement anchor caused repeated presses to drift, stop, overshoot and return, or roll into another file before the final lines had been read.
 
-The stable implementation uses editor-scoped `TextEditor.revealRange` calls, keeps the requested caret target authoritative, and waits for the exact editor's rendering to settle. Input is serialized so rapid key repeats cannot race against a stale viewport or a file transition. Wrapped final lines are checked through their last visual segment before rollover; unwrapped long lines remain at column zero instead of being pulled sideways.
+The stable implementation uses editor-scoped `TextEditor.revealRange` calls, keeps the requested caret target authoritative during consecutive steps, and waits for the exact editor's rendering to settle. Only an independent visible-range change reanchors the next press to the viewport; navigation's own reveal events do not. Input is serialized so rapid key repeats cannot race against a stale viewport or a file transition. Wrapped final lines are checked through their last visual segment before rollover; unwrapped long lines remain at column zero instead of being pulled sideways.
 
 ## Regression coverage
 
@@ -44,6 +44,7 @@ The isolated real VS Code Extension Development Host suite covers navigation sce
 - a Source Control-opened plain merge-conflict file, including block traversal with SCM focus and cross-file landing in both directions;
 - partial final steps at the top and bottom before cross-file rollover;
 - direction reversal from the current caret;
+- viewport-first review and resumption after scrolling, including a small scroll that leaves the old caret visible;
 - rapid queued input while Source Control retains focus;
 - a viewport-fit hunk stranded below a preceding hunk;
 - the exact copied `profile-pic.service.ts` replacement where native Next jumps from line 53 to line 149, proving default +10, custom +7, mirrored -7, and same-file retention;

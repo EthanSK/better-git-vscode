@@ -1962,6 +1962,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 clearCurrentHunkOverviewMarker();
             }
         }),
+        vscode.window.onDidChangeTextEditorVisibleRanges(event => {
+            observeReviewViewport(event.textEditor);
+        }),
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
                 invalidateChangeNavigation(true); // Git hunk coordinates no longer describe the displayed revision.
@@ -1969,6 +1972,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
         }),
         vscode.window.onDidChangeActiveTextEditor(() => {
+            rememberReviewViewport(visibleEditorForActiveTab());
             // Moving the batch-selection endpoint intentionally opens a different preview editor. Keep the
             // orange range alive for both preview and manual transitions until the gesture ends.
             if (![...stageHoldSelections.values()].some(selection => selection.request?.active)) {
@@ -1990,6 +1994,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // guaranteed. Seed the provider from the current active tab once instead of waiting for user movement.
     void refreshReviewDecoration();
     requestCurrentHunkOverviewMarkerRefresh();
+    rememberReviewViewport(visibleEditorForActiveTab());
 
     return {
         whenScmTreeStateSettled,
@@ -4391,6 +4396,59 @@ let navigationTab: vscode.Tab | undefined;
 let navigationGroup: vscode.TabGroup | undefined;
 let navigationOwnTabChange = false;
 let ownedMouseStagePreview: { request: MouseHoldRequest; uri: string } | undefined;
+let queuedNavigationOperations = 0;
+const navigatedReviewEditors = new WeakSet<vscode.TextEditor>();
+const reviewViewportState = new WeakMap<vscode.TextEditor, {
+    top: number;
+    bottom: number;
+    manuallyScrolled: boolean;
+}>();
+
+const rememberReviewViewport = (editor: vscode.TextEditor | undefined): void => {
+    if (!editor || reviewViewportState.has(editor)) { return; }
+    const viewport = readViewport(editor);
+    if (viewport) {
+        reviewViewportState.set(editor, { top: viewport.top, bottom: viewport.bottom, manuallyScrolled: false });
+    }
+};
+
+// VS Code does not move selection when the user scrolls. Keep only the viewport's two line numbers; Git
+// navigation can then re-anchor its next press without polling, reading a diff, or adding input latency.
+const observeReviewViewport = (editor: vscode.TextEditor): void => {
+    if (editor !== visibleEditorForActiveTab()) { return; }
+    const viewport = readViewport(editor);
+    if (!viewport) { return; }
+    const prior = reviewViewportState.get(editor);
+    const changed = prior && (prior.top !== viewport.top || prior.bottom !== viewport.bottom);
+    reviewViewportState.set(editor, {
+        top: viewport.top,
+        bottom: viewport.bottom,
+        manuallyScrolled: !!prior?.manuallyScrolled || (!!changed && queuedNavigationOperations === 0),
+    });
+};
+
+const anchorNavigationAtViewport = (editor: vscode.TextEditor | undefined, direction: "down" | "up"): void => {
+    if (!editor) { return; }
+    const viewport = readViewport(editor);
+    if (!viewport) { return; }
+    const prior = reviewViewportState.get(editor);
+    // On the first press, the already-rendered viewport is the only trustworthy starting point: opening a
+    // diff can scroll to its first change while leaving the editor selection at an unrelated old line.
+    // Later presses keep exact caret-owned progression until a separate viewport change resumes review.
+    const firstPressInEditor = !navigatedReviewEditors.has(editor);
+    navigatedReviewEditors.add(editor);
+    if (!firstPressInEditor && !prior?.manuallyScrolled) { return; }
+    // Start just outside the visible interval so native next/previous-change includes the first change
+    // on screen. For a tall hunk or a new file, this is also the logical line from which to resume steps.
+    const last = Math.max(0, editor.document.lineCount - 1);
+    const line = direction === "down"
+        ? Math.max(0, viewport.top - 1)
+        : Math.min(last, viewport.bottom + 1);
+    const position = new vscode.Position(line, 0);
+    editor.selection = new vscode.Selection(position, position);
+    reviewViewportState.set(editor, { top: viewport.top, bottom: viewport.bottom, manuallyScrolled: false });
+    debugLog("nav", `${direction}: resume from viewport L${viewport.top + 1}-L${viewport.bottom + 1}, anchor L${line + 1}`);
+};
 
 const invalidateChangeNavigation = (preserveHeldSelection = false): void => {
     changeNavigationGeneration++;
@@ -4464,6 +4522,7 @@ const serializeChangeNavigation = (
     commitCapturedStage = false
 ): Promise<void> => {
     observeNavigationTab();
+    queuedNavigationOperations++;
     const generation = changeNavigationGeneration;
     const check = () => {
         observeNavigationTab();
@@ -4477,6 +4536,8 @@ const serializeChangeNavigation = (
             await operation(check);
         } catch (error) {
             if (!(error instanceof NavigationSuperseded)) { throw error; }
+        } finally {
+            queuedNavigationOperations--;
         }
     };
     const run = changeNavigationTail.then(execute, execute);
@@ -4705,6 +4766,8 @@ const goToNextDiffOnce = async (
         return;
     }
 
+    anchorNavigationAtViewport(visibleEditorForActiveTab() ?? activeEditor, "down");
+
     // PLAIN MERGE-CONFLICT MODE: the ordinary Source Control view is a single working-file editor, not a
     // compare editor. Step complete marker blocks directly; after the final block, continue to the next file.
     const mergeConflictEditor = plainMergeConflictEditor();
@@ -4801,6 +4864,8 @@ const goToPreviousDiffOnce = async (
         await openLastFile(check);
         return;
     }
+
+    anchorNavigationAtViewport(visibleEditorForActiveTab() ?? activeEditor, "up");
 
     // PLAIN MERGE-CONFLICT MODE, mirrored for upward review. A block is one change; exhausting the first block
     // enters the previous file at its final reviewable position.
