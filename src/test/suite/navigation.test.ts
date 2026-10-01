@@ -1389,6 +1389,26 @@ suite('SCM change navigation E2E', () => {
 		await expectCursorAt('zz_new.txt', backwardBottom - 4);
 	});
 
+	test('untracked new file: a small manual scroll wins even while the old caret stays visible', async () => {
+		write('zz_new.txt', lines(240, 'new'));
+		await refreshUntil(() => isUntracked('zz_new.txt'), 'zz_new.txt to appear as untracked');
+		const editor = await openPlainAt('zz_new.txt', 0);
+		const visible = editor.visibleRanges[editor.visibleRanges.length - 1].end.line;
+		assert.ok(visible >= 18, 'fixture needs room to scroll without hiding the caret');
+		const oldCaret = Math.floor(visible / 2);
+		const oldPosition = new vscode.Position(oldCaret, 0);
+		editor.selection = new vscode.Selection(oldPosition, oldPosition);
+		const scrollTo = new vscode.Position(Math.floor(visible / 3), 0);
+		editor.revealRange(new vscode.Range(scrollTo, scrollTo), vscode.TextEditorRevealType.AtTop);
+		await poll(() => editor.visibleRanges[0]?.start.line > 0 && lineIsVisible(editor, oldCaret),
+			'viewport to move while its old caret stays visible');
+		const top = editor.visibleRanges[0].start.line;
+		assert.strictEqual(editor.selection.active.line, oldCaret, 'scrolling must not change selection by itself');
+		assert.notStrictEqual(top + 4, oldCaret + 5, 'fixture must distinguish viewport from caret anchoring');
+		await nextChange();
+		await expectCursorAt('zz_new.txt', top + 4);
+	});
+
 	test('untracked wrapped file: SCM-focused next/previous remain exact five-line steps', async () => {
 		const editorConfig = vscode.workspace.getConfiguration('editor');
 		const previousWordWrap = editorConfig.inspect<string>('wordWrap')?.globalValue;
