@@ -2063,6 +2063,10 @@ suite('SCM change navigation E2E', () => {
 		await sleep(500);
 		const modifiedSide = visibleEditorFor(wsUri('committed/tall_e.txt'))!;
 		modifiedSide.selection = new vscode.Selection(new vscode.Position(0, 0), new vscode.Position(0, 0));
+		// Navigation now starts from the visible viewport. Explicitly put this regression at line 1;
+		// setting only the caret no longer resets a diff that VS Code opened at its first hunk.
+		modifiedSide.revealRange(new vscode.Range(0, 0, 0, 0), vscode.TextEditorRevealType.AtTop);
+		await poll(() => modifiedSide.visibleRanges[0]?.start.line === 0, 'tall-hunk fixture viewport at line 1');
 
 		// First NEXT lands/pins at the exact tall-hunk start. Sticky context may intentionally keep several source
 		// lines above it, so the invariant is a visible exact caret—not caret===visibleRanges.top.

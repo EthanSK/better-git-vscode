@@ -1955,15 +1955,6 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         vscode.window.onDidChangeTextEditorSelection(event => {
             if (event.textEditor === visibleEditorForActiveTab() &&
-                event.kind !== vscode.TextEditorSelectionChangeKind.Mouse &&
-                event.kind !== vscode.TextEditorSelectionChangeKind.Keyboard &&
-                queuedNavigationOperations === 0) {
-                // A new diff can reveal its first change while a caller subsequently places its initial
-                // selection. That setup is not Ethan manually scrolling away from an established caret.
-                const viewport = reviewViewportState.get(event.textEditor);
-                if (viewport) { viewport.manuallyScrolled = false; }
-            }
-            if (event.textEditor === visibleEditorForActiveTab() &&
                 (event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)) {
                 invalidateChangeNavigation(true);
                 // A manual cursor move is no longer a Better Git-selected hunk. Clear immediately instead of
@@ -4406,6 +4397,7 @@ let navigationGroup: vscode.TabGroup | undefined;
 let navigationOwnTabChange = false;
 let ownedMouseStagePreview: { request: MouseHoldRequest; uri: string } | undefined;
 let queuedNavigationOperations = 0;
+const navigatedReviewEditors = new WeakSet<vscode.TextEditor>();
 const reviewViewportState = new WeakMap<vscode.TextEditor, {
     top: number;
     bottom: number;
@@ -4440,7 +4432,12 @@ const anchorNavigationAtViewport = (editor: vscode.TextEditor | undefined, direc
     const viewport = readViewport(editor);
     if (!viewport) { return; }
     const prior = reviewViewportState.get(editor);
-    if (!prior?.manuallyScrolled) { return; }
+    // On the first press, the already-rendered viewport is the only trustworthy starting point: opening a
+    // diff can scroll to its first change while leaving the editor selection at an unrelated old line.
+    // Later presses keep exact caret-owned progression until a separate viewport change resumes review.
+    const firstPressInEditor = !navigatedReviewEditors.has(editor);
+    navigatedReviewEditors.add(editor);
+    if (!firstPressInEditor && !prior?.manuallyScrolled) { return; }
     // Start just outside the visible interval so native next/previous-change includes the first change
     // on screen. For a tall hunk or a new file, this is also the logical line from which to resume steps.
     const last = Math.max(0, editor.document.lineCount - 1);
