@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.110
+
+- Next and Previous change resume from the part of the file currently in view after scrolling, even when the cursor remains elsewhere or still appears on screen.
+- Keep exact consecutive navigation and staging behavior when the viewport has not moved independently.
+
 ## 1.2.109
 
 - While Stage and its adjacent preview button are held, each wheel step past the end of a file stages the selected files immediately and continues reviewing the next unstaged file. Wheel steps within a file still review its changes.

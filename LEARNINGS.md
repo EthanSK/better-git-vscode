@@ -1,5 +1,11 @@
 # Learnings
 
+## 2026-10-01 — Resume change review from the visible viewport
+
+VS Code scrolling leaves the editor selection behind, even when the caret remains on screen. Starting Next or Previous from that selection made Better Git jump relative to an old review position. The first press in an editor now anchors to its rendered viewport; subsequent presses keep the existing exact caret-owned progression until a separate visible-range change signals that review has scrolled. A weak map stores only the viewport's top and bottom lines and a scroll flag. Navigation operations suppress their own visible-range events, so rapid repeated presses retain their order and precise steps without polling, Git reads or an input delay.
+
+Verification: 115 non-GUI tests, TypeScript and lint passed during development. Six focused real VS Code E2Es passed in a disposable checkout on the Mac Mini's normal focused host: new-file scrolling in both directions, small scrolls while the old caret remains visible, modified hunks in both directions, rapid repeated presses, wrapped-file exact steps and tall-hunk progression. The old tall-hunk fixture needed to reset the viewport as well as the caret to test its intended first-hunk starting point. No MacBook Extension Development Host was run. Physical scroll acceptance on Ethan's working VS Code remains separate.
+
 ## 2026-09-30 — Stage at each held preview wheel file boundary
 
 With the Stage button and adjacent preview button held, the Agentic Mouse wheel sends Better Git's existing `navigate-mouse-stage-preview` command. Previously that command only navigated: crossing the final change in a file opened the next file, and the marked group was staged only on release. It now stages the marked group and reviewed file when a ratchet crosses that file boundary, then keeps the same hold stage-ready on the next unstaged file. A ratchet within a modified file still only moves between hunks. At the last unstaged file, the boundary stages it once and release cannot stage it again. Each boundary is its own exact Undo transaction; the existing three-entry Undo cap still applies.
