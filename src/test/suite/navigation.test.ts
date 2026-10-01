@@ -2757,7 +2757,8 @@ suite('SCM change navigation E2E', () => {
 			await Promise.all([...ratchets, release]);
 			assert.strictEqual(git('diff --cached --name-only'), 'burst_a.txt\nburst_b.txt\nburst_c.txt\nburst_d.txt',
 				'every ratchet accepted before release must stage at its boundary, then release stages the final file');
-			assert.strictEqual(activeTabPath(), wsUri('burst_d.txt').path);
+			assert.strictEqual(activeTabPath(), wsUri('burst_e.txt').path,
+				'release stages the final reviewed file and advances to the next unstaged file');
 			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next');
 			assert.strictEqual(git('diff --cached --name-only'), 'burst_a.txt\nburst_b.txt\nburst_c.txt\nburst_d.txt',
 				'a ratchet arriving after release must be inert');
@@ -2793,8 +2794,11 @@ suite('SCM change navigation E2E', () => {
 			assert.strictEqual(git('diff --cached --name-only'), '',
 				'within-file hunk navigation must not stage prematurely');
 			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'razer', 'previous');
+			assert.strictEqual(activeTabPath(), wsUri('committed/mod_a.txt').path,
+				'selecting the first hunk must still keep the review in the same file');
+			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'razer', 'previous');
 			assert.strictEqual(activeTabPath(), wsUri('committed/mod_d.txt').path,
-				'crossing the first hunk must open the next unstaged file in reverse review');
+				'crossing the first hunk after selecting it must open the next unstaged file in reverse review');
 			assert.strictEqual(git('diff --cached --name-only'), 'committed/mod_a.txt',
 				'crossing the file boundary must stage the completed file while both buttons are held');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('committed/mod_d.txt')), '💥💥');

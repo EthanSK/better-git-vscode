@@ -1488,94 +1488,94 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             return Promise.resolve();
         }
         return serializeChangeNavigation(async check => {
-        const origin = mouseNavigationOrigins.get(source);
-        const selection = activeStageSelection(source, request);
-        if (!vscode.window.state.focused) {
-            mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, VS Code is not focused.`);
-            return;
-        }
-        if ((!request.active && !request.releaseQueued) || request !== latestMouseHoldRequest
-            || origin?.holdRequest !== request || selection?.request !== request) {
-            mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
-            return;
-        }
-        // A second held button reviews changes within a file. Crossing its last
-        // change commits the marked range plus that file immediately, then arms
-        // the next unstaged file for the still-held release. Keep this in the
-        // navigation queue so fast ratchets cannot stage the same file twice.
-        const preWheelView = captureActiveStageUndoView();
-        const stageAtFileBoundary = async (boundaryCheck: NavigationCheckpoint): Promise<void> => {
-            // A newly opened text diff can receive a wheel detent before VS Code
-            // has attached its editor. Its built-in next/previous command is then
-            // a no-op, which is not evidence that the file was fully reviewed.
-            const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-            if (activeTab?.input instanceof vscode.TabInputTextDiff && !visibleEditorForActiveTab()) {
-                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary deferred, diff editor is not ready.`);
+            const origin = mouseNavigationOrigins.get(source);
+            const selection = activeStageSelection(source, request);
+            if (!vscode.window.state.focused) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, VS Code is not focused.`);
                 return;
             }
-            const currentUri = await getActiveFileUri();
-            boundaryCheck();
-            const currentIndex = selection.items.findIndex(change => change.uri.toString() === currentUri?.toString());
-            const plan = planMouseStageBoundary(selection, currentIndex, direction);
-            if (!plan || (!request.active && !request.releaseQueued) || activeStageSelection(source, request) !== selection) {
-                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, current file is outside the held worktree.`);
+            if ((!request.active && !request.releaseQueued) || request !== latestMouseHoldRequest
+                || origin?.holdRequest !== request || selection?.request !== request) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
                 return;
             }
-            const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
-            const repo = git?.getRepository(selection.items[currentIndex].uri);
-            const repoRoot = repo?.rootUri?.toString();
-            if (!repoRoot || plan.staged.some(change => git.getRepository(change.uri)?.rootUri?.toString() !== repoRoot)) {
-                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, repository changed.`);
-                return;
-            }
-            const live = new Set(distinctUnstagedChanges(await getFileChanges(selection.items[currentIndex].uri))
-                .map(change => change.uri.toString()));
-            if (plan.staged.some(change => !live.has(change.uri.toString()))) {
-                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, a marked file is no longer unstaged.`);
-                return;
-            }
-            let staged = false;
-            await runStageCommand(async () => {
-                await stageBatchThroughExtension(repo, plan.staged.map(change => change.uri), preWheelView, true);
-                staged = true;
-            });
-            if (!staged) { return; }
+            // A second held button reviews changes within a file. Crossing its last
+            // change commits the marked range plus that file immediately, then arms
+            // the next unstaged file for the still-held release. Keep this in the
+            // navigation queue so fast ratchets cannot stage the same file twice.
+            const preWheelView = captureActiveStageUndoView();
+            const stageAtFileBoundary = async (boundaryCheck: NavigationCheckpoint): Promise<void> => {
+                // A newly opened text diff can receive a wheel detent before VS Code
+                // has attached its editor. Its built-in next/previous command is then
+                // a no-op, which is not evidence that the file was fully reviewed.
+                const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+                if (activeTab?.input instanceof vscode.TabInputTextDiff && !visibleEditorForActiveTab()) {
+                    mouseDebug(`${mouseSourceLabel(source)} stage preview boundary deferred, diff editor is not ready.`);
+                    return;
+                }
+                const currentUri = await getActiveFileUri();
+                boundaryCheck();
+                const currentIndex = selection.items.findIndex(change => change.uri.toString() === currentUri?.toString());
+                const plan = planMouseStageBoundary(selection, currentIndex, direction);
+                if (!plan || (!request.active && !request.releaseQueued) || activeStageSelection(source, request) !== selection) {
+                    mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, current file is outside the held worktree.`);
+                    return;
+                }
+                const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+                const repo = git?.getRepository(selection.items[currentIndex].uri);
+                const repoRoot = repo?.rootUri?.toString();
+                if (!repoRoot || plan.staged.some(change => git.getRepository(change.uri)?.rootUri?.toString() !== repoRoot)) {
+                    mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, repository changed.`);
+                    return;
+                }
+                const live = new Set(distinctUnstagedChanges(await getFileChanges(selection.items[currentIndex].uri))
+                    .map(change => change.uri.toString()));
+                if (plan.staged.some(change => !live.has(change.uri.toString()))) {
+                    mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, a marked file is no longer unstaged.`);
+                    return;
+                }
+                let staged = false;
+                await runStageCommand(async () => {
+                    await stageBatchThroughExtension(repo, plan.staged.map(change => change.uri), preWheelView, true);
+                    staged = true;
+                });
+                if (!staged) { return; }
 
-            // Git has already changed: retire those marked files before any
-            // renderer navigation can be superseded by a click or another hold.
-            const before = selectionUris(selection);
-            const targetIndex = plan.remaining.findIndex(change => change.uri.toString() === plan.target?.uri.toString());
-            if (plan.target && targetIndex >= 0 && (request.active || request.releaseQueued)) {
-                const nextSelection = { ...createMouseStageSelection(plan.remaining, targetIndex)!, request };
-                setActiveStageSelection(source, request, nextSelection);
-                origin.change = plan.target;
-                if (!request.releaseQueued) { reviewDecoEmitter.fire([...before, ...selectionUris(nextSelection)]); }
-                ownedMouseStagePreview = { request, uri: plan.target.uri.toString() };
-                await openNavigationTarget(plan.target, boundaryCheck);
-                if (direction === "previous") { await landChangeForBackwardReview(plan.target, boundaryCheck); }
-                origin.view = captureMouseReviewView();
-                mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; now previewing ${path.basename(plan.target.uri.fsPath)}.`);
-            } else {
-                releasedStageSelections.delete(request);
-                if (stageHoldSelections.get(source) === selection) { stageHoldSelections.delete(source); }
-                reviewDecoEmitter.fire(before);
-                request.active = false;
-                request.boundaryExhausted = true;
-                mouseNavigationOrigins.delete(source);
-                if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
-                if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
-                mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; no unstaged files remain in this worktree.`);
+                // Git has already changed: retire those marked files before any
+                // renderer navigation can be superseded by a click or another hold.
+                const before = selectionUris(selection);
+                const targetIndex = plan.remaining.findIndex(change => change.uri.toString() === plan.target?.uri.toString());
+                if (plan.target && targetIndex >= 0 && (request.active || request.releaseQueued)) {
+                    const nextSelection = { ...createMouseStageSelection(plan.remaining, targetIndex)!, request };
+                    setActiveStageSelection(source, request, nextSelection);
+                    origin.change = plan.target;
+                    if (!request.releaseQueued) { reviewDecoEmitter.fire([...before, ...selectionUris(nextSelection)]); }
+                    ownedMouseStagePreview = { request, uri: plan.target.uri.toString() };
+                    await openNavigationTarget(plan.target, boundaryCheck);
+                    if (direction === "previous") { await landChangeForBackwardReview(plan.target, boundaryCheck); }
+                    origin.view = captureMouseReviewView();
+                    mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; now previewing ${path.basename(plan.target.uri.fsPath)}.`);
+                } else {
+                    releasedStageSelections.delete(request);
+                    if (stageHoldSelections.get(source) === selection) { stageHoldSelections.delete(source); }
+                    reviewDecoEmitter.fire(before);
+                    request.active = false;
+                    request.boundaryExhausted = true;
+                    mouseNavigationOrigins.delete(source);
+                    if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
+                    if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
+                    mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; no unstaged files remain in this worktree.`);
+                }
+            };
+            ownedMouseStagePreview = undefined;
+            await (direction === "next"
+                ? goToNextDiffOnce(check, stageAtFileBoundary)
+                : goToPreviousDiffOnce(check, stageAtFileBoundary));
+            requestCurrentHunkOverviewMarkerRefresh();
+            if (activeStageSelection(source, request) === selection) {
+                const count = selectionUris(selection).length;
+                mouseDebug(`${mouseSourceLabel(source)} stage preview navigated ${direction} within the file; ${count} marked ${count === 1 ? "file remains" : "files remain"}.`);
             }
-        };
-        ownedMouseStagePreview = undefined;
-        await (direction === "next"
-            ? goToNextDiffOnce(check, stageAtFileBoundary)
-            : goToPreviousDiffOnce(check, stageAtFileBoundary));
-        requestCurrentHunkOverviewMarkerRefresh();
-        if (activeStageSelection(source, request) === selection) {
-            const count = selectionUris(selection).length;
-            mouseDebug(`${mouseSourceLabel(source)} stage preview navigated ${direction} within the file; ${count} marked ${count === 1 ? "file remains" : "files remain"}.`);
-        }
         });
     };
     context.subscriptions.push(new vscode.Disposable(() => {
@@ -1728,7 +1728,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 && previewCurrentUri?.path.toLowerCase() === uri.path.toLowerCase()) {
                 return {
                     badge: "🟣",
-                    tooltip: "Stage preview is on. Release to stage the selected files.",
+                    tooltip: "Stage preview mode is on.",
                     color: new vscode.ThemeColor("charts.purple"),
                     propagate: false,
                 };
