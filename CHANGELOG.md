@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.111
+
+- Let Agentic Mouse toggle a purple current-file badge while a held Stage gesture is in preview mode. A second adjacent-button press turns the badge off without moving the review, and releasing Stage clears it.
+- Finish every wheel step received before Stage release before staging the final reviewed file. Boundary stages remain separately undoable, and wheel steps arriving after release do nothing.
+
 ## 1.2.110
 
 - Next and Previous change resume from the part of the file currently in view after scrolling, even when the cursor remains elsewhere or still appears on screen.

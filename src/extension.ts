@@ -126,7 +126,7 @@ type MouseReviewSource = "corsair" | "razer";
 // `stageReadyRequested` is set synchronously when F20 arrives, before its queued Git/editor work. The adjacent
 // F16 chord uses this input-order fact to distinguish a quick Undo chord from a ready-hold cancel even if
 // navigation is busy. See mouseHoldChord.ts for the shared decision rule.
-type MouseHoldRequest = MouseHoldChordState;
+type MouseHoldRequest = MouseHoldChordState & { releaseQueued?: boolean; boundaryExhausted?: boolean };
 type ActiveMouseStageSelection = MouseStageSelection<FileChange> & { request?: MouseHoldRequest };
 type MouseReviewView = {
     input: unknown;
@@ -137,6 +137,8 @@ type MouseReviewView = {
 const mouseHoldRequests = new Map<MouseReviewSource, MouseHoldRequest>();
 let latestMouseHoldRequest: MouseHoldRequest | undefined;
 let clearStageHoldFeedbackRequest: (source?: MouseReviewSource) => void = () => undefined;
+let prepareStageHoldReleaseRequest: (source: MouseReviewSource, request: MouseHoldRequest) => void = () => undefined;
+let setStagePreviewModeRequest: (source: MouseReviewSource, enabled: boolean) => void = () => undefined;
 let adjustStageHoldSelectionRequest: (
     source: MouseReviewSource, direction: "up" | "down"
 ) => Promise<void> = async () => undefined;
@@ -1118,6 +1120,16 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     );
     const worktreeLinkHandler = vscode.window.registerUriHandler({
         async handleUri(uri) {
+            const modeMatch = /^\/mouse-stage-preview-mode\/(on|off)$/.exec(uri.path);
+            if (modeMatch) {
+                const source = new URLSearchParams(uri.query).get("source");
+                if (isMouseReviewSource(source)) {
+                    await vscode.commands.executeCommand("better-git-vscode.set-mouse-stage-preview-mode", source, modeMatch[1] === "on");
+                } else {
+                    mouseDebug("Stage preview mode ignored, unknown mouse source.");
+                }
+                return;
+            }
             const selectionMatch = /^\/mouse-stage-selection\/(up|down)$/.exec(uri.path);
             if (selectionMatch) {
                 const source = new URLSearchParams(uri.query).get("source");
@@ -1380,21 +1392,62 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let currentReviewUri: vscode.Uri | undefined; // file: URI of the file currently shown in a review view
     let currentReviewTab: vscode.Tab | undefined;
     const stageHoldSelections = new Map<MouseReviewSource, ActiveMouseStageSelection>();
+    const releasedStageSelections = new WeakMap<MouseHoldRequest, ActiveMouseStageSelection>();
+    let stagePreviewMode: { source: MouseReviewSource; request: MouseHoldRequest } | undefined;
     const selectionUris = (selection: ActiveMouseStageSelection | undefined): vscode.Uri[] =>
         selection ? selectedMouseStageItems(selection).map(change => change.uri) : [];
+    const activeStageSelection = (source: MouseReviewSource, request: MouseHoldRequest): ActiveMouseStageSelection | undefined =>
+        request.releaseQueued ? releasedStageSelections.get(request) : stageHoldSelections.get(source);
+    const setActiveStageSelection = (source: MouseReviewSource, request: MouseHoldRequest, selection: ActiveMouseStageSelection): void => {
+        if (request.releaseQueued) { releasedStageSelections.set(request, selection); }
+        else { stageHoldSelections.set(source, selection); }
+    };
+    const repaintStagePreviewMode = (selection?: ActiveMouseStageSelection): void => {
+        const uri = selection?.items[selection.cursorIndex]?.uri;
+        const affected = [uri, currentReviewUri].filter((candidate): candidate is vscode.Uri => candidate !== undefined);
+        if (affected.length) { reviewDecoEmitter.fire(affected); }
+    };
     const clearStageHoldFeedback = (source?: MouseReviewSource) => {
         const affected = source
             ? selectionUris(stageHoldSelections.get(source))
             : [...stageHoldSelections.values()].flatMap(selectionUris);
+        if (stagePreviewMode && (!source || stagePreviewMode.source === source)) {
+            repaintStagePreviewMode(stageHoldSelections.get(stagePreviewMode.source));
+            stagePreviewMode = undefined;
+        }
         if (source) { stageHoldSelections.delete(source); } else { stageHoldSelections.clear(); }
         if (affected.length) { reviewDecoEmitter.fire(affected); }
     };
     clearStageHoldFeedbackRequest = clearStageHoldFeedback;
-    takeStageHoldSelectionRequest = (source, request) => {
+    prepareStageHoldReleaseRequest = (source, request) => {
         const selection = stageHoldSelections.get(source);
+        if (selection?.request === request) { releasedStageSelections.set(request, selection); }
+        clearStageHoldFeedback(source);
+    };
+    setStagePreviewModeRequest = (source, enabled) => {
+        const request = mouseHoldRequests.get(source);
+        if (enabled) {
+            if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest || !request.stageReadyRequested) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview mode ignored, no stage-ready hold is active.`);
+                return;
+            }
+            const previous = stagePreviewMode;
+            stagePreviewMode = { source, request };
+            repaintStagePreviewMode(previous ? stageHoldSelections.get(previous.source) : undefined);
+            repaintStagePreviewMode(stageHoldSelections.get(source));
+        } else if (stagePreviewMode?.source === source && stagePreviewMode.request === request) {
+            const selection = stageHoldSelections.get(source);
+            stagePreviewMode = undefined;
+            repaintStagePreviewMode(selection);
+        }
+        mouseDebug(`${mouseSourceLabel(source)} stage preview mode ${enabled ? "on" : "off"}.`);
+    };
+    takeStageHoldSelectionRequest = (source, request) => {
+        const selection = releasedStageSelections.get(request) ?? stageHoldSelections.get(source);
         if (!selection || selection.request !== request) { return undefined; }
         const selected = selectedMouseStageItems(selection);
-        stageHoldSelections.delete(source);
+        releasedStageSelections.delete(request);
+        if (stageHoldSelections.get(source) === selection) { stageHoldSelections.delete(source); }
         reviewDecoEmitter.fire(selected.map(change => change.uri));
         return selected;
     };
@@ -1426,99 +1479,111 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
         mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
     });
-    navigateStageHoldPreviewRequest = (source, direction) => serializeChangeNavigation(async check => {
+    navigateStageHoldPreviewRequest = (source, direction) => {
+        // Admit at input arrival. A normal release may arrive before these queued ratchets execute; they
+        // still belong before that release and must finish before it snapshots the files to stage.
         const request = mouseHoldRequests.get(source);
-        const origin = mouseNavigationOrigins.get(source);
-        const selection = stageHoldSelections.get(source);
-        if (!vscode.window.state.focused) {
-            mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, VS Code is not focused.`);
-            return;
-        }
-        if (!request?.active || request !== latestMouseHoldRequest
-            || origin?.holdRequest !== request || selection?.request !== request) {
+        if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest || !request.stageReadyRequested) {
             mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
-            return;
+            return Promise.resolve();
         }
-        // A second held button reviews changes within a file. Crossing its last
-        // change commits the marked range plus that file immediately, then arms
-        // the next unstaged file for the still-held release. Keep this in the
-        // navigation queue so fast ratchets cannot stage the same file twice.
-        const preWheelView = captureActiveStageUndoView();
-        const stageAtFileBoundary = async (boundaryCheck: NavigationCheckpoint): Promise<void> => {
-            // A newly opened text diff can receive a wheel detent before VS Code
-            // has attached its editor. Its built-in next/previous command is then
-            // a no-op, which is not evidence that the file was fully reviewed.
-            const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-            if (activeTab?.input instanceof vscode.TabInputTextDiff && !visibleEditorForActiveTab()) {
-                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary deferred, diff editor is not ready.`);
+        return serializeChangeNavigation(async check => {
+            const origin = mouseNavigationOrigins.get(source);
+            const selection = activeStageSelection(source, request);
+            if (!vscode.window.state.focused) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, VS Code is not focused.`);
                 return;
             }
-            const currentUri = await getActiveFileUri();
-            boundaryCheck();
-            const currentIndex = selection.items.findIndex(change => change.uri.toString() === currentUri?.toString());
-            const plan = planMouseStageBoundary(selection, currentIndex, direction);
-            if (!plan || !request.active || stageHoldSelections.get(source) !== selection) {
-                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, current file is outside the held worktree.`);
+            if ((!request.active && !request.releaseQueued) || request !== latestMouseHoldRequest
+                || origin?.holdRequest !== request || selection?.request !== request) {
+                mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
                 return;
             }
-            const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
-            const repo = git?.getRepository(selection.items[currentIndex].uri);
-            const repoRoot = repo?.rootUri?.toString();
-            if (!repoRoot || plan.staged.some(change => git.getRepository(change.uri)?.rootUri?.toString() !== repoRoot)) {
-                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, repository changed.`);
-                return;
-            }
-            const live = new Set(distinctUnstagedChanges(await getFileChanges(selection.items[currentIndex].uri))
-                .map(change => change.uri.toString()));
-            if (plan.staged.some(change => !live.has(change.uri.toString()))) {
-                mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, a marked file is no longer unstaged.`);
-                return;
-            }
-            let staged = false;
-            await runStageCommand(async () => {
-                await stageBatchThroughExtension(repo, plan.staged.map(change => change.uri), preWheelView, true);
-                staged = true;
-            });
-            if (!staged) { return; }
+            // A second held button reviews changes within a file. Crossing its last
+            // change commits the marked range plus that file immediately, then arms
+            // the next unstaged file for the still-held release. Keep this in the
+            // navigation queue so fast ratchets cannot stage the same file twice.
+            const preWheelView = captureActiveStageUndoView();
+            const stageAtFileBoundary = async (boundaryCheck: NavigationCheckpoint): Promise<void> => {
+                // A newly opened text diff can receive a wheel detent before VS Code
+                // has attached its editor. Its built-in next/previous command is then
+                // a no-op, which is not evidence that the file was fully reviewed.
+                const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+                if (activeTab?.input instanceof vscode.TabInputTextDiff && !visibleEditorForActiveTab()) {
+                    mouseDebug(`${mouseSourceLabel(source)} stage preview boundary deferred, diff editor is not ready.`);
+                    return;
+                }
+                const currentUri = await getActiveFileUri();
+                boundaryCheck();
+                const currentIndex = selection.items.findIndex(change => change.uri.toString() === currentUri?.toString());
+                const plan = planMouseStageBoundary(selection, currentIndex, direction);
+                if (!plan || (!request.active && !request.releaseQueued) || activeStageSelection(source, request) !== selection) {
+                    mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, current file is outside the held worktree.`);
+                    return;
+                }
+                const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+                const repo = git?.getRepository(selection.items[currentIndex].uri);
+                const repoRoot = repo?.rootUri?.toString();
+                if (!repoRoot || plan.staged.some(change => git.getRepository(change.uri)?.rootUri?.toString() !== repoRoot)) {
+                    mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, repository changed.`);
+                    return;
+                }
+                const live = new Set(distinctUnstagedChanges(await getFileChanges(selection.items[currentIndex].uri))
+                    .map(change => change.uri.toString()));
+                if (plan.staged.some(change => !live.has(change.uri.toString()))) {
+                    mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, a marked file is no longer unstaged.`);
+                    return;
+                }
+                let staged = false;
+                await runStageCommand(async () => {
+                    await stageBatchThroughExtension(repo, plan.staged.map(change => change.uri), preWheelView, true);
+                    staged = true;
+                });
+                if (!staged) { return; }
 
-            // Git has already changed: retire those marked files before any
-            // renderer navigation can be superseded by a click or another hold.
-            const before = selectionUris(selection);
-            const targetIndex = plan.remaining.findIndex(change => change.uri.toString() === plan.target?.uri.toString());
-            if (plan.target && targetIndex >= 0 && request.active) {
-                const nextSelection = { ...createMouseStageSelection(plan.remaining, targetIndex)!, request };
-                stageHoldSelections.set(source, nextSelection);
-                origin.change = plan.target;
-                reviewDecoEmitter.fire([...before, ...selectionUris(nextSelection)]);
-                ownedMouseStagePreview = { request, uri: plan.target.uri.toString() };
-                await openNavigationTarget(plan.target, boundaryCheck);
-                if (direction === "previous") { await landChangeForBackwardReview(plan.target, boundaryCheck); }
-                origin.view = captureMouseReviewView();
-                mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; now previewing ${path.basename(plan.target.uri.fsPath)}.`);
-            } else {
-                stageHoldSelections.delete(source);
-                reviewDecoEmitter.fire(before);
-                request.active = false;
-                mouseNavigationOrigins.delete(source);
-                if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
-                if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
-                mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; no unstaged files remain in this worktree.`);
+                // Git has already changed: retire those marked files before any
+                // renderer navigation can be superseded by a click or another hold.
+                const before = selectionUris(selection);
+                const targetIndex = plan.remaining.findIndex(change => change.uri.toString() === plan.target?.uri.toString());
+                if (plan.target && targetIndex >= 0 && (request.active || request.releaseQueued)) {
+                    const nextSelection = { ...createMouseStageSelection(plan.remaining, targetIndex)!, request };
+                    setActiveStageSelection(source, request, nextSelection);
+                    origin.change = plan.target;
+                    if (!request.releaseQueued) { reviewDecoEmitter.fire([...before, ...selectionUris(nextSelection)]); }
+                    ownedMouseStagePreview = { request, uri: plan.target.uri.toString() };
+                    await openNavigationTarget(plan.target, boundaryCheck);
+                    if (direction === "previous") { await landChangeForBackwardReview(plan.target, boundaryCheck); }
+                    origin.view = captureMouseReviewView();
+                    mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; now previewing ${path.basename(plan.target.uri.fsPath)}.`);
+                } else {
+                    releasedStageSelections.delete(request);
+                    if (stageHoldSelections.get(source) === selection) { stageHoldSelections.delete(source); }
+                    reviewDecoEmitter.fire(before);
+                    request.active = false;
+                    request.boundaryExhausted = true;
+                    mouseNavigationOrigins.delete(source);
+                    if (mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
+                    if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
+                    mouseDebug(`${mouseSourceLabel(source)} staged ${plan.staged.length} selected ${plan.staged.length === 1 ? "file" : "files"}; no unstaged files remain in this worktree.`);
+                }
+            };
+            ownedMouseStagePreview = undefined;
+            await (direction === "next"
+                ? goToNextDiffOnce(check, stageAtFileBoundary)
+                : goToPreviousDiffOnce(check, stageAtFileBoundary));
+            requestCurrentHunkOverviewMarkerRefresh();
+            if (activeStageSelection(source, request) === selection) {
+                const count = selectionUris(selection).length;
+                mouseDebug(`${mouseSourceLabel(source)} stage preview navigated ${direction} within the file; ${count} marked ${count === 1 ? "file remains" : "files remain"}.`);
             }
-        };
-        ownedMouseStagePreview = undefined;
-        await (direction === "next"
-            ? goToNextDiffOnce(check, stageAtFileBoundary)
-            : goToPreviousDiffOnce(check, stageAtFileBoundary));
-        requestCurrentHunkOverviewMarkerRefresh();
-        if (stageHoldSelections.get(source) === selection) {
-            const count = selectionUris(selection).length;
-            mouseDebug(`${mouseSourceLabel(source)} stage preview navigated ${direction} within the file; ${count} marked ${count === 1 ? "file remains" : "files remain"}.`);
-        }
-    });
+        });
+    };
     context.subscriptions.push(new vscode.Disposable(() => {
         if (clearStageHoldFeedbackRequest === clearStageHoldFeedback) {
             clearStageHoldFeedbackRequest = () => undefined;
         }
+        prepareStageHoldReleaseRequest = () => undefined;
+        setStagePreviewModeRequest = () => undefined;
         adjustStageHoldSelectionRequest = async () => undefined;
         navigateStageHoldPreviewRequest = async () => undefined;
         takeStageHoldSelectionRequest = () => undefined;
@@ -1542,7 +1607,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
             const origin = mouseNavigationOrigins.get(source);
             if (request) {
-                if (!request.active) {
+                if (!request.active && !request.releaseQueued) {
                     mouseDebug(`${mouseSourceLabel(source)} event ignored, hold was cancelled.`);
                     return;
                 }
@@ -1567,7 +1632,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     check();
                 }
                 // Release/cancel may arrive while the editor was opening. Never re-light a completed hold.
-                if (!request.active || request !== latestMouseHoldRequest) {
+                if ((!request.active && !request.releaseQueued) || request !== latestMouseHoldRequest) {
                     mouseDebug(`${mouseSourceLabel(source)} event ignored, hold ended while restoring the view.`);
                     return;
                 }
@@ -1585,9 +1650,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     mouseDebug(`${mouseSourceLabel(source)} hold threshold ignored, review item is no longer unstaged.`);
                     return;
                 }
-                const previous = selectionUris(stageHoldSelections.get(source));
-                stageHoldSelections.set(source, { ...selection, request });
-                reviewDecoEmitter.fire([...previous, target]);
+                const previous = selectionUris(request ? activeStageSelection(source, request) : stageHoldSelections.get(source));
+                if (request) { setActiveStageSelection(source, request, { ...selection, request }); }
+                else { stageHoldSelections.set(source, { ...selection }); }
+                if (!request?.releaseQueued) { reviewDecoEmitter.fire([...previous, target]); }
                 const direction = origin?.direction;
                 mouseDebug(direction
                     ? origin?.navigateOnButtonDown
@@ -1643,9 +1709,30 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             return navigateStageHoldPreviewRequest(source, direction);
         }
     );
+    const stagePreviewModeCommand = vscode.commands.registerCommand(
+        "better-git-vscode.set-mouse-stage-preview-mode",
+        (source: unknown, enabled: unknown) => {
+            if (!isMouseReviewSource(source) || typeof enabled !== "boolean") {
+                mouseDebug("Stage preview mode ignored, invalid arguments.");
+                return;
+            }
+            setStagePreviewModeRequest(source, enabled);
+        }
+    );
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
         onDidChangeFileDecorations: reviewDecoEmitter.event,
         provideFileDecoration(uri) {
+            const previewSelection = stagePreviewMode && stageHoldSelections.get(stagePreviewMode.source);
+            const previewCurrentUri = previewSelection?.items[previewSelection.cursorIndex]?.uri;
+            if (stagePreviewMode?.request.active && previewSelection?.request === stagePreviewMode.request
+                && previewCurrentUri?.path.toLowerCase() === uri.path.toLowerCase()) {
+                return {
+                    badge: "🟣",
+                    tooltip: "Stage preview mode is on.",
+                    color: new vscode.ThemeColor("charts.purple"),
+                    propagate: false,
+                };
+            }
             const activeSelection = [...stageHoldSelections.values()].find(selection =>
                 selectedMouseStageItems(selection).some(change => change.uri.path.toLowerCase() === uri.path.toLowerCase()));
             if (activeSelection && vscode.workspace.getConfiguration("better-git-vscode").get<string>("currentFileBadge", "🔥🔥")) {
@@ -1928,7 +2015,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         stageBeforeMouseNavigation,
         ...mouseHoldCommands,
         stageHoldReadyCommand, stageHoldClearCommand, stageHoldAdjustCommand,
-        stageHoldPreviewNavigationCommand,
+        stageHoldPreviewNavigationCommand, stagePreviewModeCommand,
         vscode.window.onDidChangeWindowState(state => {
             if (!state.focused) { invalidateChangeNavigation(); clearStageHoldFeedback(); }
         }),
@@ -4456,13 +4543,13 @@ const invalidateChangeNavigation = (preserveHeldSelection = false): void => {
         // Cursor/tab/document changes supersede old navigation work, not a physical hold.
         // Its captured files belong to that gesture until release or explicit cancellation.
         for (const [source, origin] of mouseNavigationOrigins) {
-            if (!origin.holdRequest?.active) { mouseNavigationOrigins.delete(source); }
+            if (!origin.holdRequest?.active && !origin.holdRequest?.releaseQueued) { mouseNavigationOrigins.delete(source); }
         }
         ownedMouseStagePreview = undefined;
         return;
     }
     mouseNavigationOrigins.clear();
-    mouseHoldRequests.forEach(request => { request.active = false; });
+    mouseHoldRequests.forEach(request => { request.active = false; request.releaseQueued = false; });
     mouseHoldRequests.clear();
     latestMouseHoldRequest = undefined;
     ownedMouseStagePreview = undefined;
@@ -4706,15 +4793,23 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
     }
     mouseDebug(`${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)} release received.`);
     const request = held ? mouseHoldRequests.get(source) : undefined;
-    const heldSelection = request ? takeStageHoldSelectionRequest(source, request) : undefined;
-    const releasedOrigin = heldSelection?.length ? mouseNavigationOrigins.get(source) : undefined;
-    if (request) { request.active = false; }
+    const releasedOrigin = request?.active ? mouseNavigationOrigins.get(source) : undefined;
+    if (request?.active) {
+        request.releaseQueued = true;
+        request.active = false;
+        prepareStageHoldReleaseRequest(source, request);
+    }
     return serializeChangeNavigation(check => runStageCommand(async () => {
+        const heldSelection = request ? takeStageHoldSelectionRequest(source, request) : undefined;
         const origin = releasedOrigin ?? mouseNavigationOrigins.get(source);
-        mouseNavigationOrigins.delete(source);
+        if (mouseNavigationOrigins.get(source)?.holdRequest === request) { mouseNavigationOrigins.delete(source); }
         if (held && mouseHoldRequests.get(source) === request) { mouseHoldRequests.delete(source); }
         if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
         const label = `${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)}`;
+        if (request?.boundaryExhausted) {
+            mouseDebug(`${label} release ignored, final file was already staged at its boundary.`);
+            return;
+        }
         if (!origin) { mouseDebug(`${label} release ignored, no press in progress.`); return; }
         if (origin.direction !== direction) { mouseDebug(`${label} release ignored, direction changed.`); return; }
         if (requestedAt < origin.requestedAt) { mouseDebug(`${label} release ignored, event order was invalid.`); return; }
@@ -4748,7 +4843,7 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         mouseDebug(selected.length > 1
             ? `${label} release staged ${selected.length} files.`
             : `${label} release staged ${path.basename(origin.change.uri.fsPath)}.`);
-    }), !!heldSelection?.length);
+    }), held && !!request);
 };
 
 const goToNextDiffOnce = async (
@@ -4941,9 +5036,10 @@ const goToPreviousDiffOnce = async (
 // Thin queued wrappers are the single public/shared path used by direct keyboard commands and smart mouse
 // navigation alike. Keeping the queue here (rather than in keybindings) covers every entry point identically.
 const ordinaryChangeNavigation = (step: typeof goToNextDiffOnce): Promise<void> => {
-    mouseHoldRequests.forEach(request => { request.active = false; });
+    mouseHoldRequests.forEach(request => { request.active = false; request.releaseQueued = false; });
     latestMouseHoldRequest = undefined;
     mouseHoldRequests.clear();
+    clearStageHoldFeedbackRequest();
     return serializeChangeNavigation(async check => {
         mouseNavigationOrigins.clear();
         await step(check);

@@ -2709,6 +2709,64 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('mouse stage-preview mode marks only the current file purple and clears on toggle or release', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			for (const name of ['mode_a.txt', 'mode_b.txt', 'mode_c.txt']) { write(name, name); }
+			await refreshUntil(() => ['mode_a.txt', 'mode_b.txt', 'mode_c.txt'].every(isUntracked), 'preview-mode files');
+			await openPlainAt('mode_b.txt', 0);
+			await focusIsolatedTestWindow();
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')), '💥💥');
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', true);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')), '🟣');
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'razer', false);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')), '🟣', 'another mouse cannot clear the badge');
+			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next');
+			assert.strictEqual(git('diff --cached --name-only'), 'mode_b.txt');
+			assert.strictEqual(activeTabPath(), wsUri('mode_c.txt').path);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '🟣', 'badge follows the reviewed file');
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', false);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '💥💥', 'off restores the stage-ready badge');
+			assert.strictEqual(activeTabPath(), wsUri('mode_c.txt').path, 'off must not navigate');
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', true);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '🟣');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '🟣');
+			assert.strictEqual(git('diff --cached --name-only'), 'mode_b.txt\nmode_c.txt');
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('rapid held preview ratchets finish before release stages their final file', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			for (const name of ['burst_a.txt', 'burst_b.txt', 'burst_c.txt', 'burst_d.txt', 'burst_e.txt']) { write(name, name); }
+			await refreshUntil(() => ['burst_a.txt', 'burst_b.txt', 'burst_c.txt', 'burst_d.txt', 'burst_e.txt'].every(isUntracked), 'burst files');
+			await openPlainAt('burst_a.txt', 0);
+			await focusIsolatedTestWindow();
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			const ratchets = Array.from({ length: 3 }, () =>
+				vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next'));
+			const release = vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await Promise.all([...ratchets, release]);
+			assert.strictEqual(git('diff --cached --name-only'), 'burst_a.txt\nburst_b.txt\nburst_c.txt\nburst_d.txt',
+				'every ratchet accepted before release must stage at its boundary, then release stages the final file');
+			assert.strictEqual(activeTabPath(), wsUri('burst_e.txt').path,
+				'release stages the final reviewed file and advances to the next unstaged file');
+			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next');
+			assert.strictEqual(git('diff --cached --name-only'), 'burst_a.txt\nburst_b.txt\nburst_c.txt\nburst_d.txt',
+				'a ratchet arriving after release must be inert');
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('held Razer preview wheel reviews both hunks before staging at the previous-file boundary', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
@@ -2736,8 +2794,11 @@ suite('SCM change navigation E2E', () => {
 			assert.strictEqual(git('diff --cached --name-only'), '',
 				'within-file hunk navigation must not stage prematurely');
 			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'razer', 'previous');
+			assert.strictEqual(activeTabPath(), wsUri('committed/mod_a.txt').path,
+				'selecting the first hunk must still keep the review in the same file');
+			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'razer', 'previous');
 			assert.strictEqual(activeTabPath(), wsUri('committed/mod_d.txt').path,
-				'crossing the first hunk must open the next unstaged file in reverse review');
+				'crossing the first hunk after selecting it must open the next unstaged file in reverse review');
 			assert.strictEqual(git('diff --cached --name-only'), 'committed/mod_a.txt',
 				'crossing the file boundary must stage the completed file while both buttons are held');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('committed/mod_d.txt')), '💥💥');

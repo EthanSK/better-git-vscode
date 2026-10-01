@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-10-01 — Keep held preview wheel inputs through release
+
+Agentic Mouse can send a burst of wheel-preview steps immediately before the main Stage-button release. If Better Git marks the hold inactive and snapshots its selected files as soon as release arrives, earlier accepted wheel steps still waiting in the navigation queue are discarded. Admit each step at input arrival, keep its owner through the queued work, and snapshot the final selection only at release's place in that queue. A request-keyed weak map holds only the small selection receipt after release; the visible stage-ready badge clears immediately. If a wheel step stages the last file at its boundary, mark that hold exhausted so its later release cannot stage twice.
+
+Agentic Mouse sends source-tagged `/mouse-stage-preview-mode/on` and `/off` URI routes while a stage-ready hold is active. Keep the mode bound to that exact mouse and hold; show the purple badge only on its current file, restore the existing stage-ready badge on toggle-off, and clear the mode on release, cancellation or focus loss. The route itself must not navigate. The adjacent button's initial preview step belongs to Agentic Mouse.
+
+Verification: 115 non-GUI tests, TypeScript, lint and five focused isolated Mini VS Code E2Es passed for toggle/release, rapid pre-release wheel bursts, repeated file-boundary staging and Undo, reverse hunk review, and last-file exhaustion. The Mini's macOS authentication UI prevented its disposable VS Code window from receiving focus. Only the disposable test copy bypassed the focus check; the production source retains it. A normal focused-host run and Ethan's physical mouse acceptance remain unverified. No MacBook E2E or Extension Development Host was run.
+
 ## 2026-10-01 — Resume change review from the visible viewport
 
 VS Code scrolling leaves the editor selection behind, even when the caret remains on screen. Starting Next or Previous from that selection made Better Git jump relative to an old review position. The first press in an editor now anchors to its rendered viewport; subsequent presses keep the existing exact caret-owned progression until a separate visible-range change signals that review has scrolled. A weak map stores only the viewport's top and bottom lines and a scroll flag. Navigation operations suppress their own visible-range events, so rapid repeated presses retain their order and precise steps without polling, Git reads or an input delay.
