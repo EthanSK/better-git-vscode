@@ -2,7 +2,7 @@ import * as assert from "assert";
 import {
     createMouseStageSelection,
     moveMouseStageSelection,
-    planMouseStageBoundary,
+    planMouseStagePreviewBoundary,
     selectedMouseStageItems,
 } from "../../mouseStageSelection";
 
@@ -41,33 +41,35 @@ suite("Mouse stage selection", () => {
         assert.strictEqual(createMouseStageSelection(items, items.length), undefined);
     });
 
-    test("commits the marked range at a boundary and arms the next file", () => {
+    test("preview boundaries accumulate the marked batch and destination without removing files", () => {
         const marked = moveMouseStageSelection(createMouseStageSelection(items, 1)!, 1);
-        assert.deepStrictEqual(planMouseStageBoundary(marked, 2, "next"), {
-            staged: ["b", "c"], remaining: ["a", "d"], target: "d",
-        });
+        const next = planMouseStagePreviewBoundary(marked, 2, "next")!;
+        assert.strictEqual(next.target, "d");
+        assert.deepStrictEqual(selectedMouseStageItems(next.selection), ["b", "c", "d"]);
+        const back = planMouseStagePreviewBoundary(next.selection, 3, "previous")!;
+        assert.strictEqual(back.target, "c");
+        assert.deepStrictEqual(selectedMouseStageItems(back.selection), ["b", "c", "d"]);
+        assert.deepStrictEqual(selectedMouseStageItems(marked), ["b", "c"], "original selection is immutable");
     });
 
-    test("includes a reviewed file outside the marked range without staging unmarked gaps", () => {
+    test("preview includes a manually reviewed file without marking unrelated gaps", () => {
         const marked = createMouseStageSelection(items, 0)!;
-        assert.deepStrictEqual(planMouseStageBoundary(marked, 2, "next"), {
-            staged: ["a", "c"], remaining: ["b", "d"], target: "d",
-        });
-        assert.deepStrictEqual(planMouseStageBoundary(marked, 2, "previous"), {
-            staged: ["a", "c"], remaining: ["b", "d"], target: "d",
-        });
+        const next = planMouseStagePreviewBoundary(marked, 2, "next")!;
+        assert.deepStrictEqual(selectedMouseStageItems(next.selection), ["a", "c", "d"]);
     });
 
-    test("reverse boundary keeps review in the same change list and stops when exhausted", () => {
-        const marked = createMouseStageSelection(items, 1)!;
-        assert.deepStrictEqual(planMouseStageBoundary(marked, 1, "previous"), {
-            staged: ["b"], remaining: ["a", "c", "d"], target: "a",
-        });
-        const all = moveMouseStageSelection(createMouseStageSelection(items, 0)!, 1);
-        const allMarked = moveMouseStageSelection(moveMouseStageSelection(all, 1), 1);
-        assert.deepStrictEqual(planMouseStageBoundary(allMarked, 3, "next"), {
-            staged: items, remaining: [], target: undefined,
-        });
-        assert.strictEqual(planMouseStageBoundary(marked, -1, "next"), undefined);
+    test("preview clamps at both worktree ends and retains its pending set", () => {
+        const first = createMouseStageSelection(items, 0)!;
+        const last = createMouseStageSelection(items, 3)!;
+        for (let n = 0; n < 4; n++) {
+            const forward = planMouseStagePreviewBoundary(last, 3, "next")!;
+            assert.strictEqual(forward.target, undefined);
+            assert.deepStrictEqual(selectedMouseStageItems(forward.selection), ["d"]);
+            const backward = planMouseStagePreviewBoundary(first, 0, "previous")!;
+            assert.strictEqual(backward.target, undefined);
+            assert.deepStrictEqual(selectedMouseStageItems(backward.selection), ["a"]);
+        }
+        assert.strictEqual(planMouseStagePreviewBoundary(first, -1, "next"), undefined);
+        assert.strictEqual(planMouseStagePreviewBoundary(first, 4, "next"), undefined);
     });
 });

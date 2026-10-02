@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.112
+
+- Hold Stage and the adjacent preview button to review changes with the wheel. Show eyes on the previewed file instead of the bright purple circle.
+- Add previewed files to the pending stage set without staging at file boundaries; stage the whole set only when Stage is released, with one Undo transaction.
+- Preserve the accumulated set through reverse review and queued pre-release wheel steps, and stop at either end of the worktree.
+
 ## 1.2.111
 
 - Let Agentic Mouse toggle a purple current-file badge while a held Stage gesture is in preview mode. A second adjacent-button press turns the badge off without moving the review, and releasing Stage clears it.
