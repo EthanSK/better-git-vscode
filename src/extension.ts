@@ -1481,34 +1481,42 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         reviewDecoEmitter.fire(selected.map(change => change.uri));
         return selected;
     };
-    adjustStageHoldSelectionRequest = (source, direction) => serializeChangeNavigation(async check => {
+    adjustStageHoldSelectionRequest = (source, direction) => {
+        // Like eyes ratchets, admit file ratchets before release and keep their exact request.
         const request = mouseHoldRequests.get(source);
-        const origin = mouseNavigationOrigins.get(source);
-        const selection = stageHoldSelections.get(source);
-        if (!vscode.window.state.focused) {
-            mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, VS Code is not focused.`);
-            return;
-        }
-        if (!request?.active || request !== latestMouseHoldRequest || origin?.holdRequest !== request || selection?.request !== request) {
+        if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest || !request.stageReadyRequested) {
             mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, no stage-ready hold is active.`);
-            return;
+            return Promise.resolve();
         }
-        const before = selectionUris(selection);
-        const moved = { ...moveMouseStageSelection(selection, direction === "up" ? -1 : 1), request };
-        stageHoldSelections.set(source, moved);
-        const after = selectionUris(moved);
-        reviewDecoEmitter.fire([...before, ...after]);
-        const preview = moved.items[moved.cursorIndex];
-        if (preview && moved.cursorIndex !== selection.cursorIndex) {
-            // Git can replace an initially-opened preview tab shortly after its command promise resolves.
-            // Keep that delayed, same-target transition owned by this live hold so it cannot cancel the
-            // range before the next wheel detent arrives. Other targets supersede only queued navigation.
-            ownedMouseStagePreview = { request, uri: preview.uri.toString() };
-            await openNavigationTarget(preview, check);
-            requestCurrentHunkOverviewMarkerRefresh();
-        }
-        mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
-    });
+        return serializeChangeNavigation(async check => {
+            const origin = mouseNavigationOrigins.get(source);
+            const selection = activeStageSelection(source, request);
+            if (!vscode.window.state.focused) {
+                mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, VS Code is not focused.`);
+                return;
+            }
+            if ((!request.active && !request.releaseQueued) || request !== latestMouseHoldRequest
+                || origin?.holdRequest !== request || selection?.request !== request) {
+                mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, no stage-ready hold is active.`);
+                return;
+            }
+            const before = selectionUris(selection);
+            const moved = { ...moveMouseStageSelection(selection, direction === "up" ? -1 : 1), request };
+            setActiveStageSelection(source, request, moved);
+            const after = selectionUris(moved);
+            if (!request.releaseQueued) { reviewDecoEmitter.fire([...before, ...after]); }
+            const preview = moved.items[moved.cursorIndex];
+            if (preview && moved.cursorIndex !== selection.cursorIndex) {
+                // Git can replace an initially-opened preview tab shortly after its command promise resolves.
+                // Keep that delayed, same-target transition owned by this live hold so it cannot cancel the
+                // range before the next wheel detent arrives. Other targets supersede only queued navigation.
+                ownedMouseStagePreview = { request, uri: preview.uri.toString() };
+                await openNavigationTarget(preview, check);
+                requestCurrentHunkOverviewMarkerRefresh();
+            }
+            mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
+        });
+    };
     navigateStageHoldPreviewRequest = (source, direction) => {
         // Admit at input arrival. A normal release may arrive before these queued ratchets execute; they
         // still belong before that release and must finish before it snapshots the files to stage.
@@ -1646,7 +1654,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             if (target) {
                 const changes = distinctUnstagedChanges(await getFileChanges(target));
                 const anchorIndex = changes.findIndex(change => change.uri.toString() === target.toString());
-                const selection = createMouseStageSelection(changes, anchorIndex);
+                const selection = createMouseStageSelection(changes, anchorIndex, origin?.direction ?? "next");
                 if (!selection) {
                     if (request?.active && request === latestMouseHoldRequest) { request.stageReadyRequested = false; }
                     mouseDebug(`${mouseSourceLabel(source)} hold threshold ignored, review item is no longer unstaged.`);

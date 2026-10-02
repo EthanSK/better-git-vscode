@@ -1,36 +1,43 @@
 export interface MouseStageSelection<T> {
     readonly items: readonly T[];
-    readonly anchorIndex: number;
     readonly cursorIndex: number;
-    // Keep the hold's origin when preview moves the ordinary range anchor.
-    readonly previewAnchorIndex?: number;
-    readonly previewIndices?: readonly number[];
+    readonly initialDirection: "next" | "previous";
+    readonly selectedIndices: readonly number[];
 }
 
 export const createMouseStageSelection = <T>(
     items: readonly T[],
-    anchorIndex: number
+    anchorIndex: number,
+    initialDirection: "next" | "previous" = "next"
 ): MouseStageSelection<T> | undefined => {
     if (!Number.isInteger(anchorIndex) || anchorIndex < 0 || anchorIndex >= items.length) {
         return undefined;
     }
-    return { items, anchorIndex, cursorIndex: anchorIndex };
+    return { items, cursorIndex: anchorIndex, initialDirection, selectedIndices: [anchorIndex] };
+};
+
+// Both wheel modes edit the same set. Toggling modes cannot restore an old range.
+const moveToMouseStageItem = <T>(
+    selection: MouseStageSelection<T>, currentIndex: number, cursorIndex: number
+): MouseStageSelection<T> => {
+    if (currentIndex === cursorIndex) { return selection; }
+    const marked = new Set(selection.selectedIndices);
+    const direction = cursorIndex > currentIndex ? "next" : "previous";
+    if (direction === selection.initialDirection) { marked.add(currentIndex); }
+    else { marked.delete(currentIndex); }
+    marked.add(cursorIndex);
+    return { ...selection, cursorIndex, selectedIndices: [...marked] };
 };
 
 export const moveMouseStageSelection = <T>(
     selection: MouseStageSelection<T>,
     delta: -1 | 1
-): MouseStageSelection<T> => ({
-    ...selection,
-    cursorIndex: Math.max(0, Math.min(selection.items.length - 1, selection.cursorIndex + delta)),
-});
+): MouseStageSelection<T> => moveToMouseStageItem(selection, selection.cursorIndex,
+    Math.max(0, Math.min(selection.items.length - 1, selection.cursorIndex + delta)));
 
 export const selectedMouseStageItems = <T>(selection: MouseStageSelection<T>): readonly T[] => {
-    const first = Math.min(selection.anchorIndex, selection.cursorIndex);
-    const last = Math.max(selection.anchorIndex, selection.cursorIndex);
-    if (!selection.previewIndices?.length) { return selection.items.slice(first, last + 1); }
-    const previewed = new Set(selection.previewIndices);
-    return selection.items.filter((_, index) => (index >= first && index <= last) || previewed.has(index));
+    const marked = new Set(selection.selectedIndices);
+    return selection.items.filter((_, index) => marked.has(index));
 };
 
 export const planMouseStagePreviewBoundary = <T>(
@@ -42,19 +49,8 @@ export const planMouseStagePreviewBoundary = <T>(
     const nextIndex = currentIndex + (direction === "next" ? 1 : -1);
     const hasTarget = nextIndex >= 0 && nextIndex < selection.items.length;
     const cursorIndex = hasTarget ? nextIndex : currentIndex;
-    const previewAnchorIndex = selection.previewAnchorIndex ?? selection.anchorIndex;
-    const marked = new Set(selectedMouseStageItems(selection));
-    if (hasTarget && Math.abs(cursorIndex - previewAnchorIndex) < Math.abs(currentIndex - previewAnchorIndex)) {
-        marked.delete(selection.items[currentIndex]);
-    } else {
-        marked.add(selection.items[currentIndex]);
-    }
-    marked.add(selection.items[cursorIndex]);
     return {
-        selection: {
-            items: selection.items, anchorIndex: cursorIndex, cursorIndex, previewAnchorIndex,
-            previewIndices: selection.items.flatMap((item, index) => marked.has(item) ? [index] : []),
-        },
+        selection: moveToMouseStageItem(selection, currentIndex, cursorIndex),
         target: hasTarget ? selection.items[cursorIndex] : undefined,
     };
 };
