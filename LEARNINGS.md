@@ -1,6 +1,16 @@
 # Learnings
 
+## 2026-10-03 — One directional pending set survives every eyes/file toggle
+
+Ethan replaced the origin-distance exception with one unconditional rule: moving opposite the original Next/Previous hold direction removes the departing file, in either eyes or ordinary file mode, including past the starting file. The former range plus preview union could resurrect a previewed file after toggling; discard both caches and keep one selected-index set, its current endpoint and the original hold direction. Forward file transitions add source and destination; reverse transitions remove source and add destination. Mode toggles never change membership, within-file hunk steps leave it unchanged and outer worktree boundaries clamp without writing Git. The set is bounded by the captured unstaged file list; no timer, debounce or traversal history is needed.
+
+Ordinary file-wheel inputs had a separate release race: they checked the current active hold only when their queued work ran, so a release arriving behind accepted ratchets could drop those steps. Capture and admit the request on input arrival, then update its existing request-keyed released selection at the original queue position. Preserve cancellation, source ownership, foreground checks and immediate badge clearing. Release still performs one exact batch transaction with one Undo receipt.
+
+Verification: 124 non-GUI tests, TypeScript, ESLint and production packaging passed. Eleven focused Mini VS Code cases passed in a disposable diagnostic copy: both sources and both initial directions, eyes/file toggle order and repeated toggles, reverse movement beyond the origin, queued file-mode backtracking immediately followed by release, existing rapid eyes steps, Previous hunks, last-file readiness, cancellation and exact Undo. The normal production case stopped at the OS-window-focus prerequisite; only the disposable copy bypassed nine focus predicates and that prerequisite. The exact production bundle separately passed real on/off URI delivery for both sources without a bypass. Production JavaScript SHA-256 is `1aad501415c0b0a4f7dc378ef6c0e0e46e90e6d234caecfc5f696dbb42a1492a`. Minimal evidence remains on the Mini at `/private/tmp/bgv-unified-evidence-20261003`. Physical mouse/visual acceptance remains Ethan-owned. No MacBook E2E or Extension Development Host was run.
+
 ## 2026-10-02 — Eyes backtracking contracts the pending stage set
+
+The origin-distance and separate range/preview-anchor rules in this entry are historical, superseded by the unconditional original-hold-direction rule above.
 
 Ethan superseded the earlier never-remove rule: returning toward the hold's starting file must remove the file just left, so he can shrink the stage set before release. Preserve the original selection anchor separately from the moving preview/range anchor. At a real file boundary, a target nearer that origin removes the source; moving away adds the source and target. This mirrors Previous review, supports re-adding a file and crossing the origin, and does not select gaps introduced by manually opening a different file. Within-file hunk movement and an exhausted worktree boundary keep the set unchanged. No new timer, debounce, traversal history or Git operation was added; the existing source-owned queue and release transaction remain authoritative.
 

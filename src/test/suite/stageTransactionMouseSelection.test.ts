@@ -19,7 +19,7 @@ suite("Mouse stage selection", () => {
         assert.deepStrictEqual(selectedMouseStageItems(two), ["b", "c", "d"]);
     });
 
-    test("reverse wheel steps contract the range and then grow above the anchor", () => {
+    test("reverse wheel removes the departing file even past the starting file", () => {
         const start = createMouseStageSelection(items, 2);
         assert.ok(start);
         const below = moveMouseStageSelection(start, 1);
@@ -27,7 +27,7 @@ suite("Mouse stage selection", () => {
         const above = moveMouseStageSelection(anchor, -1);
         assert.deepStrictEqual(selectedMouseStageItems(below), ["c", "d"]);
         assert.deepStrictEqual(selectedMouseStageItems(anchor), ["c"]);
-        assert.deepStrictEqual(selectedMouseStageItems(above), ["b", "c"]);
+        assert.deepStrictEqual(selectedMouseStageItems(above), ["b"]);
     });
 
     test("clamps at both ends and rejects an invalid anchor", () => {
@@ -54,14 +54,14 @@ suite("Mouse stage selection", () => {
         const origin = planMouseStagePreviewBoundary(back.selection, 2, "previous")!;
         assert.deepStrictEqual(selectedMouseStageItems(origin.selection), ["b"]);
         const above = planMouseStagePreviewBoundary(origin.selection, 1, "previous")!;
-        assert.deepStrictEqual(selectedMouseStageItems(above.selection), ["a", "b"]);
+        assert.deepStrictEqual(selectedMouseStageItems(above.selection), ["a"]);
         const home = planMouseStagePreviewBoundary(above.selection, 0, "next")!;
-        assert.deepStrictEqual(selectedMouseStageItems(home.selection), ["b"]);
+        assert.deepStrictEqual(selectedMouseStageItems(home.selection), ["a", "b"]);
         assert.deepStrictEqual(selectedMouseStageItems(marked), ["b", "c"], "original selection is immutable");
     });
 
     test("previous review grows above its origin and contracts when returning downward", () => {
-        const start = createMouseStageSelection(items, 3)!;
+        const start = createMouseStageSelection(items, 3, "previous")!;
         const first = planMouseStagePreviewBoundary(start, 3, "previous")!;
         const second = planMouseStagePreviewBoundary(first.selection, 2, "previous")!;
         assert.deepStrictEqual(selectedMouseStageItems(second.selection), ["b", "c", "d"]);
@@ -69,6 +69,21 @@ suite("Mouse stage selection", () => {
         assert.deepStrictEqual(selectedMouseStageItems(back.selection), ["c", "d"]);
         const home = planMouseStagePreviewBoundary(back.selection, 2, "next")!;
         assert.deepStrictEqual(selectedMouseStageItems(home.selection), ["d"]);
+    });
+
+    test("file mode removes previewed files and eyes mode removes file-mode selections", () => {
+        for (const direction of ["next", "previous"] as const) {
+            const delta = direction === "next" ? 1 : -1;
+            const reverse = direction === "next" ? "previous" : "next";
+            const start = createMouseStageSelection(items, direction === "next" ? 0 : 3, direction)!;
+            const eyes = planMouseStagePreviewBoundary(start, start.cursorIndex, direction)!.selection;
+            const file = moveMouseStageSelection(eyes, delta);
+            const fileBack = moveMouseStageSelection(file, delta === 1 ? -1 : 1);
+            assert.deepStrictEqual(selectedMouseStageItems(fileBack), selectedMouseStageItems(eyes));
+            const eyesBack = planMouseStagePreviewBoundary(fileBack, fileBack.cursorIndex, reverse)!.selection;
+            assert.deepStrictEqual(selectedMouseStageItems(eyesBack), selectedMouseStageItems(start));
+            assert.deepStrictEqual(selectedMouseStageItems(start), [items[start.cursorIndex]], "previous values remain immutable");
+        }
     });
 
     test("preview includes a manually reviewed file without marking unrelated gaps", () => {

@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.116
+
+- Keep one pending stage set across eyes/file mode toggles. Moving opposite the original Next/Previous hold direction always removes the file just left, including beyond the starting file.
+- Finish file-mode wheel steps received before release before committing the reduced batch, matching eyes-mode ordering. Preserve release-only staging and one exact batch Undo.
+
 ## 1.2.115
 
 - Remove the file just left from the pending stage set when eyes review crosses back toward the starting file; reviewing it again adds it back.
