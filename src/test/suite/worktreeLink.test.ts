@@ -54,7 +54,7 @@ suite('Worktree link E2E', () => {
             assert.ok(changes > 0, 'same diff must change inputs so VS Code can reveal its row again');
         } finally { listener.dispose(); }
     });
-    test('link recursively collapses once per invocation with startup automation off', async () => {
+    test('link folds only in an active window without blocking background opens with startup automation off', async () => {
         const config = vscode.workspace.getConfiguration('better-git-vscode');
         const beforeSetting = config.inspect<boolean>('experimentalScmTreeStateManagement')?.workspaceValue;
         try {
@@ -64,10 +64,10 @@ suite('Worktree link E2E', () => {
                 await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
                 assert.strictEqual(activePath(), path.join(target, 'review.txt'));
             }
-            assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), [
+            assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), vscode.window.state.focused ? [
                 'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'workbench.scm.action.collapseAllRepositories', 'list.clear',
                 'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'workbench.scm.action.collapseAllRepositories', 'list.clear',
-            ]);
+            ] : []);
         } finally {
             await config.update('experimentalScmTreeStateManagement', beforeSetting, vscode.ConfigurationTarget.Workspace);
         }
@@ -303,7 +303,12 @@ suite('Worktree link E2E', () => {
         runGit(target, 'add', 'review.txt');
         const traceStart = api.getScmTreeCommandTrace().length;
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
-        assert.ok(api.getScmTreeCommandTrace().slice(traceStart).includes('list.collapseAll'), 'Collapse staged groups without opening a file');
+        const trace = api.getScmTreeCommandTrace().slice(traceStart);
+        if (vscode.window.state.focused) {
+            assert.ok(trace.includes('list.collapseAll'), 'Collapse staged groups without opening a file');
+        } else {
+            assert.ok(!trace.includes('workbench.scm.action.focusNextInput'), 'Background links defer native input focus without blocking repository loading');
+        }
         const before = runGit(target, 'diff', '--cached', '--binary');
         const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
         await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
@@ -411,5 +416,35 @@ suite('Worktree link E2E', () => {
         assert.strictEqual(activePath(), path.join(conflicted, 'zz-next.txt'));
         assert.strictEqual(runGit(conflicted, 'ls-files', '-u'), '');
         assert.strictEqual(runGit(conflicted, 'show', ':conflict.txt'), 'resolved working text\n');
+    });
+    test('staged-only and clean links preserve the editor with a single implicit repository', async () => {
+        await resetTarget();
+        runGit(target, 'clean', '-fd');
+        fs.writeFileSync(path.join(target, 'review.txt'), 'single staged\n');
+        runGit(target, 'add', 'review.txt');
+        await git.openRepository(vscode.Uri.file(target));
+        // This is the final test: closed fixture repositories remain closed
+        // until the disposable host exits, rather than rediscovering mid-check.
+        await vscode.commands.executeCommand('git.closeOtherRepositories', vscode.Uri.file(target));
+        assert.strictEqual(git.repositories.length, 1);
+        const config = vscode.workspace.getConfiguration('scm');
+        const previous = config.inspect<boolean>('alwaysShowRepositories')?.workspaceValue;
+        await config.update('alwaysShowRepositories', false, vscode.ConfigurationTarget.Workspace);
+        const original = vscode.window.tabGroups.activeTabGroup.activeTab;
+        const listenerEvents: string[] = [];
+        const listener = vscode.window.tabGroups.onDidChangeTabs(() => listenerEvents.push(activePath() ?? 'none'));
+        try {
+            for (const staged of [true, false]) {
+                if (!staged) { await resetTarget(); }
+                const before = runGit(target, 'status', '--porcelain=v1');
+                await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+                assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, original);
+                assert.deepStrictEqual(listenerEvents, [], 'No transient file preview');
+                assert.strictEqual(runGit(target, 'status', '--porcelain=v1'), before, 'No Git action from control-row selection');
+            }
+        } finally {
+            listener.dispose();
+            await config.update('alwaysShowRepositories', previous, vscode.ConfigurationTarget.Workspace);
+        }
     });
 });

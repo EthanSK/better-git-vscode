@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.113
+
+- Open Worktree links in the receiving VS Code window while another app remains in front, without an eight-second foreground wait or the misleading retry error.
+- Load the requested repository immediately behind another app, then complete native Source Control folding on window activation; cancel that pending presentation when a newer link or review interaction takes over.
+- Keep repository refresh settling, latest-link ordering and unchanged editor tabs for clean or staged-only worktrees.
+
 ## 1.2.112
 
 - Hold Stage and the adjacent preview button to review changes with the wheel. Show eyes on the previewed file instead of the bright purple circle.
