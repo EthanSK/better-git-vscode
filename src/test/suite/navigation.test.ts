@@ -1,7 +1,8 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { execFileSync, execSync } from 'child_process';
+import { execFile, execFileSync, execSync } from 'child_process';
+import { promisify } from 'util';
 import { createHash } from 'crypto';
 import * as vscode from 'vscode';
 import { resolveStagedLfsImage } from '../../stagedLfsImage';
@@ -139,6 +140,20 @@ suite('SCM change navigation E2E', () => {
 	};
 
 	const wsUri = (rel: string) => vscode.Uri.file(path.join(ws, rel));
+	const deliverMouseUri = async (route: string, source: string) => {
+		const profile = process.env.BGV_TEST_USER_DATA_PATH;
+		const executable = process.env.BGV_VSCODE_EXECUTABLE_PATH ?? (process.platform === 'darwin'
+			? path.resolve(vscode.env.appRoot, '../../MacOS/Code') : process.execPath);
+		assert.ok(profile, 'native URI transport must target only the disposable profile');
+		const cli = process.platform === 'darwin'
+			? path.resolve(path.dirname(executable), '../Resources/app/out/cli.js')
+			: path.join(vscode.env.appRoot, 'out/cli.js');
+		await promisify(execFile)(executable!, [
+			cli,
+			`--user-data-dir=${profile}`, '--open-url',
+			`vscode://ethansk.better-git-vscode/${route}?source=${source}`
+		], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 10000 });
+	};
 	const focusIsolatedTestWindow = async () => {
 		const profile = process.env.BGV_TEST_USER_DATA_PATH;
 		assert.ok(profile, 'the disposable VS Code profile must be identifiable before activating its window');
@@ -2709,10 +2724,38 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('mouse preview mode URI reaches the real handler for both mouse sources', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousLogging = config.inspect<boolean>('debugLogging')?.globalValue;
+		const extensionConfig = vscode.workspace.getConfiguration('extensions');
+		const previousHandlers = extensionConfig.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+		const before = git('status --porcelain');
+		try {
+			// Consent belongs only to our disposable test profile, never Ethan's normal profile.
+			await extensionConfig.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+			await config.update('debugLogging', true, vscode.ConfigurationTarget.Global);
+			for (const source of ['corsair', 'razer']) {
+				for (const mode of ['on', 'off']) {
+					extensionApi.clearMouseDebugTrace();
+					await deliverMouseUri(`mouse-stage-preview-mode/${mode}`, source);
+					const expected = `${source === 'corsair' ? 'Corsair' : 'Razer'} stage preview mode ${mode === 'on' ? 'ignored, no stage-ready hold is active' : 'off'}.`;
+					await poll(() => extensionApi.getMouseDebugTrace().includes(expected), `native ${source} mode-${mode} URI delivery`);
+				}
+			}
+			assert.strictEqual(git('status --porcelain'), before, 'mode-only URI must never stage or open a worktree');
+		} finally {
+			await config.update('debugLogging', previousLogging, vscode.ConfigurationTarget.Global);
+			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('mouse stage-preview mode marks only the current file purple and clears on toggle or release', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const extensionConfig = vscode.workspace.getConfiguration('extensions');
+		const previousHandlers = extensionConfig.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
 		try {
+			await extensionConfig.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
 			for (const name of ['mode_a.txt', 'mode_b.txt', 'mode_c.txt']) { write(name, name); }
 			await refreshUntil(() => ['mode_a.txt', 'mode_b.txt', 'mode_c.txt'].every(isUntracked), 'preview-mode files');
 			await openPlainAt('mode_b.txt', 0);
@@ -2720,24 +2763,29 @@ suite('SCM change navigation E2E', () => {
 			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
 			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')), '💥💥');
-			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', true);
+			await deliverMouseUri('mouse-stage-preview-mode/on', 'corsair');
+			await poll(() => extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')) === '🟣', 'mode-on URI to mark the held file');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')), '🟣');
 			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'razer', false);
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')), '🟣', 'another mouse cannot clear the badge');
-			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next');
+			await deliverMouseUri('mouse-stage-preview/next', 'corsair');
+			await poll(() => activeTabPath() === wsUri('mode_c.txt').path, 'adjacent preview URI to stage and advance');
 			assert.strictEqual(git('diff --cached --name-only'), 'mode_b.txt');
 			assert.strictEqual(activeTabPath(), wsUri('mode_c.txt').path);
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '🟣', 'badge follows the reviewed file');
-			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', false);
+			await deliverMouseUri('mouse-stage-preview-mode/off', 'corsair');
+			await poll(() => extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')) === '💥💥', 'mode-off URI to clear purple');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '💥💥', 'off restores the stage-ready badge');
 			assert.strictEqual(activeTabPath(), wsUri('mode_c.txt').path, 'off must not navigate');
-			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', true);
+			await deliverMouseUri('mouse-stage-preview-mode/on', 'corsair');
+			await poll(() => extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')) === '🟣', 'second mode-on URI');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '🟣');
 			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
 			assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '🟣');
 			assert.strictEqual(git('diff --cached --name-only'), 'mode_b.txt\nmode_c.txt');
 		} finally {
 			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
 		}
 	});
 
