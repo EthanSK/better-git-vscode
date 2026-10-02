@@ -1529,7 +1529,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
                 return;
             }
-            // Wheel review only accumulates files. The source-owned release is the
+            // Wheel review only edits the pending set. The source-owned release is the
             // sole staging boundary, including ratchets already queued before it.
             const preWheelView = captureMouseReviewView();
             const previewAtFileBoundary = async (boundaryCheck: NavigationCheckpoint): Promise<void> => {
