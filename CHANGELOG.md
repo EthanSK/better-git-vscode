@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.115
+
+- Remove the file just left from the pending stage set when eyes review crosses back toward the starting file; reviewing it again adds it back.
+- Preserve mirrored Previous review, within-file hunk navigation and rapid queued wheel steps. Releasing Stage commits only the remaining files as one Undo transaction.
+
 ## 1.2.114
 
 - Support Agentic Mouse starting held review in eyes mode without jumping to another change.

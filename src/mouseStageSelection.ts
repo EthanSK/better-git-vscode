@@ -2,7 +2,8 @@ export interface MouseStageSelection<T> {
     readonly items: readonly T[];
     readonly anchorIndex: number;
     readonly cursorIndex: number;
-    // Files accumulated by hunk preview remain marked when review moves back.
+    // Keep the hold's origin when preview moves the ordinary range anchor.
+    readonly previewAnchorIndex?: number;
     readonly previewIndices?: readonly number[];
 }
 
@@ -41,12 +42,17 @@ export const planMouseStagePreviewBoundary = <T>(
     const nextIndex = currentIndex + (direction === "next" ? 1 : -1);
     const hasTarget = nextIndex >= 0 && nextIndex < selection.items.length;
     const cursorIndex = hasTarget ? nextIndex : currentIndex;
+    const previewAnchorIndex = selection.previewAnchorIndex ?? selection.anchorIndex;
     const marked = new Set(selectedMouseStageItems(selection));
-    marked.add(selection.items[currentIndex]);
+    if (hasTarget && Math.abs(cursorIndex - previewAnchorIndex) < Math.abs(currentIndex - previewAnchorIndex)) {
+        marked.delete(selection.items[currentIndex]);
+    } else {
+        marked.add(selection.items[currentIndex]);
+    }
     marked.add(selection.items[cursorIndex]);
     return {
         selection: {
-            items: selection.items, anchorIndex: cursorIndex, cursorIndex,
+            items: selection.items, anchorIndex: cursorIndex, cursorIndex, previewAnchorIndex,
             previewIndices: selection.items.flatMap((item, index) => marked.has(item) ? [index] : []),
         },
         target: hasTarget ? selection.items[cursorIndex] : undefined,
