@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.114
+
+- Support Agentic Mouse starting held review in eyes mode without jumping to another change.
+- Retain eyes mode for the active hold when its URL arrives before the readiness shortcut; show it only when that hold becomes ready, and clear it on cancellation or release.
+- Keep mode toggles separate from navigation and preserve release-only batch staging with one exact Undo.
+
 ## 1.2.113
 
 - Open Worktree links in the receiving VS Code window while another app remains in front, without an eight-second foreground wait or the misleading retry error.
