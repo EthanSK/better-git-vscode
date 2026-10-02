@@ -18,6 +18,7 @@ fs.mkdirSync(evidence, { recursive: true });
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const testLinkBackground = process.argv.includes('--link-background');
+const testLinkStayBackground = process.argv.includes('--link-stay-background');
 const testReturnApp = process.argv.includes('--return-app');
 const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
 const testHeldClick = process.argv.includes('--held-click');
@@ -195,15 +196,60 @@ try {
         assert.ok(!r.exceptionDetails, JSON.stringify(r.exceptionDetails));
         return r.result.value;
     };
-    if (process.platform === 'darwin') {
-        // Activate only the process launched above, never the user's normal Code.
-        execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e',
-            `ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`]);
+    if (testLinkStayBackground) {
+        // Never activate the test host in this scenario. If launching Code did
+        // focus it, foreground Finder once; leave an existing authentication UI
+        // or any other already-frontmost application untouched.
+        if ((await request('state')).focused && process.platform === 'darwin') {
+            execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e',
+                "ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);"]);
+        }
+        await until(() => request('state'), state => !state.focused, 'native window stays background');
+    } else {
+        if (process.platform === 'darwin') {
+            // Activate only the process launched above, never the user's normal Code.
+            execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e',
+                `ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`]);
+        }
+        await send('Page.bringToFront');
+        await until(() => request('state'), state => state.focused, 'native window focus');
     }
-    await send('Page.bringToFront');
-    await until(() => request('state'), state => state.focused, 'native window focus');
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.aria === 'Staged Changes'  && r.expanded === 'true'), 'initial staged group');
     await capture('before-first-open');
+    if (testLinkStayBackground) {
+        // Do not dispatch renderer mouse/key events: those can initialize
+        // lastFocusedList even though VS Code's OS-window state stays unfocused.
+        const baseline = roots.map(repo => git(repo, 'status', '--porcelain=v1'));
+        for (const repo of [roots.length - 1, 2, 2, 3]) {
+            await request('uri', { uri: `vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}` });
+            const state = await request('state');
+            assert.equal(state.focused, false, 'link must not activate VS Code');
+            assert.ok(state.active.includes(roots[repo]) && state.active.includes('a.txt'), 'exact first unstaged file must load');
+            assert.deepEqual(roots.map(r => git(r, 'status', '--porcelain=v1')), baseline);
+            await capture(`background-loaded-${repo}`);
+        }
+        const original = await request('state');
+        for (const [kind, repo] of [['staged', 4], ['clean', 5]]) {
+            git(roots[repo], 'reset', '--hard', 'HEAD');
+            git(roots[repo], 'clean', '-fd');
+            if (kind === 'staged') { fs.writeFileSync(path.join(roots[repo], 'only-staged.txt'), 'staged\n'); git(roots[repo], 'add', '.'); }
+            const before = git(roots[repo], 'status', '--porcelain=v1');
+            await request('watch-tabs');
+            const traceStart = (await request('state')).trace.length;
+            await request('open', { repo });
+            const state = await request('state');
+            assert.equal(state.focused, false);
+            assert.equal(state.active, original.active, kind + ': editor unchanged');
+            assert.deepEqual(state.tabs, original.tabs, kind + ': tabs unchanged');
+            assert.deepEqual((await request('watched-tabs')).value, [], kind + ': no transient editor');
+            assert.ok(!state.trace.slice(traceStart).includes('workbench.scm.action.focusNextInput'), kind + ': native input focus deferred');
+            assert.equal(git(roots[repo], 'status', '--porcelain=v1'), before);
+            await capture(`background-loaded-${kind}`);
+        }
+        console.log('BETTER_GIT_BACKGROUND_LOAD_VERIFIED native-folding=deferred-until-window-focus');
+        console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);
+        process.exitCode = 0;
+    } else {
     await request('plain', { repo: 0 });
     const graph = await evaluate(`(()=>{const r=[...document.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')==='base, Test'); if(!r)return null; const b=r.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2};})()`);
     assert.ok(graph, 'visible Source Control Graph commit');
@@ -585,6 +631,7 @@ try {
         assert.equal(fs.readFileSync(path.join(repo, file), 'utf8'), 'modified\n');
     }
     console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);
+    }
 } finally {
     if (fs.existsSync(path.join(root, 'ready.json'))) { await request('stop').catch(() => {}); }
     activationMonitor?.kill('SIGTERM');

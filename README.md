@@ -96,16 +96,18 @@ Worktree links can optionally return focus to another already-running app after 
 
 Use another app's macOS bundle identifier to change the default. **Copy link to open worktree in Source Control** includes it as `returnTo` metadata in the inner URI, preserved through Microsoft's HTTPS redirect. A link can name a different app; links without metadata use your configured default. The original `returnTo=codex` spelling still works when the feature is enabled. These application settings cannot be enabled by a repository's workspace settings.
 
-Returning focus never launches an app. Invalid or duplicate destinations, failed worktree opens, and an unrelated app becoming active during the handoff skip the return. Turning the feature off keeps you in VS Code even when a link contains return metadata. Ordinary Source Control commands do not return focus.
+Returning focus never launches an app. Invalid or duplicate destinations, failed worktree opens, and an unrelated app becoming active during the handoff skip the return. Turning the feature off skips app activation even when a link contains return metadata. Ordinary Source Control commands do not return focus.
 
 To finish in VS Code with the origin app next in macOS app switching, also enable `better-git-vscode.worktreeLinkKeepEditorFront`. Better Git waits until the origin becomes active before bringing the same VS Code app back to front. This setting is off by default and requires Worktree Link Return Focus. It uses the same configurable origin and existing links.
 
 
 For chat clients that require HTTPS, encode the complete URI twice as the `url` value of `https://vscode.dev/redirect?url=...`. Microsoft's redirect forwards it to VS Code; the copied link uses this form.
 
-Right-click a Git repository header and choose **Copy link to open worktree in Source Control**, or use **Better Git: Open Worktree in Source Control** in the Command Palette to choose an open repository. The link can also open a Git worktree outside the current workspace without replacing or adding workspace folders. It does not collapse other repositories or modify Git contents.
+Right-click a Git repository header and choose **Copy link to open worktree in Source Control**, or use **Better Git: Open Worktree in Source Control** in the Command Palette to choose an open repository. The link can also open a Git worktree outside the current workspace without replacing or adding workspace folders. It does not modify Git contents.
 
-Expansion and scrolling use VS Code's **SCM: Auto Reveal**. A link waits for its receiving VS Code window to become frontmost before driving Source Control, so a Chrome handoff cannot race a partially rendered tree. Clean or hidden repositories, disabled Auto Reveal, and changes without a working file can require manually showing or expanding the repository. VS Code can also keep the current scroll position when its already-selected file is opened again. Better Git does not change these settings or walk other repository rows.
+Expansion and scrolling use VS Code's **SCM: Auto Reveal**. Better Git refreshes the requested repository and opens the first unstaged change even while Chrome or another app stays in front. It does not wait for operating-system focus or ask you to click the link again. Native tree folding needs VS Code's list focus; a background link completes that presentation once its receiving window becomes active. Newer links and review navigation cancel the pending presentation. No focus polling or automatic app activation is added.
+
+In an active window the link settles Source Control updates, collapses other repositories and Staged Changes, then reveals the requested worktree. With no unstaged changes, it leaves the current editor unchanged; the commit-input reveal requires **Git: Show Commit Input**. Disabled Auto Reveal or changes without a working file can still require manual expansion. Better Git does not change either setting.
 
 ## Pull a worktree into your sidebar without leaving the editor
 
