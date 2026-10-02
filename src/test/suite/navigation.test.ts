@@ -2717,7 +2717,7 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
-	test('mouse stage-preview mode marks only the current file with eyes and clears on modifier release', async () => {
+	test('mouse stage-preview mode toggles without navigating and clears on owner release', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const extensionConfig = vscode.workspace.getConfiguration('extensions');
 		const previousHandlers = extensionConfig.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
@@ -2734,6 +2734,8 @@ suite('SCM change navigation E2E', () => {
 			await deliverMouseUri('mouse-stage-preview-mode/on', 'corsair');
 			await poll(() => extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')) === '👀', 'mode-on URI to mark the held file');
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')), '👀');
+			assert.strictEqual(activeTabPath(), wsUri('mode_b.txt').path, 'mode entry must not advance the review');
+			assert.strictEqual(git('diff --cached --name-only'), '', 'mode entry must not stage');
 			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'razer', false);
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_b.txt')), '👀', 'another mouse cannot clear the badge');
 			await deliverMouseUri('mouse-stage-preview/next', 'corsair');
@@ -2752,6 +2754,51 @@ suite('SCM change navigation E2E', () => {
 			assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '👀');
 			assert.strictEqual(git('diff --cached --name-only'), 'mode_b.txt\nmode_c.txt');
 		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('default eyes URI can arrive before readiness without moving or leaking to the next hold', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousLogging = config.inspect<boolean>('debugLogging')?.globalValue;
+		const extensionConfig = vscode.workspace.getConfiguration('extensions');
+		const previousHandlers = extensionConfig.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			await extensionConfig.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+			await config.update('debugLogging', true, vscode.ConfigurationTarget.Global);
+			write('default_eyes.txt', 'first line\nsecond line\nthird line');
+			await refreshUntil(() => isUntracked('default_eyes.txt'), 'default eyes file');
+			for (const source of ['corsair', 'razer']) {
+				await openPlainAt('default_eyes.txt', 0);
+				vscode.window.activeTextEditor!.selection = new vscode.Selection(1, 0, 1, 0);
+				await focusIsolatedTestWindow();
+				const startSelection = vscode.window.activeTextEditor!.selection;
+				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction: 'next' });
+				extensionApi.clearMouseDebugTrace();
+				await deliverMouseUri('mouse-stage-preview-mode/on', source);
+				const label = source === 'corsair' ? 'Corsair' : 'Razer';
+				await poll(() => extensionApi.getMouseDebugTrace().some(line => line.startsWith(`${label} stage preview mode `)), 'mode URI to arrive before readiness');
+				assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('default_eyes.txt')), '👀', 'no ready selection means no eyes yet');
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+				assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('default_eyes.txt')), '👀', 'the early URI must latch for this owner');
+				assert.strictEqual(activeTabPath(), wsUri('default_eyes.txt').path);
+				assert.deepStrictEqual(vscode.window.activeTextEditor!.selection, startSelection, 'default eyes entry must preserve the cursor');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'readiness and eyes entry must not stage');
+				await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', source);
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', source);
+				assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('default_eyes.txt')), '👀', 'cancel must clear the early URI');
+				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction: 'next' });
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+				assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('default_eyes.txt')), '💥💥', 'the next hold must not inherit eyes');
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction: 'next' });
+				assert.strictEqual(git('diff --cached --name-only'), 'default_eyes.txt');
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the exact staged set');
+			}
+		} finally {
+			await config.update('debugLogging', previousLogging, vscode.ConfigurationTarget.Global);
 			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
 			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
 		}

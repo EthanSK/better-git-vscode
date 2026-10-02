@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-10-02 — Default eyes mode must tolerate readiness arriving on a separate transport
+
+Ethan prefers eyes preview as the initial held review mode, replacing ordinary file-range selection. Enter the mode at Stage readiness without a preview step; while Stage remains held, an adjacent tap toggles to ordinary range selection and another tap back to eyes. Corsair uses 8/9 for Next and 5/6 for Previous. He explicitly confirmed button 9 alone, without keyboard Control. Actual staging remains solely on Stage release and is one exact Undo transaction.
+
+Agentic Mouse sends the readiness shortcut through posted keyboard input and mode-on through a VS Code URI. Invocation order cannot prove arrival order across those transports. Better Git previously ignored mode-on if readiness had not arrived. Retain mode intent bound to the exact active, latest, unreleased hold; the stage selection and preview-wheel admission still require readiness. No pending global toggle, timer, navigation, early decoration or Git write is needed. Cancellation/release clear the intent, and a later hold cannot inherit it.
+
+Verification: 122 non-GUI tests, TypeScript, ESLint and production packaging passed. The new real-URI Mini regression deliberately waits for mode-on to arrive before sending readiness: the old bundle produced bombs instead of eyes; the fixed bundle preserved the file/cursor, painted eyes on readiness, cleared cancellation, kept the next hold fresh and restored the index with one Undo for both sources. Four focused tests also passed toggling without movement, queued wheel/release accumulation and previous Razer review. The normal Mini host could not gain OS focus, so these focused held tests used only a disposable diagnostic bundle with its focus predicates bypassed; production keeps those predicates. Do not call that focused native or physical mouse acceptance. The exact production bundle also passed native on/off URI delivery for both mouse sources without any focus bypass. No MacBook E2E or Extension Development Host was run.
+
 ## 2026-10-02 — Load Worktree links without an operating-system foreground gate
 
 The reported “VS Code did not come to the front” message came from Better Git's own eight-second focus gate, before repository loading. Remove that gate rather than increasing it. An exact Worktree URI can validate/open its repository, refresh Git and open the top unstaged file while its receiving window remains behind another app. Clean and staged-only worktrees must preserve the current editor and index.

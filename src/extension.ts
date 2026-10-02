@@ -1454,7 +1454,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     setStagePreviewModeRequest = (source, enabled) => {
         const request = mouseHoldRequests.get(source);
         if (enabled) {
-            if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest || !request.stageReadyRequested) {
+            // The readiness shortcut and mode URI use different OS transports. Retain the
+            // mode intent for this exact hold if the URI arrives first; decorations and
+            // wheel navigation still require readiness to create its stage selection.
+            if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest) {
                 mouseDebug(`${mouseSourceLabel(source)} stage preview mode ignored, no stage-ready hold is active.`);
                 return;
             }
