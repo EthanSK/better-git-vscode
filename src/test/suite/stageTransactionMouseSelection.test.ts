@@ -96,6 +96,17 @@ suite("Mouse stage selection", () => {
         assert.deepStrictEqual(selectedMouseStageItems(nextBack.selection), ["a", "b"]);
     });
 
+    test("eyes release omits only the final endpoint without changing the pending set", () => {
+        for (const direction of ["next", "previous"] as const) {
+            const start = createMouseStageSelection(items, direction === "next" ? 0 : 3, direction)!;
+            assert.deepStrictEqual(selectedMouseStageItems(start, true), []);
+            const first = planMouseStagePreviewBoundary(start, start.cursorIndex, direction)!.selection;
+            const second = planMouseStagePreviewBoundary(first, first.cursorIndex, direction)!.selection;
+            assert.deepStrictEqual(selectedMouseStageItems(second, true), direction === "next" ? ["a", "b"] : ["c", "d"]);
+            assert.strictEqual(selectedMouseStageItems(second).length, 3, "ordinary mode and pending membership remain intact");
+        }
+    });
+
     test("preview clamps at both worktree ends and retains its pending set", () => {
         const first = createMouseStageSelection(items, 0)!;
         const last = createMouseStageSelection(items, 3)!;

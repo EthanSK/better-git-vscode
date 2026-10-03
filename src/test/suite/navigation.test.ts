@@ -2687,10 +2687,12 @@ suite('SCM change navigation E2E', () => {
             assert.ok(editor);
             editor.selection = new vscode.Selection(0, 2, 0, 2);
             await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
-            assert.strictEqual(git('diff --cached --name-only'), 'inspect_b.txt\ninspect_c.txt\ninspect_d.txt');
+            assert.strictEqual(git('diff --cached --name-only'), 'inspect_b.txt\ninspect_c.txt');
+            assert.strictEqual(activeTabPath(), wsUri('inspect_d.txt').path, 'excluded eyes file stays open');
+            assert.deepStrictEqual(editor.selection, new vscode.Selection(0, 2, 0, 2));
             await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
             assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo must reverse the whole released batch');
-            assert.strictEqual(activeTabPath(), wsUri('inspect_d.txt').path, 'Undo returns to the last previewed file');
+            assert.strictEqual(activeTabPath(), wsUri('inspect_b.txt').path, 'Undo returns to a file in the staged batch');
         } finally {
             await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
         }
@@ -2774,6 +2776,98 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	for (const source of ['corsair', 'razer']) {
+		for (const direction of ['next', 'previous']) {
+			test(`eyes release excludes the current file for ${source} ${direction}`, async () => {
+				const config = vscode.workspace.getConfiguration('better-git-vscode');
+				const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+				try {
+					const names = ['exclude_a.txt', 'exclude_b.txt', 'exclude_c.txt'];
+					for (const name of names) { write(name, name); }
+					await refreshUntil(() => names.every(isUntracked), 'eyes exclude files');
+					const start = direction === 'next' ? 0 : 2;
+					const endpoint = 2 - start;
+					await openPlainAt(names[start], 0);
+					await focusIsolatedTestWindow();
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					for (let n = 0; n < 2; n++) {
+						await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', source, direction === 'next' ? 'down' : 'up');
+					}
+					await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, true);
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(names[endpoint])), '👀');
+					const editor = visibleEditorFor(wsUri(names[endpoint]))!;
+					editor.selection = new vscode.Selection(0, 2, 0, 4);
+					const selection = editor.selection;
+					const top = editor.visibleRanges[0].start.line;
+					const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(git('diff --cached --name-only'), names.filter((_, i) => i !== endpoint).join('\n'));
+					assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'release must not reopen or advance the excluded preview');
+					assert.deepStrictEqual(editor.selection, selection, 'excluded preview cursor remains exact');
+					assert.strictEqual(editor.visibleRanges[0].start.line, top, 'excluded preview viewport remains exact');
+					assert.ok(isUntracked(names[endpoint]), 'the eyes file remains unstaged');
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+					assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores only the released batch');
+					// The next ordinary hold must not inherit the prior eyes release policy.
+					await openPlainAt(names[endpoint], 0);
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(git('diff --cached --name-only'), names[endpoint], 'ordinary file mode still stages its current file');
+				} finally { await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global); }
+			});
+		}
+	}
+
+	test('eyes-only release is inert and preserves earlier Undo history', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			write('exclude_history.txt', 'history'); write('exclude_only.txt', 'still reviewing');
+			await refreshUntil(() => isUntracked('exclude_history.txt') && isUntracked('exclude_only.txt'), 'eyes only files');
+			await openPlainAt('exclude_history.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+			await openPlainAt('exclude_only.txt', 0);
+			await focusIsolatedTestWindow();
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', true);
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			assert.strictEqual(git('diff --cached --name-only'), 'exclude_history.txt', 'empty and repeated releases cannot stage the origin');
+			assert.strictEqual(activeTabPath(), wsUri('exclude_only.txt').path, 'empty batch cannot navigate');
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '', 'empty release cannot add a phantom Undo receipt');
+		} finally { await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global); }
+	});
+
+	test('eyes release excludes the final endpoint after queued readiness and ratchets', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			const names = ['late_a.txt', 'late_b.txt', 'late_c.txt'];
+			for (const name of names) { write(name, name); }
+			await refreshUntil(() => names.every(isUntracked), 'late eyes files');
+			await openPlainAt(names[0], 0);
+			await focusIsolatedTestWindow();
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'razer', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'razer', true);
+			const ready = vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'razer');
+			const steps = [0, 1].map(() => vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'razer', 'next'));
+			const release = vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'razer', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'razer', false);
+			await Promise.all([ready, ...steps, release]);
+			assert.strictEqual(git('diff --cached --name-only'), names.slice(0, 2).join('\n'), 'exclude the settled endpoint, not the stale release-arrival endpoint');
+			assert.strictEqual(activeTabPath(), wsUri(names[2]).path);
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+		} finally { await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global); }
+	});
+
 	test('mouse preview mode URI reaches the real handler for both mouse sources', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const previousLogging = config.inspect<boolean>('debugLogging')?.globalValue;
@@ -2834,7 +2928,8 @@ suite('SCM change navigation E2E', () => {
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '👀');
 			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
 			assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('mode_c.txt')), '👀');
-			assert.strictEqual(git('diff --cached --name-only'), 'mode_b.txt\nmode_c.txt');
+			assert.strictEqual(git('diff --cached --name-only'), 'mode_b.txt');
+			assert.strictEqual(activeTabPath(), wsUri('mode_c.txt').path);
 		} finally {
 			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
 			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
@@ -2927,12 +3022,12 @@ suite('SCM change navigation E2E', () => {
 				vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'razer', direction));
 			const release = vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'razer', direction: 'next' });
 			await Promise.all([...ratchets, release]);
-			assert.strictEqual(git('diff --cached --name-only'), 'retract_a.txt\nretract_b.txt',
+			assert.strictEqual(git('diff --cached --name-only'), 'retract_a.txt',
 				'queued reverse ratchets must remove the departed file before the single release transaction');
-			assert.strictEqual(activeTabPath(), wsUri('retract_c.txt').path);
+			assert.strictEqual(activeTabPath(), wsUri('retract_b.txt').path);
 			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 			assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo reverses the reduced batch');
-			assert.strictEqual(activeTabPath(), wsUri('retract_b.txt').path);
+			assert.strictEqual(activeTabPath(), wsUri('retract_a.txt').path);
 		} finally {
 			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
 		}

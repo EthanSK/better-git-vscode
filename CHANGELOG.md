@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.117
+
+- Leave the current eyes preview file unstaged on release and keep its editor, cursor and scroll position. Stage only the other selected files as one exact Undo transaction.
+- Keep an eyes-only release inert, and exclude the final preview endpoint after queued readiness and wheel steps finish. Ordinary file-mode release still stages its full selected set and advances.
+
 ## 1.2.116
 
 - Keep one pending stage set across eyes/file mode toggles. Moving opposite the original Next/Previous hold direction always removes the file just left, including beyond the starting file.
