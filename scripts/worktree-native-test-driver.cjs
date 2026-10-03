@@ -9,9 +9,20 @@ exports.run = async () => {
  let uriHandler;
  const registerUriHandler = vscode.window.registerUriHandler;
  vscode.window.registerUriHandler = handler => { uriHandler=handler; return registerUriHandler(handler); };
+ // Instrument the real native handoff only in this isolated ordering test.
+ // Do not replace AppKit, focus checks or the production handoff itself.
+ const cp = require('node:child_process');
+ const originalExecFile = cp.execFile;
+ const handoffEvents = [];
+ const event = name => { handoffEvents.push(name); fs.writeFileSync(path.join(root, 'handoff-events.json'), JSON.stringify(handoffEvents)); };
+ if (process.env.BGV_EARLY_HANDOFF_TEST === '1') cp.execFile = function(file, args, options, callback) {
+  if (file !== '/usr/bin/osascript' || !args?.[3]?.includes('const destination = argv[0]')) return originalExecFile.apply(this, arguments);
+  event('handoff-start');
+  return originalExecFile.call(this, file, args, options, (...result) => { event('handoff-end'); callback(...result); });
+ };
  let api;
  try { api = await vscode.extensions.getExtension('EthanSK.better-git-vscode').activate(); }
- finally { vscode.window.registerUriHandler=registerUriHandler; }
+ finally { vscode.window.registerUriHandler=registerUriHandler; cp.execFile=originalExecFile; }
  const roots = JSON.parse(fs.readFileSync(path.join(root,'roots.json'),'utf8'));
  for(const p of roots.slice(0, -1)) { const repo=git.getRepository(vscode.Uri.file(p)) ?? await git.openRepository(vscode.Uri.file(p)); await repo.status(); }
  await vscode.commands.executeCommand('workbench.view.scm');
@@ -40,6 +51,24 @@ exports.run = async () => {
     else if(request.action==='plain') value=await vscode.commands.executeCommand('vscode.open',vscode.Uri.file(path.join(roots[request.repo],request.file??'a.txt')), {preview:request.preview??true});
     else if(request.action==='working') value=await vscode.commands.executeCommand('git.openChange',vscode.Uri.file(path.join(roots[request.repo],request.file)));
     else if(request.action==='refresh') value=await git.getRepository(vscode.Uri.file(roots[request.repo])).status();
+    else if(request.action==='hold-status') {
+     handoffEvents.length=0; event('armed');
+     const repo=git.getRepository(vscode.Uri.file(roots[request.repo])) ?? await git.openRepository(vscode.Uri.file(roots[request.repo]));
+     if(!repo) throw new Error('Missing status gate repository '+roots[request.repo]);
+     const prototype=Object.getPrototypeOf(repo), original=prototype.status;
+     const releaseFile=path.join(root, 'release-status');
+     fs.rmSync(releaseFile, {force:true});
+     prototype.status=async function(...args) {
+      if(this.rootUri.fsPath===roots[request.repo]) {
+       prototype.status=original; event('status-start');
+       await new Promise((resolve,reject)=>{ const started=Date.now(); const timer=setInterval(()=>{
+        if(fs.existsSync(releaseFile)) {clearInterval(timer);resolve();}
+        else if(Date.now()-started>10000) {clearInterval(timer);reject(new Error('Status gate timed out'));}
+       },20); });
+      }
+      return original.apply(this,args);
+     };
+    }
     else if(request.action==='uri') {
      if(!uriHandler) throw new Error('Better Git URI handler was not captured');
      value=await uriHandler.handleUri(vscode.Uri.parse(request.uri));

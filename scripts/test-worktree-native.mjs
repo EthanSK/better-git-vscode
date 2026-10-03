@@ -18,7 +18,8 @@ fs.mkdirSync(evidence, { recursive: true });
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const testLinkBackground = process.argv.includes('--link-background');
-const testLinkStayBackground = process.argv.includes('--link-stay-background');
+const testEarlyHandoff = process.argv.includes('--early-app-handoff');
+const testLinkStayBackground = testEarlyHandoff || process.argv.includes('--link-stay-background');
 const testReturnApp = process.argv.includes('--return-app');
 const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
 const testHeldClick = process.argv.includes('--held-click');
@@ -88,7 +89,7 @@ const log = fs.openSync(path.join(evidence, 'native-worktree.log'), 'w');
 const child = spawn(executable, [workspace, `--user-data-dir=${profile}`, `--extensions-dir=${path.join(root, 'extensions')}`,
     `--extensionDevelopmentPath=${extensionRoot}`, `--extensionTestsPath=${path.join(extensionRoot, 'scripts/worktree-native-test-driver.cjs')}`,
     `--remote-debugging-port=${port}`, '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-telemetry'],
-{ env: { ...process.env, BGV_SWITCH_ROOT: root }, stdio: ['ignore', log, log] });
+{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '' }, stdio: ['ignore', log, log] });
 let socket;
 let activationMonitor;
 let nextRequest = 0;
@@ -216,7 +217,57 @@ try {
     }
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.aria === 'Staged Changes'  && r.expanded === 'true'), 'initial staged group');
     await capture('before-first-open');
-    if (testLinkStayBackground) {
+    if (testEarlyHandoff) {
+        await request('config', { settings: {worktreeLinkReturnFocus:true,worktreeLinkReturnApp:'com.openai.codex',worktreeLinkKeepEditorFront:true} });
+        const baseline = roots.map(repo => git(repo, 'status', '--porcelain=v1'));
+        const readEvents = () => JSON.parse(fs.readFileSync(path.join(root, 'handoff-events.json'), 'utf8'));
+        for (const [repo, enabled, destination] of [[1,true,'codex'],[1,true,'codex'],[8,true,'codex'],[2,false,'codex'],[3,true,''],[4,true,undefined]]) {
+            await request('config', { settings: {worktreeLinkReturnFocus:enabled} });
+            const before = await request('state');
+            await request('hold-status', {repo});
+            const uri=`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}${destination===undefined?'':'&returnTo='+destination}`;
+            const opening=request('uri', {uri});
+            try {
+                const events=await until(readEvents, events=>events.includes('status-start'), 'worktree reaches blocked status');
+                assert.deepEqual(events, enabled && destination!=='' ? ['armed','handoff-start','handoff-end','status-start'] : ['armed','status-start']);
+                // Status remains blocked: the whole app handoff has already finished.
+                fs.writeFileSync(path.join(evidence, `early-handoff-${repo}-${enabled}-${destination??'fallback'}.json`), JSON.stringify({events,traceBefore:before.trace}));
+            } finally { fs.writeFileSync(path.join(root,'release-status'),'release'); }
+            await opening;
+            const after=await request('state');
+            assert.equal(after.focused,false,'loading must not activate the background window');
+            assert.equal(after.active, new URL('file://' + roots[repo]+'/a.txt').href);
+            assert.equal(readEvents().filter(event=>event==='handoff-start').length, enabled && destination!=='' ? 1 : 0, 'no second handoff after loading');
+            assert.deepEqual(after.trace.slice(before.trace.length), [], 'native list focus stays deferred');
+            assert.deepEqual(roots.map(repo=>git(repo,'status','--porcelain=v1')),baseline);
+        }
+        for (const [kind,repo] of [['staged',6],['clean',7]]) {
+            git(roots[repo],'reset','--hard','HEAD'); git(roots[repo],'clean','-fd');
+            if(kind==='staged') {fs.writeFileSync(path.join(roots[repo],'only-staged.txt'),'staged\n');git(roots[repo],'add','.');}
+            const before=await request('state');
+            const status=git(roots[repo],'status','--porcelain=v1');
+            await request('hold-status',{repo});
+            const opening=request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}&returnTo=codex`});
+            try {assert.deepEqual(await until(readEvents,events=>events.includes('status-start'),kind+' blocked status'),['armed','handoff-start','handoff-end','status-start']);}
+            finally {fs.writeFileSync(path.join(root,'release-status'),'release');}
+            await opening;
+            const after=await request('state');
+            assert.equal(after.focused,false); assert.equal(after.active,before.active); assert.deepEqual(after.tabs,before.tabs);
+            assert.ok(!after.trace.slice(before.trace.length).includes('workbench.scm.action.focusNextInput'));
+            assert.equal(readEvents().filter(event=>event==='handoff-start').length,1);
+            assert.equal(git(roots[repo],'status','--porcelain=v1'),status);
+        }
+        const beforeBurst=readEvents().filter(event=>event==='handoff-start').length;
+        await request('uri-burst', {uris:[1,2,3].map(repo=>`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}&returnTo=codex`)});
+        assert.equal(readEvents().filter(event=>event==='handoff-start').length,beforeBurst+1,'superseded links must not hand off');
+        assert.equal((await request('state')).active,new URL('file://'+roots[3]+'/a.txt').href,'newest link wins');
+        const count=readEvents().length;
+        await request('uri', {uri:'vscode://ethansk.better-git-vscode/open-worktree?path=%2Fdoes-not-exist-bgv&returnTo=codex'});
+        await request('open', {repo:0});
+        assert.equal(readEvents().length,count,'invalid paths and ordinary commands must not hand off');
+        await capture('early-handoff-background-loaded');
+        console.log('BETTER_GIT_EARLY_HANDOFF_ORDER_VERIFIED native-app-activation=unverified-while-authentication-frontmost');
+    } else if (testLinkStayBackground) {
         // Do not dispatch renderer mouse/key events: those can initialize
         // lastFocusedList even though VS Code's OS-window state stays unfocused.
         const baseline = roots.map(repo => git(repo, 'status', '--porcelain=v1'));
@@ -483,8 +534,17 @@ try {
             focusCode();
             await request('uri', { uri: uri(repo, destination) });
             await until(front, app => app === expected, name);
-            await check(repo, name);
-            assert.equal(front(), expected, `${name}: Source Control inspection must not change native focus`);
+            if (expected !== 'com.microsoft.VSCode') {
+                assert.ok((await request('state')).active.endsWith(`/repo-${repo}/a.txt`), `${name}: background file loaded`);
+                await capture(name + '-background');
+                // One-way return happens before native folding. Explicitly revisit
+                // the receiving window to exercise its event-driven presentation.
+                focusCode();
+                await until(() => request('state'), state => state.focused, name + ': revisit Code');
+                await check(repo, name + '-after-focus');
+                focusApp(expected);
+            } else { await check(repo, name); }
+            assert.equal(front(), expected, `${name}: inspection restores expected native focus`);
             fs.writeFileSync(path.join(evidence, `${name}-focus.json`), JSON.stringify({ expected, observed: front(), worktree: roots[repo] }));
         }
         await request('config', { settings: { worktreeLinkReturnFocus: false, worktreeLinkReturnApp: appA } });
@@ -504,7 +564,10 @@ try {
         await pause(250); focusApp(appB);
         await opening;
         assert.equal(front(), appB, 'user switching to another app must win over return');
-        await check(1, 'return-user-switched-app');
+        assert.ok((await request('state')).active.endsWith('/repo-1/a.txt'), 'user switch keeps exact background loading');
+        focusCode();
+        await until(() => request('state'), state => state.focused, 'return after user switch');
+        await check(1, 'return-user-switched-app-after-focus');
         focusCode();
         await request('uri', { uri: 'vscode://ethansk.better-git-vscode/open-worktree?path=%2Fdoes-not-exist-bgv&returnTo=' + appA });
         assert.equal(front(), 'com.microsoft.VSCode', 'failed worktree must not return');
