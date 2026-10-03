@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.118
+
+- Complete the optional origin-app then VS Code handoff before worktree discovery, Git refresh and Source Control settling, so the origin is immediately available through the app switcher.
+- Keep loading behind another app after an immediate switch away, and defer native repository/group folding until the receiving window regains focus. Do not repeat the app handoff after loading.
+
 ## 1.2.117
 
 - Leave the current eyes preview file unstaged on release and keep its editor, cursor and scroll position. Stage only the other selected files as one exact Undo transaction.
