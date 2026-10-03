@@ -35,8 +35,11 @@ export const moveMouseStageSelection = <T>(
 ): MouseStageSelection<T> => moveToMouseStageItem(selection, selection.cursorIndex,
     Math.max(0, Math.min(selection.items.length - 1, selection.cursorIndex + delta)));
 
-export const selectedMouseStageItems = <T>(selection: MouseStageSelection<T>): readonly T[] => {
+export const selectedMouseStageItems = <T>(
+    selection: MouseStageSelection<T>, excludeCurrent = false
+): readonly T[] => {
     const marked = new Set(selection.selectedIndices);
+    if (excludeCurrent) { marked.delete(selection.cursorIndex); }
     return selection.items.filter((_, index) => marked.has(index));
 };
 

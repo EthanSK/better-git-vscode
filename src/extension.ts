@@ -129,7 +129,7 @@ type MouseReviewSource = "corsair" | "razer";
 // `stageReadyRequested` is set synchronously when F20 arrives, before its queued Git/editor work. The adjacent
 // F16 chord uses this input-order fact to distinguish a quick Undo chord from a ready-hold cancel even if
 // navigation is busy. See mouseHoldChord.ts for the shared decision rule.
-type MouseHoldRequest = MouseHoldChordState & { releaseQueued?: boolean };
+type MouseHoldRequest = MouseHoldChordState & { releaseQueued?: boolean; excludePreviewOnRelease?: boolean };
 type ActiveMouseStageSelection = MouseStageSelection<FileChange> & { request?: MouseHoldRequest };
 type MouseReviewView = {
     input: unknown;
@@ -1447,6 +1447,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     };
     clearStageHoldFeedbackRequest = clearStageHoldFeedback;
     prepareStageHoldReleaseRequest = (source, request) => {
+        // Capture mode before feedback clears; queued ratchets still determine the final endpoint.
+        request.excludePreviewOnRelease = stagePreviewMode?.source === source && stagePreviewMode.request === request;
         const selection = stageHoldSelections.get(source);
         if (selection?.request === request) { releasedStageSelections.set(request, selection); }
         clearStageHoldFeedback(source);
@@ -1475,7 +1477,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     takeStageHoldSelectionRequest = (source, request) => {
         const selection = releasedStageSelections.get(request) ?? stageHoldSelections.get(source);
         if (!selection || selection.request !== request) { return undefined; }
-        const selected = selectedMouseStageItems(selection);
+        const selected = selectedMouseStageItems(selection, request.excludePreviewOnRelease);
         releasedStageSelections.delete(request);
         if (stageHoldSelections.get(source) === selection) { stageHoldSelections.delete(source); }
         reviewDecoEmitter.fire(selected.map(change => change.uri));
@@ -1746,7 +1748,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             const activeSelection = [...stageHoldSelections.values()].find(selection =>
                 selectedMouseStageItems(selection).some(change => change.uri.path.toLowerCase() === uri.path.toLowerCase()));
             if (activeSelection && vscode.workspace.getConfiguration("better-git-vscode").get<string>("currentFileBadge", "🔥🔥")) {
-                const count = selectedMouseStageItems(activeSelection).length;
+                const count = selectedMouseStageItems(activeSelection, !!stagePreviewMode && stagePreviewMode.request === activeSelection.request).length;
                 return {
                     badge: "💥💥",
                     tooltip: count === 1
@@ -4794,10 +4796,12 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
         const repo = git?.getRepository(origin.change.uri);
         if (!repo) { mouseDebug(`${label} release ignored, repository is no longer open.`); return; } // A closed repository must not redirect the captured file to the first workspace repo.
-        if (heldSelection?.length) {
+        if (heldSelection !== undefined) {
             mouseDebug(`${label} release committing ${heldSelection.length} marked files.`);
-            await stageSelectedFilesAndAdvance(direction, heldSelection, check, origin.view);
-            return;
+            if (heldSelection.length) {
+                await stageSelectedFilesAndAdvance(direction, heldSelection, check, origin.view, !request?.excludePreviewOnRelease);
+            }
+            return; // An eyes-only selection is an empty batch, never a fallback stage of the origin.
         }
         const selected = [origin.change];
         const liveUnstaged = new Set(distinctUnstagedChanges(await getFileChanges(origin.change.uri))
@@ -5080,7 +5084,8 @@ const stageSelectedFilesAndAdvance = async (
     direction: "next" | "previous",
     selected: readonly FileChange[],
     check: NavigationCheckpoint = noNavigationCheckpoint,
-    priorView?: MouseReviewView
+    priorView?: MouseReviewView,
+    advance = true
 ): Promise<boolean> => {
     if (selected.length === 0) { return false; }
     const selectedKeys = selected.map(change => change.uri.toString());
@@ -5092,7 +5097,7 @@ const stageSelectedFilesAndAdvance = async (
         return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
     })) { return false; }
 
-    const current = distinctUnstagedChanges(await getFileChanges(selected[0].uri));
+    const current = advance ? distinctUnstagedChanges(await getFileChanges(selected[0].uri)) : [];
     const indexByUri = new Map(current.map((change, index) => [change.uri.toString(), index]));
     // The marked URI snapshot owns the transaction. Background edits, new files,
     // sorting changes or staging elsewhere must not redefine or veto that group.
@@ -5108,10 +5113,11 @@ const stageSelectedFilesAndAdvance = async (
     const target = direction === "next"
         ? after ?? before ?? remaining[0]
         : before ?? after ?? remaining[remaining.length - 1];
-    const activeWasSelected = selectedKeys.includes((await getActiveFileUri())?.toString() ?? "");
+    const activeWasSelected = advance && selectedKeys.includes((await getActiveFileUri())?.toString() ?? "");
     await stageBatchThroughExtension(repo, selected.map(change => change.uri),
         selected.map(change => stageUndoViewFromMouseReview(change.uri, priorView)).find(view => view));
     check();
+    if (!advance) { return true; } // Leave the excluded eyes editor/cursor/viewport untouched.
 
     if (!target) {
         // Keep the current view when this worktree is exhausted. Closing it would
