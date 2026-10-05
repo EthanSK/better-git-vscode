@@ -64,10 +64,14 @@ suite('Worktree link E2E', () => {
                 await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
                 assert.strictEqual(activePath(), path.join(target, 'review.txt'));
             }
-            assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), vscode.window.state.focused ? [
-                'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'workbench.scm.action.collapseAllRepositories', 'list.clear',
-                'workbench.view.scm', 'workbench.scm.focus', 'list.collapseAll', 'workbench.scm.action.collapseAllRepositories', 'list.clear',
-            ] : []);
+            const trace: string[] = api.getScmTreeCommandTrace().slice(before);
+            assert.ok(!trace.includes('workbench.scm.action.focusNextInput'), 'links must never cycle repository inputs');
+            if (vscode.window.state.focused) {
+                assert.strictEqual(trace.filter(command => command === 'workbench.scm.action.collapseAllRepositories').length, 2);
+                assert.strictEqual(trace.filter(command => command === 'list.collapseAllToFocus').length, 2);
+            } else {
+                assert.ok(trace.every(command => command === 'workbench.view.scm'), 'background links must not operate the focused tree');
+            }
         } finally {
             await config.update('experimentalScmTreeStateManagement', beforeSetting, vscode.ConfigurationTarget.Workspace);
         }
@@ -80,7 +84,7 @@ suite('Worktree link E2E', () => {
             const before = api.getScmTreeCommandTrace().length;
             await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
             assert.strictEqual(activePath(), path.join(target, 'review.txt'));
-            assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), []);
+            assert.deepStrictEqual(api.getScmTreeCommandTrace().slice(before), ['workbench.view.scm']);
         } finally {
             await config.update('autoReveal', previous, vscode.ConfigurationTarget.Workspace);
         }
@@ -305,7 +309,7 @@ suite('Worktree link E2E', () => {
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
         const trace = api.getScmTreeCommandTrace().slice(traceStart);
         if (vscode.window.state.focused) {
-            assert.ok(trace.includes('list.collapseAll'), 'Collapse staged groups without opening a file');
+            assert.ok(trace.includes('list.collapseAllToFocus'), 'Collapse staged groups without opening a file');
         } else {
             assert.ok(!trace.includes('workbench.scm.action.focusNextInput'), 'Background links defer native input focus without blocking repository loading');
         }

@@ -156,6 +156,8 @@ async function check(repo, name, file = 'a.txt') {
     assert.deepEqual([...headers].filter(([, expanded]) => expanded === 'true').map(([aria]) => aria), [`repo-${repo} Git`], `${name}: expanded repositories`);
     assert.equal(selectedRows.find(r => r.aria === 'Changes')?.expanded, 'true', `${name}: Changes must stay expanded`);
     assert.ok(selectedRows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ',')), `${name}: wrong selected file`);
+    const state = await request('state');
+    assert.ok(!state.trace.includes('workbench.scm.action.focusNextInput'), `${name}: Worktree links must not cycle repository inputs`);
     console.log(`PASS ${name}`);
 }
 async function key(key, code, virtualKey, modifiers = 0) {
