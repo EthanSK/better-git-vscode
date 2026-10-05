@@ -24,14 +24,14 @@ exports.run = async () => {
  try { api = await vscode.extensions.getExtension('EthanSK.better-git-vscode').activate(); }
  finally { vscode.window.registerUriHandler=registerUriHandler; cp.execFile=originalExecFile; }
  const roots = JSON.parse(fs.readFileSync(path.join(root,'roots.json'),'utf8'));
- for(const p of roots.slice(0, -1)) { const repo=git.getRepository(vscode.Uri.file(p)) ?? await git.openRepository(vscode.Uri.file(p)); await repo.status(); }
+ for(const p of process.env.BGV_NATIVE_SINGLE==='1' ? [roots[1]] : roots.slice(0, -1)) { const repo=git.getRepository(vscode.Uri.file(p)) ?? await git.openRepository(vscode.Uri.file(p)); await repo.status(); }
  await vscode.commands.executeCommand('workbench.view.scm');
- await vscode.commands.executeCommand('workbench.scm.action.expandAllRepositories');
+ if(process.env.BGV_NATIVE_SINGLE!=='1') await vscode.commands.executeCommand('workbench.scm.action.expandAllRepositories');
  const input = path.join(root,'request.json'), output=path.join(root,'result.json');
  let previous=0, busy=false;
  let watchedTabs=[];
  let tabWatch;
- const state=()=>({ mergeEditor: Boolean(vscode.window.tabGroups.activeTabGroup.activeTab?.input?.result), focused:vscode.window.state.focused, badge:api.getCurrentReviewUri() ? api.getReviewDecorationBadge(vscode.Uri.parse(api.getCurrentReviewUri())) : undefined, trace:api.getScmTreeCommandTrace(), active:String(vscode.window.activeTextEditor?.document.uri), tabs:vscode.window.tabGroups.activeTabGroup.tabs.map(t=>({label:t.label,active:t.isActive})) });
+ const state=()=>({ repositories:git.repositories.map(repo=>({root:repo.rootUri.fsPath,selected:repo.ui.selected})), mergeEditor: Boolean(vscode.window.tabGroups.activeTabGroup.activeTab?.input?.result), focused:vscode.window.state.focused, badge:api.getCurrentReviewUri() ? api.getReviewDecorationBadge(vscode.Uri.parse(api.getCurrentReviewUri())) : undefined, trace:api.getScmTreeCommandTrace(), active:String(vscode.window.activeTextEditor?.document.uri), tabs:vscode.window.tabGroups.activeTabGroup.tabs.map(t=>({label:t.label,active:t.isActive})) });
  fs.writeFileSync(path.join(root,'ready.json'),JSON.stringify({ roots, version:vscode.version, ...state() }));
  await new Promise(resolve=> {
   const timer=setInterval(async()=> {
@@ -79,6 +79,9 @@ exports.run = async () => {
     }
     else if(request.action==='git-config') {
      for(const [key,setting] of Object.entries(request.settings)) await vscode.workspace.getConfiguration('git').update(key,setting,vscode.ConfigurationTarget.Workspace);
+    }
+    else if(request.action==='scm-config') {
+     for(const [key,setting] of Object.entries(request.settings)) await vscode.workspace.getConfiguration('scm').update(key,setting,vscode.ConfigurationTarget.Workspace);
     }
     else if(request.action==='config') {
      const config=vscode.workspace.getConfiguration('better-git-vscode');

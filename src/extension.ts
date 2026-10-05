@@ -200,6 +200,10 @@ let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file 
 let stageTransactionStore: StageTransactionStore | undefined;
 let stageTransactionObserver: StageTransactionObserver | undefined;
 let stageUndoQueue: Promise<void> = Promise.resolve();
+// Git's getRepository(Uri) sorts its own repository array in place by path
+// length. SCM's discovery order does not change: retain the open-event order.
+const repositoryDiscoveryOrder = new Map<string, number>();
+let nextRepositoryDiscoveryOrder = 0;
 const startIndexTransitionObservation = async (context: vscode.ExtensionContext): Promise<void> => {
     const gitExtension = vscode.extensions.getExtension<any>("vscode.git");
     if (!gitExtension || !stageTransactionObserver) {
@@ -213,6 +217,10 @@ const startIndexTransitionObservation = async (context: vscode.ExtensionContext)
 
     const attachedRoots = new Set<string>();
     const attach = (repo: any): void => {
+        const uri = repo?.rootUri?.toString();
+        if (uri && !repositoryDiscoveryOrder.has(uri)) {
+            repositoryDiscoveryOrder.set(uri, nextRepositoryDiscoveryOrder++);
+        }
         const repoRoot = String(repo?.rootUri?.fsPath ?? "");
         if (!repoRoot || attachedRoots.has(repoRoot)) {
             return;
@@ -236,6 +244,11 @@ const startIndexTransitionObservation = async (context: vscode.ExtensionContext)
     }
     if (typeof git.onDidOpenRepository === "function") {
         context.subscriptions.push(git.onDidOpenRepository(attach));
+    }
+    if (typeof git.onDidCloseRepository === "function") {
+        context.subscriptions.push(git.onDidCloseRepository((repo: any) => {
+            repositoryDiscoveryOrder.delete(repo.rootUri.toString());
+        }));
     }
 };
 
@@ -2531,21 +2544,48 @@ const revealCollapsedWorktree = async (
     await executeScmTreeCommand("manual", "workbench.view.scm");
     if (!isCurrent()) { return false; }
     if (!vscode.window.state.focused) { onDeferred(); return false; }
+    const implicitRepository = repositories.length === 1
+        && !vscode.workspace.getConfiguration("scm").get<boolean>("alwaysShowRepositories", false);
     // One short wait for Git's 100 ms resource publication, not a quiet-period
     // watcher across every unrelated worktree in the workspace.
     if (!await pause(200)) { return false; }
-    await executeScmTreeCommand("manual", SCM_COLLAPSE_ALL_REPOS_COMMAND);
-    if (!await pause()) { return false; }
+    if (!implicitRepository) {
+        await executeScmTreeCommand("manual", SCM_COLLAPSE_ALL_REPOS_COMMAND);
+        if (!await pause()) { return false; }
+    }
     await executeScmTreeCommand("manual", "workbench.scm.focus");
     if (!await pause()) { return false; }
-    if (repositories.length === 1 && !vscode.workspace.getConfiguration("scm").get<boolean>("alwaysShowRepositories", false)) {
-        if ((repository.state.indexChanges ?? []).length > 0) {
+    const collapseStagedGroup = async (hasHeader: boolean, firstGroupFocused = false): Promise<boolean> => {
+        if ((repository.state.indexChanges ?? []).length === 0
+            && !vscode.workspace.getConfiguration("git", repository.rootUri)
+                .get<boolean>("alwaysShowStagedChangesResourceGroup", false)) { return true; }
+        // Git has a fixed group order: optional Merge, then Staged. Select the
+        // group itself: recursive collapse of an already-closed root can retain
+        // its cached child expansion state in the native AsyncDataTree.
+        const groupIndex = Number((repository.state.mergeChanges ?? []).length > 0);
+        for (let group = Number(firstGroupFocused); group <= groupIndex; group++) {
             await executeScmTreeCommand("manual", "workbench.scm.action.focusNextResourceGroup");
             if (!await pause()) { return false; }
-            await executeScmTreeCommand("manual", "list.collapseAll");
-            if (!await pause()) { return false; }
+        }
+        await executeScmTreeCommand("manual", "list.collapseAllToFocus");
+        if (!await pause()) { return false; }
+        if (hasHeader) {
+            await executeScmTreeCommand("manual", "list.focusParent");
+            if (!await pause(50)) { return false; }
         }
         return true;
+    };
+    if (implicitRepository) {
+        // No repository node exists in this native tree. The global repository
+        // collapse command throws there, and retained file focus could skip
+        // Staged when advancing groups. Start at the commit controls instead.
+        await executeScmTreeCommand("manual", "list.clear");
+        await executeScmTreeCommand("manual", "list.focusFirst");
+        if (!await pause(50)) { return false; }
+        const firstGroupFocused = !vscode.workspace.getConfiguration("git", repository.rootUri)
+            .get<boolean>("showCommitInput", true)
+            && !vscode.workspace.getConfiguration("scm").get<boolean>("showActionButton", true);
+        return collapseStagedGroup(false, firstGroupFocused);
     }
     await executeScmTreeCommand("manual", "list.clear");
     await executeScmTreeCommand("manual", "list.focusFirst");
@@ -2553,9 +2593,15 @@ const revealCollapsedWorktree = async (
     const order = vscode.workspace.getConfiguration("scm").get<string>("repositories.sortOrder", "discovery time");
     const ordered = [...repositories];
     if (order === "name" || order === "path") {
-        ordered.sort((a, b) => fileNameCollator.compare(
-            order === "name" ? path.basename(a.rootUri.fsPath) : a.rootUri.fsPath,
-            order === "name" ? path.basename(b.rootUri.fsPath) : b.rootUri.fsPath));
+        const label = (repo: any): string => {
+            const folder = vscode.workspace.getWorkspaceFolder(repo.rootUri);
+            return folder && folder.uri.toString() === repo.rootUri.toString() ? folder.name : path.basename(repo.rootUri.fsPath);
+        };
+        ordered.sort((a, b) => (order === "name" ? fileNameCollator.compare(label(a), label(b)) : 0)
+            || fileNameCollator.compare(a.rootUri.fsPath, b.rootUri.fsPath));
+    } else {
+        ordered.sort((a, b) => (repositoryDiscoveryOrder.get(a.rootUri.toString()) ?? Number.MAX_SAFE_INTEGER)
+            - (repositoryDiscoveryOrder.get(b.rootUri.toString()) ?? Number.MAX_SAFE_INTEGER));
     }
     const index = ordered.findIndex(candidate => candidate.rootUri.toString() === repository.rootUri.toString());
     if (index < 0) { return false; }
@@ -2563,7 +2609,10 @@ const revealCollapsedWorktree = async (
         await executeScmTreeCommand("manual", "list.focusDown", index);
         if (!await pause(50)) { return false; }
     }
-    await executeScmTreeCommand("manual", "list.select");
+    // Collapse the focused header before dispatching its selection. Selecting
+    // first can let native reveal move focus to a child before we collapse it.
+    // This native command collapses recursively, then selects that same header.
+    await executeScmTreeCommand("manual", "list.collapseAllToFocus");
     if (!await pause(150)) { return false; }
     if (!repository.ui.selected) {
         // Hidden/reordered repository headers can invalidate the position hint.
@@ -2572,12 +2621,14 @@ const revealCollapsedWorktree = async (
         debugLog("worktree-link", `Native repository position did not match ${repository.rootUri.fsPath}; stopped presentation.`);
         return false;
     }
-    // Collapse only this repository's children, then reopen its header. This
-    // closes Staged Changes without traversing or expanding any other worktree.
-    await executeScmTreeCommand("manual", "list.collapseAllToFocus");
-    if (!await pause()) { return false; }
+    // Selection can move focus to the commit input. All headers are still
+    // collapsed, so reacquire the target directly without selecting it again.
+    await executeScmTreeCommand("manual", "list.focusFirst");
+    if (index > 0) { await executeScmTreeCommand("manual", "list.focusDown", index); }
+    if (!await pause(50)) { return false; }
     await executeScmTreeCommand("manual", "list.expand");
-    return pause();
+    if (!await pause()) { return false; }
+    return collapseStagedGroup(true);
 };
 
 const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent: () => boolean = () => true,

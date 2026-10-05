@@ -27,6 +27,8 @@ const testMergeLink = process.argv.includes('--merge-link');
 const testNoUnstaged = process.argv.includes('--no-unstaged');
 const testStageReveal = process.argv.includes('--stage-reveal');
 const testDeletedLink = process.argv.includes('--deleted-link');
+const testLinkOnly = process.argv.includes('--link-only');
+const testSingleRepository = process.argv.includes('--single-repository');
 async function until(read, accept, description, timeout = 15_000) {
     const end = Date.now() + timeout;
     let last;
@@ -65,8 +67,8 @@ for (const [directory, count] of [['bulk-staged', 330], ['bulk-working', 391]]) 
 git(largeRepo, 'add', 'bulk-staged');
 fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify(roots));
 const workspace = path.join(root, 'native-worktree.code-workspace');
-fs.writeFileSync(workspace, JSON.stringify({ folders: roots.slice(0, -1).map(p => ({ path: p })), settings: {
-    'scm.alwaysShowRepositories': true, 'scm.repositories.selectionMode': 'multiple',
+fs.writeFileSync(workspace, JSON.stringify({ folders: (testSingleRepository ? [roots[1]] : roots.slice(0, -1)).map(p => ({ path: p })), settings: {
+    'scm.alwaysShowRepositories': !testSingleRepository, 'scm.repositories.selectionMode': 'multiple',
     'git.openRepositoryInParentFolders': 'never', 'git.detectWorktrees': false,
     'git.autoRepositoryDetection': false, 'workbench.startupEditor': 'none',
     'better-git-vscode.experimentalScmTreeStateManagement': false,
@@ -90,7 +92,7 @@ const log = fs.openSync(path.join(evidence, 'native-worktree.log'), 'w');
 const child = spawn(executable, [workspace, `--user-data-dir=${profile}`, `--extensions-dir=${path.join(root, 'extensions')}`,
     `--extensionDevelopmentPath=${extensionRoot}`, `--extensionTestsPath=${path.join(extensionRoot, 'scripts/worktree-native-test-driver.cjs')}`,
     `--remote-debugging-port=${port}`, '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-telemetry'],
-{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '' }, stdio: ['ignore', log, log] });
+{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '' }, stdio: ['ignore', log, log] });
 let socket;
 let activationMonitor;
 let nextRequest = 0;
@@ -304,6 +306,7 @@ try {
         console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);
         process.exitCode = 0;
     } else {
+    if (!testSingleRepository) {
     await request('plain', { repo: 0 });
     const graph = await evaluate(`(()=>{const r=[...document.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')==='base, Test'); if(!r)return null; const b=r.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2};})()`);
     assert.ok(graph, 'visible Source Control Graph commit');
@@ -314,20 +317,36 @@ try {
     await request('open', { repo: 0 }); await check(0, 'first-open');
     await request('open', { repo: 0 }); await check(0, 'repeat-open');
     await request('open', { repo: 1 }); await check(1, 'switch-worktree');
+    if (testLinkOnly) {
+        // Cached child expansion survived recursive collapse of a closed root.
+        // Repeat alternating roots to exercise that native tree state, not just
+        // the first clean opening of a fixture.
+        for (let repeat = 0; repeat < 3; repeat++) {
+            for (const repo of [0, 1]) {
+                await request('open', { repo }); await check(repo, `repeat-switch-${repeat}-${repo}`);
+            }
+        }
+    }
+    }
     async function expandStagedGroup() {
+        const stagedVisible = () => evaluate(`(()=>{const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');const row=[...tree.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')==='Staged Changes');if(!row)return false;const r=row.getBoundingClientRect(),t=tree.getBoundingClientRect();return r.top>=t.top && r.bottom<=t.bottom;})()`);
         const treePoint = await evaluate(`(()=>{const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');const b=tree.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+Math.min(100,b.height/2)};})()`);
         for (const direction of [1, -1]) {
             for (let attempt = 0; attempt < 20; attempt++) {
-                if ((await evaluate(rowsExpression)).some(row => row.aria === 'Staged Changes')) { break; }
+                if (await stagedVisible()) { break; }
                 await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...treePoint, deltaX: 0, deltaY: direction * 700 });
                 await pause(70);
             }
-            if ((await evaluate(rowsExpression)).some(row => row.aria === 'Staged Changes')) { break; }
+            if (await stagedVisible()) { break; }
         }
+        assert.ok(await stagedVisible(),'Staged Changes must be inside the tree viewport before clicking');
+        if ((await evaluate(rowsExpression)).some(row=>row.aria==='Staged Changes' && row.expanded==='true')) { return; }
         const point = await evaluate(`(()=>{const row=[...document.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')==='Staged Changes');const r=row.querySelector('.monaco-tl-twistie').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+        await send('Input.dispatchMouseEvent', {type:'mouseMoved',...point});
         for (const type of ['mousePressed', 'mouseReleased']) { await send('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 }); }
-        assert.ok((await evaluate(rowsExpression)).some(r => r.aria === 'Staged Changes' && r.expanded === 'true'));
+        await until(()=>evaluate(rowsExpression), rows=>rows.some(r=>r.aria==='Staged Changes' && r.expanded==='true'), 'manual Staged Changes expansion');
     }
+    if (!testSingleRepository) {
     await expandStagedGroup();
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'same-editor-hidden-scm');
@@ -336,6 +355,7 @@ try {
     fs.writeFileSync(path.join(roots[1], 'staged-late.txt'), 'late staged change\n'); git(roots[1], 'add', 'staged-late.txt');
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'switch-after-staged-refresh');
+    }
     if (testDeletedLink) {
         fs.unlinkSync(path.join(roots[4], 'a.txt'));
         await request('refresh', { repo: 4 });
@@ -443,6 +463,32 @@ try {
             console.log(`PASS no-unstaged-fresh-${kind}`);
         }
         console.log('BETTER_GIT_NO_UNSTAGED_REVEAL_VERIFIED');
+    } else if (testSingleRepository) {
+        assert.equal((await request('state')).repositories.length,1);
+        await request('plain',{repo:1});
+        await expandStagedGroup();
+        await request('open',{repo:1});
+        assert.equal((await evaluate(rowsExpression)).find(r=>r.aria==='Staged Changes')?.expanded,'false','single unstaged: staged collapsed');
+        const original=await request('state');
+        for (const kind of ['staged','staged-no-input','staged-no-controls','clean','empty-staged-no-input']) {
+            if(kind==='staged') git(roots[1],'add','.');
+            else if(kind==='clean') git(roots[1],'reset','--hard','HEAD');
+            if(kind==='staged-no-input') await request('git-config',{settings:{showCommitInput:false}});
+            if(kind==='staged-no-controls') await request('scm-config',{settings:{showActionButton:false}});
+            if(kind==='empty-staged-no-input') await request('git-config',{settings:{alwaysShowStagedChangesResourceGroup:true}});
+            await request('refresh',{repo:1});
+            if(kind!=='clean') await expandStagedGroup();
+            const before=git(roots[1],'status','--porcelain=v1');
+            await request('watch-tabs');
+            await request('open',{repo:1});
+            await pause(350);
+            await capture(`single-${kind}`);
+            assert.ok((await evaluate(rowsExpression)).filter(r=>r.aria==='Staged Changes').every(r=>r.expanded==='false'));
+            assert.deepEqual((await request('watched-tabs')).value,[]);
+            assert.equal((await request('state')).active,original.active);
+            assert.equal(git(roots[1],'status','--porcelain=v1'),before);
+            console.log(`PASS single-${kind}`);
+        }
     } else if (testLinkBackground) {
         const jxa = code => execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit'); ${code}`], { encoding: 'utf8' });
         const focusCode = () => jxa(`$.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`);
@@ -628,7 +674,7 @@ try {
         await verifyReturn(1, appA, 'com.microsoft.VSCode', 'editor-front-master-disabled');
         console.log('BETTER_GIT_ORIGIN_APP_ORDER_VERIFIED');
         await request('config', { settings: { worktreeLinkReturnFocus: false, worktreeLinkReturnApp: '' } });
-    } else {
+    } else if (!testLinkOnly) {
     // Native keyboard input exercises the mouse protocol's readiness/clear/release
     // command path. Physical mouse hardware itself is outside this harness.
     await key('F20', 'F20', 131, 7);
@@ -713,7 +759,11 @@ try {
         console.log('BETTER_GIT_KEYBOARD_REPEAT_VERIFIED repeated-keydown=one-stage release-and-repress=next-stage untagged-F18=unchanged');
     }
     }
-    if (!testNoUnstaged && !testMergeLink) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
+    if (!testNoUnstaged && !testMergeLink && !testSingleRepository) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
+        if (testDeletedLink && repo === roots[4] && file === 'a.txt') {
+            assert.equal(fs.existsSync(path.join(repo, file)), false, 'deleted link must not recreate its working file');
+            continue;
+        }
         assert.equal(fs.readFileSync(path.join(repo, file), 'utf8'), 'modified\n');
     }
     console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);

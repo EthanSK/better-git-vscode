@@ -376,7 +376,15 @@ suite('Worktree link E2E', () => {
                 assert.ok(changes > 0, 'Repeat must change the custom/image editor input');
                 assert.strictEqual(api.getCurrentReviewUri(), image.toString());
                 assert.strictEqual(runGit(target, 'status', '--porcelain=v1'), before);
-            } finally { listener.dispose(); }
+            } finally {
+                listener.dispose();
+                // The next fixture resets/removes this image. Dispose its
+                // test-owned preview first: a late native media-editor close
+                // during the next link correctly invalidates tab ownership.
+                const imageTabs = vscode.window.tabGroups.all.flatMap(group => group.tabs)
+                    .filter(tab => tab.label.includes('00-repeat.png'));
+                if (imageTabs.length > 0) { await vscode.window.tabGroups.close(imageTabs, true); }
+            }
         });
     }
     test('the link prefers an unstaged deletion over an already-staged file', async () => {
@@ -390,7 +398,9 @@ suite('Worktree link E2E', () => {
         await api.whenReviewDecorationSettled();
         assert.strictEqual(api.getCurrentReviewUri(), vscode.Uri.file(path.join(target, 'review.txt')).toString());
         if (vscode.window.state.focused) {
-            assert.ok(api.getScmTreeCommandTrace().slice(traceStart).includes('list.collapseAll'),
+            const trace = api.getScmTreeCommandTrace().slice(traceStart);
+            assert.ok(trace.includes('workbench.scm.action.collapseAllRepositories')
+                && trace.includes('list.collapseAllToFocus'),
                 'deletions must fold peers and Staged Changes too');
             assert.ok(api.getScmTreeCommandTrace().slice(traceStart).includes('list.expand'),
                 'reopen the deleted file\'s Changes group without relying on Auto Reveal');
@@ -436,7 +446,10 @@ suite('Worktree link E2E', () => {
         await git.openRepository(vscode.Uri.file(target));
         // This is the final test: closed fixture repositories remain closed
         // until the disposable host exits, rather than rediscovering mid-check.
-        await vscode.commands.executeCommand('git.closeOtherRepositories', vscode.Uri.file(target));
+        for (const repo of git.repositories.filter((repo: any) => repo.rootUri.fsPath !== target)) {
+            await vscode.commands.executeCommand('git.close', repo.rootUri);
+        }
+        await git.openRepository(vscode.Uri.file(target));
         assert.strictEqual(git.repositories.length, 1);
         const config = vscode.workspace.getConfiguration('scm');
         const previous = config.inspect<boolean>('alwaysShowRepositories')?.workspaceValue;

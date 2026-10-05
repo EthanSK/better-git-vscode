@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.120
+
+- Open Worktree links through one native Collapse All Repositories action, then expand the requested worktree and collapse its Staged Changes. Use short waits between queued native steps instead of cycling through repository inputs or waiting on every worktree's activity.
+- Preserve Source Control's discovery order when Git's repository lookup reorders its API array, including newly opened worktrees with longer paths.
+- Keep deleted, conflicting, clean and staged-only worktrees on the same presentation path, preserving background loading and the early optional app handoff.
+
 ## 1.2.119
 
 - Keep an interrupted Worktree link presentation pending until the receiving window regains focus, including focus changes while its work is queued. Preserve cancellation and newer-link ownership without polling or an extra launch delay.
