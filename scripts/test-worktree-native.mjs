@@ -26,6 +26,7 @@ const testHeldClick = process.argv.includes('--held-click');
 const testMergeLink = process.argv.includes('--merge-link');
 const testNoUnstaged = process.argv.includes('--no-unstaged');
 const testStageReveal = process.argv.includes('--stage-reveal');
+const testDeletedLink = process.argv.includes('--deleted-link');
 async function until(read, accept, description, timeout = 15_000) {
     const end = Date.now() + timeout;
     let last;
@@ -333,7 +334,27 @@ try {
     fs.writeFileSync(path.join(roots[1], 'staged-late.txt'), 'late staged change\n'); git(roots[1], 'add', 'staged-late.txt');
     await request('command', { command: 'workbench.view.explorer' });
     await request('open', { repo: 1 }); await check(1, 'switch-after-staged-refresh');
-    if (testMergeLink) {
+    if (testDeletedLink) {
+        fs.unlinkSync(path.join(roots[4], 'a.txt'));
+        await request('refresh', { repo: 4 });
+        const before = git(roots[4], 'status', '--porcelain=v1');
+        for (const repeat of [false, true]) {
+            if (!repeat) { await request('plain', { repo: 0 }); }
+            await request('command', { command: 'workbench.scm.action.expandAllRepositories' });
+            await request('command', { command: 'workbench.scm.history.focus' });
+            await request('uri', { uri: `vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[4])}` });
+            await pause(350);
+            const name = `deleted-link-${repeat ? 'repeat' : 'switch'}`;
+            await capture(name);
+            const rows = await evaluate(rowsExpression);
+            assert.deepEqual(rows.filter(r => r.level === '1' && r.expanded === 'true' && / Git$/.test(r.aria)).map(r => r.aria), ['repo-4 Git'], name);
+            assert.equal(rows.find(r => r.aria === 'Changes')?.expanded, 'true', name + ': Changes expanded');
+            assert.equal(rows.find(r => r.aria === 'Staged Changes')?.expanded, 'false', name + ': Staged collapsed');
+            assert.ok((await request('state')).active.includes('/repo-4/a.txt'), name + ': deleted content stays open');
+            assert.equal(git(roots[4], 'status', '--porcelain=v1'), before, name + ': Git unchanged');
+            console.log(`PASS ${name}`);
+        }
+    } else if (testMergeLink) {
         const repo = roots[1];
         git(repo, 'reset', '--hard', 'HEAD');
         git(repo, 'clean', '-fd');

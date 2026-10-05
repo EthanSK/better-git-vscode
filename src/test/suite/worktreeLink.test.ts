@@ -212,7 +212,7 @@ suite('Worktree link E2E', () => {
             await api.whenReviewDecorationSettled();
             assert.strictEqual(api.getCurrentReviewUri(), first.toString());
             if (kind === 'deleted') {
-                // The link prefers existing files; make the next entry after it opens the deletion fallback.
+                // Add the next entry after the link opens the deletion fallback.
                 fs.writeFileSync(next.fsPath, 'next file\n');
                 await git.getRepository(first).status();
             }
@@ -381,9 +381,16 @@ suite('Worktree link E2E', () => {
         fs.writeFileSync(path.join(target, '00-staged.txt'), 'already staged\n');
         runGit(target, 'add', '00-staged.txt');
         fs.unlinkSync(path.join(target, 'review.txt'));
+        const traceStart = api.getScmTreeCommandTrace().length;
         await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
         await api.whenReviewDecorationSettled();
         assert.strictEqual(api.getCurrentReviewUri(), vscode.Uri.file(path.join(target, 'review.txt')).toString());
+        if (vscode.window.state.focused) {
+            assert.ok(api.getScmTreeCommandTrace().slice(traceStart).includes('list.collapseAll'),
+                'deletions must fold peers and Staged Changes too');
+            assert.ok(api.getScmTreeCommandTrace().slice(traceStart).includes('list.expand'),
+                'reopen the deleted file\'s Changes group without relying on Auto Reveal');
+        }
         await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
         assert.strictEqual(runGit(target, 'diff', '--name-only'), '');
         assert.strictEqual(runGit(target, 'show', ':00-staged.txt'), 'already staged\n');
