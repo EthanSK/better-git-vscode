@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.119
+
+- Keep an interrupted Worktree link presentation pending until the receiving window regains focus, including focus changes while its work is queued. Preserve cancellation and newer-link ownership without polling or an extra launch delay.
+- Collapse peer worktrees and Staged Changes when the first unstaged file is deleted, while opening its Git content and expanding the requested worktree’s Changes group.
+- Distinguish repository loading from deferred native presentation in the Worktree link log.
+
 ## 1.2.118
 
 - Complete the optional origin-app then VS Code handoff before worktree discovery, Git refresh and Source Control settling, so the origin is immediately available through the app switcher.
