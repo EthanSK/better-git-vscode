@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-10-07 — Commit interrupted held selections without their current preview
+
+Window focus loss previously called the full navigation invalidator, deleting the held staging set before a later physical release could commit it. Snapshot only the latest active, stage-ready, source-owned selection before retiring the gesture. Exclude its selection endpoint in both Eyes and ordinary file mode; also exclude the visibly open file if a preview transition or manual editor choice differs. Queue the captured files as one existing batch transaction, without navigation, a focus requirement, app activation or an added input delay. Cancel pending wheel work rather than letting it enlarge the set after interruption. Late/repeated release events have no remaining origin to stage again. Ordinary release and explicit adjacent cancellation retain their existing rules.
+
+Recheck the navigation generation after readiness awaits the Git file list. Otherwise focus loss during that await can retire the gesture yet let its continuation recreate stage-ready feedback. Interrupted empty, short and explicitly cancelled holds remain inert.
+
+Verification: 129 non-GUI tests, TypeScript, ESLint and production packaging passed. The exact production bundle passed 21 focused isolated Mini tests, including real AppKit focus changes from VS Code to Finder, both sources/directions/modes, normal release, queued release and adjacent cancellation. Strengthened eight interruption cases to stage two reviewed files after backtracking, leave the endpoint and removed file unstaged, preserve the editor/cursor/viewport and existing staged history, reject repeated releases, and restore the exact prior index with one Undo; all 11 focused app-switch cases passed. Production JavaScript SHA-256 is `2edb6ea8903a037019854638773ed042f61ff14f48fa7a23d7a51e8d89b86d64`. No focus predicate was bypassed and no MacBook E2E or Extension Development Host was used. Physical mouse delivery remains separate from these native lifecycle tests.
+
 ## 2026-10-05 — Native foreground Worktree selection and cached Staged expansion
 
 This supersedes the earlier draft's assumption that recursively collapsing an already-collapsed repository always clears its children's expansion state. A native focus trace proved that the intended repository header owned `list.collapseAllToFocus`, yet its cached Staged Changes group reappeared expanded when the root reopened. Expand only the validated target, focus Git's visible Staged group (optional Merge precedes it), collapse that group explicitly, then return focus to the repository header before previewing its top unstaged file. Do not recollapse later or cycle repository commit inputs.

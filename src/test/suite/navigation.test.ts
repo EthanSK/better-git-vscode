@@ -167,6 +167,12 @@ suite('SCM change navigation E2E', () => {
 			`ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid}).activateWithOptions(2);`]);
 		await poll(() => vscode.window.state.focused, 'disposable VS Code window to gain focus');
 	};
+	const switchAwayFromIsolatedTestWindow = async () => {
+		assert.ok(vscode.window.state.focused, 'start from the real focused test window');
+		execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e',
+			"ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);"]);
+		await poll(() => !vscode.window.state.focused, 'actual app switch away from the test window');
+	};
 
 	// n lines joined WITHOUT a trailing newline, so document.lineCount === n exactly — keeps the
 	// step-target arithmetic in assertions deterministic (a trailing \n adds a phantom empty last line).
@@ -2819,6 +2825,89 @@ suite('SCM change navigation E2E', () => {
 				} finally { await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global); }
 			});
 		}
+	}
+
+	for (const source of ['corsair', 'razer']) {
+		for (const direction of ['next', 'previous']) {
+			for (const eyes of [false, true]) {
+				test(`app switch commits the reduced ${source} ${direction} ${eyes ? 'eyes' : 'file'} batch without its current preview`, async () => {
+					const config = vscode.workspace.getConfiguration('better-git-vscode');
+					const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+					await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+					try {
+						write('switch_history.txt', 'earlier stage');
+						const names = ['switch_a.txt', 'switch_b.txt', 'switch_c.txt', 'switch_d.txt'];
+						for (const name of names) { write(name, name); }
+						await refreshUntil(() => isUntracked('switch_history.txt') && names.every(isUntracked), 'app switch files');
+						await openPlainAt('switch_history.txt', 0);
+						await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+						const priorIndex = git('write-tree');
+						const start = direction === 'next' ? 0 : 3;
+						await openPlainAt(names[start], 0);
+						await focusIsolatedTestWindow();
+						await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+						await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+						await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, eyes);
+						const forward = direction === 'next' ? 'down' : 'up';
+						for (let n = 0; n < 3; n++) {
+							await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', source, forward);
+						}
+						await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', source, direction === 'next' ? 'up' : 'down');
+						const endpoint = direction === 'next' ? 2 : 1;
+						assert.strictEqual(activeTabPath(), wsUri(names[endpoint]).path, 'backtracking must reduce the batch before the app switch');
+						const editor = visibleEditorFor(wsUri(names[endpoint]))!;
+						editor.selection = new vscode.Selection(0, 1, 0, 3);
+						const cursor = editor.selection;
+						const top = editor.visibleRanges[0].start.line;
+						const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+						await switchAwayFromIsolatedTestWindow();
+						const expected = [...(direction === 'next' ? names.slice(0, 2) : names.slice(2)), 'switch_history.txt'].sort().join('\n');
+						await poll(() => git('diff --cached --name-only') === expected, 'interrupted batch to stage in the background');
+						assert.strictEqual(vscode.window.state.focused, false, 'background stage must not reactivate VS Code');
+						assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'interruption must not navigate');
+						assert.deepStrictEqual(editor.selection, cursor);
+						assert.strictEqual(editor.visibleRanges[0].start.line, top);
+						await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+						await focusIsolatedTestWindow();
+						await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+						assert.strictEqual(git('diff --cached --name-only'), expected, 'late and repeated physical releases must be inert');
+						await extensionApi.whenStageTransactionsSettled();
+						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+						assert.strictEqual(git('write-tree'), priorIndex, 'one exact Undo restores the prior index including earlier stages');
+						for (const name of names) { assert.strictEqual(fs.readFileSync(wsUri(name).fsPath, 'utf8'), name); }
+					} finally {
+						await focusIsolatedTestWindow();
+						await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+					}
+				});
+			}
+		}
+	}
+
+	for (const state of ['short', 'single', 'cancelled']) {
+		test(`app switch keeps an empty ${state} hold inert`, async () => {
+			const config = vscode.workspace.getConfiguration('better-git-vscode');
+			const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+			try {
+				write('switch_only.txt', 'still reviewing');
+				await refreshUntil(() => isUntracked('switch_only.txt'), 'single app switch file');
+				await openPlainAt('switch_only.txt', 0);
+				await focusIsolatedTestWindow();
+				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+				if (state !== 'short') { await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair'); }
+				if (state === 'cancelled') { await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', 'corsair'); }
+				await switchAwayFromIsolatedTestWindow();
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+				await focusIsolatedTestWindow();
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+				assert.strictEqual(git('diff --cached --name-only'), '', 'short, excluded-only and explicitly cancelled holds cannot stage');
+				assert.strictEqual(activeTabPath(), wsUri('switch_only.txt').path);
+			} finally {
+				await focusIsolatedTestWindow();
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+			}
+		});
 	}
 
 	test('eyes-only release is inert and preserves earlier Undo history', async () => {
