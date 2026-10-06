@@ -1476,6 +1476,27 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (affected.length) { reviewDecoEmitter.fire(affected); }
     };
     clearStageHoldFeedbackRequest = clearStageHoldFeedback;
+    const stageHeldSelectionOnFocusLoss = (): Promise<void> => {
+        // Snapshot before invalidation retires the physical gesture. Queued/in-flight
+        // wheel work must not add files after the user has left this window.
+        const request = latestMouseHoldRequest;
+        const owner = [...stageHoldSelections.entries()].find(([source, selection]) =>
+            request?.active && request.stageReadyRequested && selection.request === request
+            && mouseHoldRequests.get(source) === request
+            && mouseNavigationOrigins.get(source)?.holdRequest === request);
+        const origin = owner ? mouseNavigationOrigins.get(owner[0]) : undefined;
+        const shown = currentReviewFileUri()?.toString();
+        const selected = owner ? selectedMouseStageItems(owner[1], true)
+            // A preview open may still be settling, or the user may have clicked
+            // another editor. Never stage the visible file on an interruption either.
+            .filter(change => change.uri.toString() !== shown) : [];
+        invalidateChangeNavigation();
+        if (!owner || !origin || selected.length === 0) { return Promise.resolve(); }
+        mouseDebug(`${mouseSourceLabel(owner[0])} app switch committing ${selected.length} marked files, excluding the current preview.`);
+        return serializeChangeNavigation(() => runStageCommand(async () => {
+            await stageSelectedFilesAndAdvance(origin.direction, selected, noNavigationCheckpoint, origin.view, false);
+        }), true);
+    };
     prepareStageHoldReleaseRequest = (source, request) => {
         // Capture mode before feedback clears; queued ratchets still determine the final endpoint.
         request.excludePreviewOnRelease = stagePreviewMode?.source === source && stagePreviewMode.request === request;
@@ -1685,6 +1706,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             const target = origin?.held ? origin.change.uri : currentReviewUri;
             if (target) {
                 const changes = distinctUnstagedChanges(await getFileChanges(target));
+                check(); // Focus loss may retire this hold while Git's file list is loading.
                 const anchorIndex = changes.findIndex(change => change.uri.toString() === target.toString());
                 const selection = createMouseStageSelection(changes, anchorIndex, origin?.direction ?? "next");
                 if (!selection) {
@@ -2059,7 +2081,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         stageHoldReadyCommand, stageHoldClearCommand, stageHoldAdjustCommand,
         stageHoldPreviewNavigationCommand, stagePreviewModeCommand,
         vscode.window.onDidChangeWindowState(state => {
-            if (!state.focused) { invalidateChangeNavigation(); clearStageHoldFeedback(); }
+            if (!state.focused) { void stageHeldSelectionOnFocusLoss(); }
         }),
         openIndexInSystemBrowserCommand,
         copyWorktreeNameCommand,

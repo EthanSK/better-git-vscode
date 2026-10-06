@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.121
+
+- When an app switch interrupts a held staging selection, stage its reviewed files once and leave the current preview unstaged in both Eyes and file mode. Keep the background editor still and preserve one exact batch Undo.
+- Keep normal button release and explicit cancellation unchanged; late releases cannot stage the interrupted gesture again.
+
 ## 1.2.120
 
 - Open Worktree links through one native Collapse All Repositories action, then expand the requested worktree and collapse its Staged Changes. Use short waits between queued native steps instead of cycling through repository inputs or waiting on every worktree's activity.
