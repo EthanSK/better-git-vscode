@@ -2977,6 +2977,39 @@ const getActiveChange = async (): Promise<ActiveChange | null> => {
         }
     }
 
+    // Single media/notebook previews also expose their resource. Git opens deleted images as single
+    // HEAD/index previews, even when an earlier staged edit/new image shares the same path. Keeping their
+    // side unknown rejects the hold as ambiguous. Use the resource's explicit side, as text tabs do;
+    // opaque comparisons and historical Git refs still retain the path-only safety guard below.
+    if (input instanceof vscode.TabInputCustom || input instanceof vscode.TabInputNotebook) {
+        const resolved = toFilePathUri(input.uri);
+        if (resolved) {
+            if (input.uri.scheme === "file") { return { path: resolved.path, staged: false }; }
+            if (input.uri.scheme === "better-git-staged-image") { return { path: resolved.path, staged: true }; }
+            if (input.uri.scheme === "git") {
+                try {
+                    const ref = JSON.parse(input.uri.query)?.ref;
+                    if (ref === "~") { return { path: resolved.path, staged: false }; }
+                    if (ref === "") { return { path: resolved.path, staged: true }; }
+                    if (ref === "HEAD") {
+                        // Both staged and unstaged deletions show HEAD. A recreated working file must
+                        // never be selected from the staged-deletion preview of the same path.
+                        const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+                        const repo = git?.getRepository(resolved);
+                        const matches = (changes: any[], status: number) => (changes ?? []).some((change: any) =>
+                            change.status === status && change.uri.path.toLowerCase() === resolved.path.toLowerCase());
+                        if (matches(repo?.state.indexChanges, GitStatus.INDEX_DELETED)) {
+                            return { path: resolved.path, staged: true };
+                        }
+                        if (matches(repo?.state.workingTreeChanges, GitStatus.DELETED)) {
+                            return { path: resolved.path, staged: false };
+                        }
+                    }
+                } catch { /* Unknown resource metadata must not guess a staged side. */ }
+            }
+        }
+    }
+
     // Fallback for genuinely non-textual files (images/media/future custom diffs): path only, side unknown.
     // The async shared resolver owns the workbench path fallback and rejects stale/non-change tabs.
     const reviewUri = await currentReviewFileUriAsync();
