@@ -2454,6 +2454,122 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+
+
+	for (const source of ['corsair', 'razer']) {
+		for (const surface of ['working image', 'working notebook', 'staged image', 'staged deletion', 'clean image']) {
+			test(`non-text hold entry ${source} ${surface} preserves side and cancel safety`, async () => {
+				await focusIsolatedTestWindow();
+				await vscode.workspace.getConfiguration('better-git-vscode').update(
+					'experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+				const notebook = surface === 'working notebook';
+				const rel = notebook ? 'committed/notebook.ipynb' : 'committed/image.png';
+				const uri = wsUri(rel);
+				const before = fs.readFileSync(uri.fsPath);
+				if (surface === 'staged deletion') {
+					git(`rm ${rel}`);
+					fs.writeFileSync(uri.fsPath, before);
+					await refreshUntil(() => inIndex(rel, 2) && isUntracked(rel), 'staged deletion with recreated image');
+				} else if (surface !== 'clean image') {
+					if (notebook) {
+						const content = JSON.parse(before.toString());
+						content.cells[0].source = ["print('staged')\n"];
+						fs.writeFileSync(uri.fsPath, JSON.stringify(content));
+					} else {
+						fs.writeFileSync(uri.fsPath, Buffer.from(
+							'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+					}
+					git(`add ${rel}`);
+					fs.writeFileSync(uri.fsPath, before);
+					await refreshUntil(() => inIndex(rel) && inWorkingTree(rel), 'dual-state non-text fixture');
+				}
+				const indexBefore = git('write-tree');
+				try {
+					await vscode.commands.executeCommand('vscode.open', surface === 'staged image' ? toGitUri(uri, '')
+						: surface === 'staged deletion' ? toGitUri(uri, 'HEAD') : uri);
+					await sleep(300); // Native non-text renderers complete after their open promise.
+					const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction: 'next' });
+					await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, true);
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					if (surface.startsWith('working')) {
+						assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '👀', 'explicit working preview must enter eyes with both Git sides present');
+					} else {
+						assert.notStrictEqual(extensionApi.getReviewDecorationBadge(uri), '👀', 'staged or clean previews must not arm unstaged selection');
+					}
+					assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'entry does not replace the preview');
+					if (surface.startsWith('working')) {
+						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', source);
+					}
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction: 'next' });
+					await extensionApi.whenStageTransactionsSettled();
+					assert.strictEqual(git('write-tree'), indexBefore, 'cancel and late release retain the exact index');
+				} finally {
+					await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', source);
+					await sleep(300);
+					await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+				}
+			});
+		}
+	}
+
+	for (const source of ['corsair', 'razer']) {
+		for (const direction of ['next', 'previous']) {
+			for (const imageState of ['deleted', 'staged-modified-deleted', 'staged-new-deleted', 'staged-new-deleted-native']) {
+				test(`image hold entry ${source} ${direction} ${imageState} enters eyes and preserves batch Undo`, async () => {
+					await focusIsolatedTestWindow();
+					await vscode.workspace.getConfiguration('better-git-vscode').update(
+						'experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+					const rel = imageState.startsWith('staged-new-deleted') ? 'committed/added-image.png' : 'committed/image.png';
+					const uri = wsUri(rel);
+					if (imageState !== 'deleted') {
+						fs.writeFileSync(uri.fsPath, Buffer.from(
+							'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+						git(`add ${rel}`);
+					}
+					fs.rmSync(uri.fsPath);
+					const peer = direction === 'next' ? 'committed/zz_image_peer.txt' : 'committed/aaa_image_peer.txt';
+					write(peer, 'peer review');
+					await refreshUntil(() => inWorkingTree(rel, 6) && isUntracked(peer), 'deleted image hold fixture');
+					const indexBefore = git('write-tree');
+					const clipboardBefore = await vscode.env.clipboard.readText();
+					try {
+						await vscode.commands.executeCommand(imageState === 'staged-new-deleted' ? 'vscode.open' : 'git.openChange',
+							imageState === 'staged-new-deleted' ? toGitUri(uri, '~') : uri);
+						await poll(() => extensionApi.getCurrentReviewUri() === uri.toString(), 'image review URI');
+						await sleep(300); // Allow the native media preview to finish rendering before closing it.
+						const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+						await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+						await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, true);
+						await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+						assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '👀',
+							`deleted image must enter eyes: ${extensionApi.getMouseDebugTrace().join(' | ')}`);
+						assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'hold must keep the image preview');
+						assert.strictEqual(git('write-tree'), indexBefore, 'eyes readiness must not stage');
+						await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', source, direction);
+						await expectActiveTab(peer);
+						assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '💥💥', 'reviewed image is marked');
+						assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(peer)), '👀', 'peer remains under review');
+						await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+						await extensionApi.whenStageTransactionsSettled();
+						assert.strictEqual(git(`ls-files -- ${rel}`), '', 'release stages the deletion');
+						assert.ok(isUntracked(peer), 'eyes endpoint stays unstaged');
+						await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+						await extensionApi.whenStageTransactionsSettled();
+						assert.strictEqual(git('write-tree'), indexBefore, 'one Undo restores the exact pre-hold index');
+						assert.ok(!fs.existsSync(uri.fsPath), 'Undo never recreates the working image');
+						assert.strictEqual(await vscode.env.clipboard.readText(), clipboardBefore, 'image resolution preserves clipboard');
+					} finally {
+						await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', source);
+						await sleep(300); // Undo reopens the asynchronous native media preview.
+						await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+					}
+				});
+			}
+		}
+	}
+
 	for (const source of ['corsair', 'razer']) {
 		for (const direction of ['next', 'previous']) {
 			test(`release-only hold ${source} ${direction} stays still until release and stages its origin after a long hold`, async () => {
