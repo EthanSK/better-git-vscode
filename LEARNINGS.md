@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-10-11 — Missing Git LFS can be the GUI process environment
+
+A staging failure from both Better Git and VS Code's built-in Git reported `git-lfs filter-process: git-lfs: command not found`. Git LFS was installed at the stable Homebrew symlink `/opt/homebrew/bin/git-lfs`, but the running Code process and extension hosts inherited only `/usr/bin:/bin:/usr/sbin:/sbin`. VS Code's Git log confirmed `/usr/bin/git` and the same failure for a screenshot batch. Check the actual process environment before blaming extension staging or recommending a reload.
+
+Both the user's global Git configuration and AIMVS's shared repository configuration supplied bare `git-lfs` filter commands; the local values override the global ones for all linked AIMVS worktrees. Repair the existing clean, smudge and process values with the verified executable's absolute path in both owning scopes, preserving `filter.lfs.required=true`. Do not disable LFS or bypass the filter to make staging succeed. Git reads the configuration on each command, so this repair needs no window or extension restart and no extension release.
+
+Verification: a disposable non-GUI repository reproduced the missing-command failure with VS Code's exact restricted PATH. After the repair, `/usr/bin/git add` produced the correct LFS pointer. The exact formerly failing five-file AIMVS command passed against a private copied index under that same PATH; all four staged image pointers matched their working bytes and the live user index remained byte-for-byte unchanged. The private index and synthetic repository were removed. This verifies the Git/filter boundary; the user's next real mouse stage remains a separate acceptance check.
+
 ## 2026-10-09 — Deleted media holds must retain the Git side
 
 A native working-tree deleted image can open as `TabInputCustom` on a Git `HEAD` resource. When its path also has a staged modification or addition, the previous active-change fallback returned `staged: null`; the existing dual-side ambiguity guard then captured no mouse origin, leaving fire instead of eyes. The Mini reproduced the original bundle failure (`🔥🔥` instead of `👀`). Single-resource custom and notebook tabs now preserve explicit file/index sides in the same resolver used by text navigation. HEAD is classified from the exact repository's deletion state: staged deletion remains staged, working deletion remains unstaged. A recreated file beside a staged deletion must never arm from that HEAD preview. Historical/unknown refs and opaque comparisons retain the safety guard. No hold timing, input debounce, release membership or mouse mapping changed.
