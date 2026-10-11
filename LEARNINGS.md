@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-12 — Correlate rejected hold readiness with window focus
+
+A physical Corsair report at 00:00:02–00:00:08 matched `stage-hold-ready` and wheel events rejected because VS Code reported its window unfocused. The next holds at 00:00:14, :16 and :18 reached readiness on the unchanged Gallery 1.2.122 bundle. Native inspection and Git status then showed the affected worktree had six staged files and no unstaged entries. Distinguish a focus rejection, a recovered ready hold and an ineligible fully staged file before changing timing or removing the focus safety guard. The preceding Git LFS repair changed only filter configuration, not the extension bundle. The prior native Git warning is correlated context, not proven focus-loss causality. These logs verify command readiness; visible eyes-badge acceptance still requires the real unstaged review surface.
+
 ## 2026-10-11 — Missing Git LFS can be the GUI process environment
 
 A staging failure from both Better Git and VS Code's built-in Git reported `git-lfs filter-process: git-lfs: command not found`. Git LFS was installed at the stable Homebrew symlink `/opt/homebrew/bin/git-lfs`, but the running Code process and extension hosts inherited only `/usr/bin:/bin:/usr/sbin:/sbin`. VS Code's Git log confirmed `/usr/bin/git` and the same failure for a screenshot batch. Check the actual process environment before blaming extension staging or recommending a reload.
