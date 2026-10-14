@@ -1,5 +1,22 @@
 # Learnings
 
+## 2026-10-14 — Agent Flow selection bridge 1.2.123 released and active
+
+Selection source is committed as `fefa4d2` on `codex/agent-flow-selection-input`.
+Five focused protocol tests, scoped lint, TypeScript and production packaging pass.
+Version 1.2.123 passed the authenticated publisher/public validated-only Gallery
+and exact VSIX gate: SHA-256 `b4330a90ff7184a8ce20557a48c905a9e80c130fcd4854f8bcd4f1bb7e1d54c6`.
+The unversioned Gallery install retains source `gallery`, UUID
+`939b51df-f995-4799-88fa-ae47815cabb2`, no pin and explicit per-extension automatic
+updates. Installed production JavaScript matches
+`17b1f290707d94cc9b9dac4647da6f3502a1dfacbfb084fc60db6e3a4ea9385b`.
+After a delivered restart heads-up, the normal workspace's Running Extensions
+inspector explicitly showed Better Git 1.2.123 with 13 ms activation. Only that
+inspector was closed; Source Control and the original review preview remain open.
+No new MacBook E2E or development host was run during release activation.
+Paired native Agent Flow build 424 passed 161 focused and all 622 native Mini tests
+and is installed; physical keyboard/HUD acceptance remains separate.
+
 ## 2026-10-14 — Match Agent Flow keyboard intent without accepting hunk commands
 
 VS Code 1.139.1's real Option-Shift-Right range update omitted the public selection
