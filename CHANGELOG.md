@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.123
+
+- Support Agent Flow selection capture from Shift-click, Command-A and Shift-keyboard word/line extension.
+- Require matching fresh native input intent; exclude stale selections and programmatic Git hunk changes.
+
 ## 1.2.121
 
 - When an app switch interrupts a held staging selection, stage its reviewed files once and leave the current preview unstaged in both Eyes and file mode. Keep the background editor still and preserve one exact batch Undo.

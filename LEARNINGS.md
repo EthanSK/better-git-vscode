@@ -1,5 +1,24 @@
 # Learnings
 
+## 2026-10-14 — Match Agent Flow keyboard intent without accepting hunk commands
+
+VS Code 1.139.1's real Option-Shift-Right range update omitted the public selection
+kind during a window-targeted manual check. Keep the bridge pull-only and retain
+only coordinates/version, not selected text. Such an unclassified extension
+needs an unchanged anchor plus a fresh native keyboard request and matching
+forward/backward direction; a Mouse request cannot borrow it. General Command
+events remain ineligible. Command-based Select All separately requires a full
+document range and an explicit native Command-A request. Old clients remain
+mouse-only. Document/editor/focus changes clear eligibility.
+
+TypeScript, scoped ESLint and five focused protocol tests passed. Ethan explicitly
+authorized one disposable MacBook test window, not a full E2E. Eight positive
+plain/diff bridge checks matched exact synthetic bytes, and stale/programmatic
+mouse requests returned null. The temporary fixture was closed; normal VS Code
+windows and the installed Marketplace extension were not restarted or modified.
+Native Agent Flow qualification on the Mini, Marketplace publication/verification
+and installed runtime activation remain pending; these are not release receipts.
+
 ## 2026-10-12 — Correlate rejected hold readiness with window focus
 
 A physical Corsair report at 00:00:02–00:00:08 matched `stage-hold-ready` and wheel events rejected because VS Code reported its window unfocused. The next holds at 00:00:14, :16 and :18 reached readiness on the unchanged Gallery 1.2.122 bundle. Native inspection and Git status then showed the affected worktree had six staged files and no unstaged entries. Distinguish a focus rejection, a recovered ready hold and an ineligible fully staged file before changing timing or removing the focus safety guard. The preceding Git LFS repair changed only filter configuration, not the extension bundle. The prior native Git warning is correlated context, not proven focus-loss causality. These logs verify command readiness; visible eyes-badge acceptance still requires the real unstaged review surface.

@@ -3,7 +3,8 @@ import * as fs from "fs";
 import * as net from "net";
 import * as path from "path";
 import { randomUUID } from "crypto";
-import { agentFlowSelectionIsFresh, parseAgentFlowSelectionRequest } from "./agentFlowSelectionProtocol";
+import { AgentFlowSelectionEventKind, AgentFlowSelectionDirection, agentFlowSelectionEventKind, agentFlowSelectionIsFresh,
+    parseAgentFlowSelectionRequest } from "./agentFlowSelectionProtocol";
 
 /**
  * Monaco deliberately hides its text from macOS AX when screen-reader mode is off.
@@ -12,7 +13,7 @@ import { agentFlowSelectionIsFresh, parseAgentFlowSelectionRequest } from "./age
  * cache selected text, or change focus. Ordinary Git/navigation latency is untouched.
  *
  * A private per-user Unix socket has no TCP/network endpoint. Only a request tied to
- * the current mouse gesture and focused VS Code PID can read text. Other windows,
+ * the current mouse/keyboard gesture and focused VS Code PID can read text. Other windows,
  * programmatic hunk selections, old highlights, terminals and webviews return null.
  * See https://code.visualstudio.com/api/references/vscode-api#TextEditorSelectionChangeEvent
  */
@@ -32,7 +33,18 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
             directoryStat.uid !== process.getuid() || (directoryStat.mode & 0o077) !== 0) { return; }
     } catch { return; }
 
-    let latest: { editor: vscode.TextEditor; selection: vscode.Selection; version: number; changedAt: number } | undefined;
+    let latest: { editor: vscode.TextEditor; selection: vscode.Selection; version: number; changedAt: number;
+        inputKind: AgentFlowSelectionEventKind; fullDocument: boolean;
+        direction?: AgentFlowSelectionDirection } | undefined;
+    // Coordinates/version only, never text. The anchor is necessary, not proof
+    // alone: an unclassified extension also needs fresh physical keyboard intent
+    // and direction from Agent Flow. General command/hunk changes stay excluded.
+    const snapshot = () => {
+        const editor = vscode.window.activeTextEditor;
+        return editor && editor.selections.length === 1 ?
+            { editor, selection: editor.selection, version: editor.document.version } : undefined;
+    };
+    let previous = snapshot();
     let disposed = false;
     const socketPath = path.join(directory, `vscode-${mainPID}-${process.pid}-${randomUUID()}.sock`);
     const clients = new Set<net.Socket>();
@@ -42,16 +54,36 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
             clear();
             // API/command-driven hunk movement is not a highlight gesture. Keep only
             // selection coordinates; read the bounded text lazily after a valid pull.
-            if (event.kind === vscode.TextEditorSelectionChangeKind.Mouse && vscode.window.state.focused &&
+            const selection = event.selections[0];
+            const document = event.textEditor.document;
+            const before = previous;
+            previous = event.selections.length === 1 ? { editor: event.textEditor,
+                selection, version: document.version } : undefined;
+            const fullDocument = event.selections.length === 1 && !!selection &&
+                selection.start.isEqual(new vscode.Position(0, 0)) &&
+                selection.end.isEqual(document.lineAt(document.lineCount - 1).range.end);
+            const sameAnchor = !!selection && before?.editor === event.textEditor &&
+                before.version === document.version && selection.anchor.isEqual(before.selection.anchor) &&
+                !selection.active.isEqual(before.selection.active);
+            let direction: AgentFlowSelectionDirection | undefined;
+            if (sameAnchor && before) {
+                const old = before.selection.active, next = selection.active;
+                direction = next.line !== old.line ? (next.line > old.line ? "down" : "up") :
+                    (next.character > old.character ? "right" : "left");
+            }
+            const inputKind = agentFlowSelectionEventKind(event.kind, fullDocument, sameAnchor);
+            if (inputKind && vscode.window.state.focused &&
                 event.textEditor === vscode.window.activeTextEditor && event.selections.length === 1 &&
                 !event.selections[0].isEmpty) {
                 latest = { editor: event.textEditor, selection: event.selections[0],
-                    version: event.textEditor.document.version, changedAt: Date.now() };
+                    version: event.textEditor.document.version, changedAt: Date.now(), inputKind, fullDocument, direction };
             }
         }),
-        vscode.window.onDidChangeActiveTextEditor(clear),
-        vscode.window.onDidChangeWindowState(state => { if (!state.focused) { clear(); } }),
-        vscode.workspace.onDidChangeTextDocument(event => { if (latest?.editor.document === event.document) { clear(); } })
+        vscode.window.onDidChangeActiveTextEditor(() => { clear(); previous = snapshot(); }),
+        vscode.window.onDidChangeWindowState(state => { clear(); previous = state.focused ? snapshot() : undefined; }),
+        vscode.workspace.onDidChangeTextDocument(event => {
+            if (previous?.editor.document === event.document) { clear(); previous = snapshot(); }
+        })
     );
 
     const server = net.createServer(socket => {
@@ -77,7 +109,8 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
                     vscode.window.visibleTextEditors.includes(current.editor) &&
                     current.editor.document.version === current.version &&
                     current.editor.selection.isEqual(current.selection) &&
-                    agentFlowSelectionIsFresh(request, current.changedAt)) {
+                    agentFlowSelectionIsFresh(request, current.changedAt, Date.now(), current.inputKind,
+                        current.fullDocument, current.direction)) {
                     const document = current.editor.document;
                     const start = document.offsetAt(current.selection.start);
                     const end = Math.min(document.offsetAt(current.selection.end), start + 8192);
@@ -85,7 +118,7 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
                     const text = document.getText(new vscode.Range(current.selection.start, document.positionAt(end)))
                         .replace(/[\uD800-\uDBFF]$/, "");
                     result = { version: 1, nonce: request.nonce, sourcePID: mainPID,
-                        changedAt: current.changedAt, text };
+                        changedAt: current.changedAt, text, inputKind: request.inputKind ?? "mouse" };
                 }
             } catch { /* Malformed/disappearing editor: no content and no log. */ }
             socket.end(JSON.stringify(result) + "\n");
