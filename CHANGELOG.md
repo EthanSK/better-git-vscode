@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.124
+
+- Expire deferred Worktree-link selection ten seconds after the link arrives, so returning to VS Code later cannot run an old collapse/select request. Preserve the immediate handoff and normal focus-interruption recovery within that window.
+
 ## 1.2.123
 
 - Support Agent Flow selection capture from Shift-click, Command-A and Shift-keyboard word/line extension.

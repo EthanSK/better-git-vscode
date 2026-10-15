@@ -7,7 +7,7 @@ import * as path from "path";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp } from "./gitWorktreeFocus";
-import { DeferredWorktreePresentation } from "./gitWorktreePresentation";
+import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS } from "./gitWorktreePresentation";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 import { StageTransactionStore, StageUndoView, StoredStageTransaction } from "./stageTransactionStore";
@@ -1109,6 +1109,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         worktreePresentation.dispose();
         const generation = ++worktreeLinkGeneration;
         const receivedAt = Date.now();
+        const presentationExpiresAt = performance.now() + WORKTREE_PRESENTATION_MAX_AGE_MS;
         debugLog("worktree-link", `Received #${generation} for ${root?.fsPath ?? "selected worktree"}.`);
         const isCurrent = () => generation === worktreeLinkGeneration;
         const next = worktreeLinkQueue.then(async () => {
@@ -1165,7 +1166,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     });
                     worktreeLinkQueue = presentation.then(() => undefined, error => debugLog("worktree-link", String(error)));
                     return presentation;
-                });
+                }, presentationExpiresAt);
             }
         });
         worktreeLinkQueue = next.catch(() => undefined);

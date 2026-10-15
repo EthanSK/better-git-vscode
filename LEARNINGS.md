@@ -1,5 +1,11 @@
 # Learnings
 
+## 2026-10-15 — Expire deferred Worktree-link presentation
+
+Live logs showed a link received at 13:34:06 waiting until 13:37:11 for native presentation. The scheduler retained unfinished intent without an age bound; completed work removed its listener, so this was deferred work rather than unconditional selection on every focus. Deferred presentation now has a ten-second monotonic deadline anchored to link receipt, including repository loading time. Focus admission and queued/running ownership checks reject expired work; an expired asynchronous completion cannot remove a newer request. There is no expiry polling, added navigation delay or new app-focus action.
+
+Verification: all 138 non-GUI tests, TypeScript, ESLint and production packaging pass. Six new deterministic clock cases cover expiry on later app return, the normal handoff just before expiry, loading consuming the deadline, queued work invalidation, interrupted retry expiry and a newer listener surviving an old completion. Native Mini qualification is unavailable: Agent Bridge internet SSH failed with SOCKS error 1 and LAN port 22 was unreachable. No MacBook E2E or Extension Development Host was run. Publication and runtime activation evidence follow separately.
+
 ## 2026-10-14 — Agent Flow selection bridge 1.2.123 released and active
 
 Selection source is committed as `fefa4d2` on `codex/agent-flow-selection-input`.

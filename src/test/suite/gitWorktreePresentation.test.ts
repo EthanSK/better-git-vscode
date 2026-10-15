@@ -1,19 +1,85 @@
 import * as assert from 'assert';
-import { DeferredWorktreePresentation } from '../../gitWorktreePresentation';
+import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS } from '../../gitWorktreePresentation';
 
 suite('Deferred Worktree presentation', () => {
     function fixture() {
         let focused = false;
+        let now = 0;
         const listeners = new Set<() => void>();
         const scheduler = new DeferredWorktreePresentation(listener => {
             listeners.add(listener);
             return { dispose: () => { listeners.delete(listener); } };
-        }, () => focused);
-        return { scheduler, listeners, focus(value = true) {
+        }, () => focused, () => now);
+        return { scheduler, listeners, advance(ms = WORKTREE_PRESENTATION_MAX_AGE_MS) { now += ms; }, focus(value = true) {
             focused = value;
             for (const listener of [...listeners]) { listener(); }
         } };
     }
+    test('an old background link never presents on later app returns', () => {
+        const f = fixture();
+        let count = 0;
+        f.scheduler.schedule(() => true, () => { count++; });
+        f.advance();
+        f.focus(); f.focus(false); f.focus();
+        assert.strictEqual(count, 0);
+        assert.strictEqual(f.listeners.size, 0);
+    });
+    test('the normal handoff still presents just before expiry', () => {
+        const f = fixture();
+        let count = 0;
+        f.scheduler.schedule(() => true, () => { count++; });
+        f.advance(WORKTREE_PRESENTATION_MAX_AGE_MS - 1);
+        f.focus();
+        assert.strictEqual(count, 1);
+    });
+    test('loading time counts toward the original link deadline', () => {
+        const f = fixture();
+        let count = 0;
+        f.advance(); f.focus();
+        f.scheduler.schedule(() => true, () => { count++; }, WORKTREE_PRESENTATION_MAX_AGE_MS);
+        assert.strictEqual(count, 0);
+        assert.strictEqual(f.listeners.size, 0);
+    });
+    test('expiry invalidates an admitted queued presentation', async () => {
+        const f = fixture();
+        let current!: () => boolean;
+        let finish!: (complete: boolean) => void;
+        f.scheduler.schedule(() => true, isScheduled => {
+            current = isScheduled;
+            return new Promise<boolean>(resolve => { finish = resolve; });
+        });
+        f.focus();
+        assert.strictEqual(current(), true);
+        f.advance();
+        assert.strictEqual(current(), false);
+        finish(false);
+        await Promise.resolve();
+        assert.strictEqual(f.listeners.size, 0);
+    });
+    test('an interrupted pass cannot retry after its original deadline', async () => {
+        const f = fixture();
+        let count = 0;
+        f.scheduler.schedule(() => true, async () => { count++; return false; });
+        f.focus(); f.focus(false);
+        await Promise.resolve();
+        f.advance(); f.focus();
+        assert.strictEqual(count, 1);
+        assert.strictEqual(f.listeners.size, 0);
+    });
+    test('an expired old completion cannot remove a fresh link listener', async () => {
+        const f = fixture();
+        let finish!: (complete: boolean) => void;
+        f.scheduler.schedule(() => true, () => new Promise<boolean>(resolve => { finish = resolve; }));
+        f.focus(); f.focus(false); f.advance();
+        let count = 0;
+        f.scheduler.schedule(() => true, () => { count++; });
+        finish(false);
+        await Promise.resolve();
+        assert.strictEqual(f.listeners.size, 1);
+        f.focus();
+        assert.strictEqual(count, 1);
+        assert.strictEqual(f.listeners.size, 0);
+    });
     test('background work does not wait and native presentation runs once on focus', () => {
         const f = fixture();
         let count = 0;

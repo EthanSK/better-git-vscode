@@ -1,5 +1,7 @@
 interface Disposable { dispose(): void; }
 
+export const WORKTREE_PRESENTATION_MAX_AGE_MS = 10_000;
+
 // One event-driven presentation for a link opened behind another app.
 // Repository loading never waits for focus; a newer link or user navigation
 // cancels this retry before it can change the review view.
@@ -7,16 +9,20 @@ export class DeferredWorktreePresentation implements Disposable {
     private listener?: Disposable;
     private generation = 0;
     constructor(private readonly subscribe: (listener: () => void) => Disposable,
-        private readonly isFocused: () => boolean) {}
+        private readonly isFocused: () => boolean,
+        private readonly now: () => number = () => performance.now()) {}
 
-    schedule(isOwned: () => boolean, run: (isScheduled: () => boolean) => void | Promise<boolean>): void {
+    schedule(isOwned: () => boolean, run: (isScheduled: () => boolean) => void | Promise<boolean>,
+        expiresAt = this.now() + WORKTREE_PRESENTATION_MAX_AGE_MS): void {
         this.dispose();
         const generation = this.generation;
-        const isScheduled = () => generation === this.generation;
+        // Check at focus and inside queued/running work. No expiry polling or delayed input.
+        const isScheduled = () => generation === this.generation && this.now() < expiresAt;
         let running = false;
         let focusRevision = 0;
         const onFocus = () => {
             focusRevision++;
+            if (!isScheduled()) { this.clearListener(); return; }
             if (!this.isFocused()) { return; }
             if (running) { return; }
             if (!isScheduled() || !isOwned()) { this.clearListener(); return; }
@@ -25,7 +31,8 @@ export class DeferredWorktreePresentation implements Disposable {
             const result = run(isScheduled);
             if (!result) { this.clearListener(); return; }
             void result.then(complete => {
-                if (!isScheduled()) { return; }
+                if (generation !== this.generation) { return; }
+                if (!isScheduled()) { this.clearListener(); return; }
                 running = false;
                 if (complete || !isOwned()) { this.clearListener(); return; }
                 // A queued/running pass can lose focus. Keep the same intent alive;
