@@ -27,7 +27,7 @@ import { KeyboardStageRepeatGuard, parseKeyboardStageArgs } from "./keyboardStag
 import { MacKeyReleaseMonitor } from "./macKeyReleaseMonitor";
 import { registerAgentFlowSelectionBridge } from "./agentFlowSelectionBridge";
 import { registerDiffViewDisplay } from "./diffViewDisplay";
-import { registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedLfsImage";
+import { registerStagedLfsImageProvider, resolveLfsImage } from "./stagedLfsImage";
 
 let pendingWorktreePresentation: DeferredWorktreePresentation | undefined;
 
@@ -2985,7 +2985,9 @@ const getActiveChange = async (): Promise<ActiveChange | null> => {
     if (input instanceof vscode.TabInputCustom || input instanceof vscode.TabInputNotebook) {
         const resolved = toFilePathUri(input.uri);
         if (resolved) {
-            if (input.uri.scheme === "file") { return { path: resolved.path, staged: false }; }
+            if (input.uri.scheme === "file" || input.uri.scheme === "better-git-working-image") {
+                return { path: resolved.path, staged: false };
+            }
             if (input.uri.scheme === "better-git-staged-image") { return { path: resolved.path, staged: true }; }
             if (input.uri.scheme === "git") {
                 try {
@@ -3088,6 +3090,25 @@ const getEmptyTreeRef = async (uri: vscode.Uri): Promise<string | undefined> => 
 // Opens the diff for a single list entry on the correct (staged vs unstaged) side.
 const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promise<void> => {
     if (!entry.staged) {
+        // A checkout can still contain an LFS pointer. Read that exact local object for the preview;
+        // never hydrate the working file or substitute the index image for it. Conflicts keep Git's UI.
+        if (entry.status === GitStatus.MODIFIED || entry.status === GitStatus.TYPE_CHANGED
+            || entry.status === GitStatus.UNTRACKED || entry.status === GitStatus.INTENT_TO_ADD) {
+            const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+            const root: string | undefined = git?.getRepository(entry.uri)?.rootUri?.fsPath;
+            const resolved = root ? await resolveLfsImage(entry.uri, root) : entry.uri;
+            if (resolved !== entry.uri && root) {
+                const options = { preview: true, preserveFocus };
+                if (entry.status === GitStatus.MODIFIED || entry.status === GitStatus.TYPE_CHANGED) {
+                    const ref = entry.status === GitStatus.MODIFIED ? "~" : "HEAD";
+                    const original = await resolveLfsImage(toGitUri(entry.originalUri ?? entry.uri, ref), root);
+                    await vscode.commands.executeCommand("vscode.diff", original, resolved, undefined, options);
+                } else {
+                    await vscode.commands.executeCommand("vscode.openWith", resolved, "imagePreview.previewEditor", options);
+                }
+                return;
+            }
+        }
         // git.openChange does not accept editor options and takes keyboard
         // focus. Undo must keep SCM focus so the next Cmd+Z remains a stage
         // Undo. Mirror Git's ordinary working-tree resources with explicit
@@ -3201,8 +3222,8 @@ const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promis
     const repositoryRoot: string | undefined = git?.getRepository(entry.uri)?.rootUri?.fsPath;
     if (repositoryRoot) {
         [left, right] = await Promise.all([
-            resolveStagedLfsImage(left, repositoryRoot),
-            resolveStagedLfsImage(right, repositoryRoot),
+            resolveLfsImage(left, repositoryRoot),
+            resolveLfsImage(right, repositoryRoot),
         ]);
     }
     const title = `${entry.uri.path.split("/").pop()} (Index)`;

@@ -5,7 +5,7 @@ import { execFile, execFileSync, execSync } from 'child_process';
 import { promisify } from 'util';
 import { createHash } from 'crypto';
 import * as vscode from 'vscode';
-import { resolveStagedLfsImage } from '../../stagedLfsImage';
+import { resolveLfsImage } from '../../stagedLfsImage';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // E2E suite for next/previous-scm-change navigation (v1.2.1).
@@ -1190,7 +1190,7 @@ suite('SCM change navigation E2E', () => {
 			fs.writeFileSync(uri.fsPath, otherBytes); // working copy differs; preview must still use the index image
 			await refreshUntil(() => inIndex(rel) && inWorkingTree(rel), 'staged and working image versions');
 			const indexUri = toGitUri(uri, '');
-			const resolved = await resolveStagedLfsImage(indexUri, ws);
+			const resolved = await resolveLfsImage(indexUri, ws);
 			assert.strictEqual(resolved.scheme, 'better-git-staged-image');
 			assert.deepStrictEqual(Buffer.from(await vscode.workspace.fs.readFile(resolved)), stagedBytes);
 			const before = git('status --porcelain=v1');
@@ -1207,7 +1207,50 @@ suite('SCM change navigation E2E', () => {
 			await sleep(300); // let VS Code's image webview finish reading before deleting its fixture object
 			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 			fs.rmSync(object);
-			assert.strictEqual((await resolveStagedLfsImage(indexUri, ws)).scheme, 'git', 'missing local object retains native fallback');
+			assert.strictEqual((await resolveLfsImage(indexUri, ws)).scheme, 'git', 'missing local object retains native fallback');
+		} finally {
+			fs.rmSync(object, { force: true });
+		}
+	});
+
+	test('working LFS image references preview, stage and undo without hydrating the file', async () => {
+		const rel = 'working-lfs-preview.png';
+		const bytes = Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'
+		);
+		const oid = createHash('sha256').update(bytes).digest('hex');
+		const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${bytes.length}\n`;
+		const mediaDir = /^LocalMediaDir=(.+)$/m.exec(git('lfs env'))?.[1];
+		assert.ok(mediaDir);
+		const object = path.join(mediaDir!, oid.slice(0, 2), oid.slice(2, 4), oid);
+		fs.mkdirSync(path.dirname(object), { recursive: true });
+		fs.writeFileSync(object, bytes);
+		const uri = write(rel, pointer);
+		try {
+			await refreshUntil(() => isUntracked(rel), 'working pointer to appear in Changes');
+			const before = git('status --porcelain=v1');
+			await vscode.commands.executeCommand('better-git-vscode.next-changed-file');
+			await poll(() => {
+				const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+				return input instanceof vscode.TabInputCustom && input.uri.scheme === 'better-git-working-image';
+			}, 'working pointer to open in native image preview');
+			assert.strictEqual(extensionApi.getCurrentReviewUri(), uri.toString(), 'preview keeps its working-file identity');
+			assert.strictEqual(git('status --porcelain=v1'), before, 'preview leaves Git state intact');
+			await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+			await extensionApi.whenStageTransactionsSettled();
+			await refreshUntil(() => inIndex(rel), 'resolved working preview to stage its actual pointer file');
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			await extensionApi.whenStageTransactionsSettled();
+			await refreshUntil(() => isUntracked(rel) && !inIndex(rel), 'working pointer stage to be undone');
+			assert.strictEqual(fs.readFileSync(uri.fsPath, 'utf8'), pointer, 'preview, stage and Undo never hydrate the pointer');
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			await vscode.commands.executeCommand('vscode.openWith', uri, 'default');
+			await poll(() => {
+				const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+				return input instanceof vscode.TabInputCustom && input.uri.scheme === 'better-git-working-image';
+			}, 'native text opening to recover the image preview');
+			await sleep(300);
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 		} finally {
 			fs.rmSync(object, { force: true });
 		}

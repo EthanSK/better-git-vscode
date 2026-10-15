@@ -7,6 +7,7 @@ import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
 const scheme = "better-git-staged-image";
+const workingScheme = "better-git-working-image";
 const maxImageBytes = 50 * 1024 * 1024;
 const imageExtensions = new Set([".jpg", ".jpe", ".jpeg", ".png", ".bmp", ".gif", ".ico", ".webp", ".avif", ".svg"]);
 const lfsPointer = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\r?\noid sha256:([a-f0-9]{64})\r?\nsize ([0-9]+)\r?\n?$/;
@@ -14,7 +15,7 @@ const lfsPointer = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\r?\noid sh
 type StoredImage = { mediaDir: string; oid: string; size: number };
 
 const parseStoredImage = (uri: vscode.Uri): StoredImage => {
-    if (uri.scheme !== scheme) { throw vscode.FileSystemError.FileNotFound(uri); }
+    if (uri.scheme !== scheme && uri.scheme !== workingScheme) { throw vscode.FileSystemError.FileNotFound(uri); }
     try {
         const value = JSON.parse(uri.query) as StoredImage;
         if (!path.isAbsolute(value.mediaDir) || !/^[a-f0-9]{64}$/.test(value.oid)
@@ -82,14 +83,16 @@ const localMediaDir = async (root: string): Promise<string | undefined> => {
     return undefined;
 };
 
-// VS Code's media preview refuses a small `git:` LFS pointer. A locally present LFS object gives the
-// exact staged bytes without changing the index, checkout, or user's working file. Only inspect image
-// sides with pointer-sized Git blobs; ordinary image navigation stays on VS Code's native path.
-export const resolveStagedLfsImage = async (gitUri: vscode.Uri, repositoryRoot: string): Promise<vscode.Uri> => {
-    if (gitUri.scheme !== "git" || !imageExtensions.has(path.extname(gitUri.path).toLowerCase())) {
+// Resolve each side independently: a working pointer can name different bytes from the index pointer.
+// Keep the schemes distinct so review/stage commands never mistake a working preview for staged content.
+export const resolveLfsImage = async (gitUri: vscode.Uri, repositoryRoot: string): Promise<vscode.Uri> => {
+    if ((gitUri.scheme !== "git" && gitUri.scheme !== "file")
+        || !imageExtensions.has(path.extname(gitUri.path).toLowerCase())) {
         return gitUri;
     }
     try {
+        if (gitUri.scheme === "file" && vscode.workspace.textDocuments.some(document =>
+            document.isDirty && document.uri.toString() === gitUri.toString())) { return gitUri; }
         const stat = await vscode.workspace.fs.stat(gitUri);
         if (stat.size < 100 || stat.size > 1024) { return gitUri; }
         const pointer = Buffer.from(await vscode.workspace.fs.readFile(gitUri)).toString("utf8");
@@ -102,7 +105,7 @@ export const resolveStagedLfsImage = async (gitUri: vscode.Uri, repositoryRoot: 
         const stored: StoredImage = { mediaDir, oid: match[1], size };
         const object = await fs.stat(objectPath(stored));
         if (!object.isFile() || object.size !== size) { return gitUri; }
-        return gitUri.with({ scheme, query: JSON.stringify(stored) });
+        return gitUri.with({ scheme: gitUri.scheme === "file" ? workingScheme : scheme, query: JSON.stringify(stored) });
     } catch {
         return gitUri;
     }
@@ -110,48 +113,62 @@ export const resolveStagedLfsImage = async (gitUri: vscode.Uri, repositoryRoot: 
 
 export const registerStagedLfsImageProvider = (context: vscode.ExtensionContext): void => {
     const provider = new StagedLfsImageProvider();
-    context.subscriptions.push(provider, vscode.workspace.registerFileSystemProvider(scheme, provider, { isReadonly: true }));
+    context.subscriptions.push(provider,
+        vscode.workspace.registerFileSystemProvider(scheme, provider, { isReadonly: true }),
+        vscode.workspace.registerFileSystemProvider(workingScheme, provider, { isReadonly: true }));
 
-    // Git's own Source Control click opens staged images in its custom image editor, bypassing our
-    // navigation command. Replace only an active staged LFS pointer tab with the same image editor
-    // backed by the local object. This leaves ordinary images and working-tree previews untouched.
+    // Native Source Control clicks bypass Better Git navigation. Pointer-only working files can also
+    // open as text or a text diff. Replace only clean, active image-pointer tabs, never a dirty editor.
     const resolving = new WeakSet<vscode.Tab>();
-    const revealNativeStagedImage = async (): Promise<void> => {
+    const revealNativeLfsImage = async (): Promise<void> => {
         const group = vscode.window.tabGroups.activeTabGroup;
         const tab = group.activeTab;
         const input = tab?.input;
-        if (!tab || resolving.has(tab) || !(input instanceof vscode.TabInputCustom)
-            || input.viewType !== "imagePreview.previewEditor" || input.uri.scheme !== "git") {
+        if (!tab || tab.isDirty || resolving.has(tab)) {
             return;
         }
-        let stagedPath: string;
-        try {
-            const query = JSON.parse(input.uri.query);
-            if (query?.ref !== "" || typeof query.path !== "string" || !path.isAbsolute(query.path)) { return; }
-            stagedPath = query.path;
-        } catch { return; }
+        const diff = input instanceof vscode.TabInputTextDiff ? input : undefined;
+        const resource = diff?.modified ?? (input instanceof vscode.TabInputText ? input.uri
+            : input instanceof vscode.TabInputCustom && input.viewType === "imagePreview.previewEditor" ? input.uri : undefined);
+        if (!resource || !["file", "git"].includes(resource.scheme)
+            || !imageExtensions.has(path.extname(resource.path).toLowerCase())) { return; }
+        let filePath = resource.fsPath;
+        if (resource.scheme === "git") {
+            try {
+                const query = JSON.parse(resource.query);
+                if (query?.ref !== "" || typeof query.path !== "string" || !path.isAbsolute(query.path)) { return; }
+                filePath = query.path;
+            } catch { return; }
+        }
         resolving.add(tab);
         try {
             const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
-            const root: string | undefined = git?.getRepository(vscode.Uri.file(stagedPath))?.rootUri?.fsPath;
+            const root: string | undefined = git?.getRepository(vscode.Uri.file(filePath))?.rootUri?.fsPath;
             if (!root) { return; }
-            const resolved = await resolveStagedLfsImage(input.uri, root);
-            if (resolved.scheme !== scheme || group.activeTab !== tab) { return; }
-            await vscode.commands.executeCommand("vscode.openWith", resolved, input.viewType, {
-                viewColumn: group.viewColumn, preview: tab.isPreview,
-            });
+            const [resolved, original] = await Promise.all([
+                resolveLfsImage(resource, root),
+                diff ? resolveLfsImage(diff.original, root) : undefined,
+            ]);
+            if (resolved === resource && (!diff || original === diff.original)) { return; }
+            if (vscode.window.tabGroups.activeTabGroup !== group || group.activeTab !== tab || tab.isDirty) { return; }
+            const options = { viewColumn: group.viewColumn, preview: tab.isPreview };
+            if (diff && original) {
+                await vscode.commands.executeCommand("vscode.diff", original, resolved, tab.label, options);
+            } else {
+                await vscode.commands.executeCommand("vscode.openWith", resolved, "imagePreview.previewEditor", options);
+            }
             // A pinned source tab remains alongside the replacement. Close only that captured tab,
             // after the new preview is active, so no unrelated editor is briefly selected.
             if (group.tabs.includes(tab) && group.activeTab !== tab) {
                 await vscode.window.tabGroups.close(tab, true);
             }
         } catch (error) {
-            console.warn("Better Git could not preview the staged LFS image", error);
+            console.warn("Better Git could not preview the local LFS image", error);
         } finally {
             // A later tab activation may retry if Git/LFS was still loading or the object has since arrived.
             resolving.delete(tab);
         }
     };
-    context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => { void revealNativeStagedImage(); }));
-    void revealNativeStagedImage();
+    context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => { void revealNativeLfsImage(); }));
+    void revealNativeLfsImage();
 };
