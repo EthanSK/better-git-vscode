@@ -1,5 +1,9 @@
 # Learnings
 
+## 2026-10-15 — Image paths can contain unsmudged LFS pointers
+
+When a working-tree image comparison shows LFS pointer text on both sides, inspect the actual working file before changing the image provider or reinstalling Better Git. Nine AIMVS17 screenshot paths contained 130–131-byte pointer text even though all matching local LFS objects were present. Exact OID/size and PNG signatures verified the original images; restoring those bytes recovered all nine without a download, and the live Git index remained byte-identical. A restored screenshot decoded and rendered correctly. Git reflog showed a recent rebase, but this investigation did not establish which operation left the pointers. Keep that cause unconfirmed rather than attributing it to the extension update.
+
 ## 2026-10-15 — Expire deferred Worktree-link presentation
 
 Live logs showed a link received at 13:34:06 waiting until 13:37:11 for native presentation. The scheduler retained unfinished intent without an age bound; completed work removed its listener, so this was deferred work rather than unconditional selection on every focus. Deferred presentation now has a ten-second monotonic deadline anchored to link receipt, including repository loading time. Focus admission and queued/running ownership checks reject expired work; an expired asynchronous completion cannot remove a newer request. There is no expiry polling, added navigation delay or new app-focus action.
