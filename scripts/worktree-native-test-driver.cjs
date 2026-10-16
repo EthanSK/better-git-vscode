@@ -6,6 +6,7 @@ exports.run = async () => {
  const git = (await vscode.extensions.getExtension('vscode.git').activate()).getAPI(1);
  const roots = JSON.parse(fs.readFileSync(path.join(root,'roots.json'),'utf8'));
  if (process.env.BGV_PREORDERED_API_TEST === '1') {
+  if (vscode.extensions.getExtension('EthanSK.better-git-vscode').isActive) throw new Error('Better Git activated before the API reorder prerequisite');
   // Reproduce another extension looking up a repository before Better Git
   // activates. Git sorts its API array in place; SCM header order stays put.
   for (const p of roots.slice(0, -1)) {
@@ -13,7 +14,7 @@ exports.run = async () => {
    await repo.status();
   }
   git.getRepository(vscode.Uri.file(roots[1]));
-  if (!git.repositories[0].rootUri.fsPath.endsWith('repo-10')) throw new Error('API reorder prerequisite was not reproduced');
+  if (git.repositories[0].rootUri.fsPath.length <= roots[1].length) throw new Error('API reorder prerequisite was not reproduced');
  }
  // Capture the real registered handler in the disposable host, avoiding OS URL
  // routing that could deliver a test link to an unrelated normal Code window.
