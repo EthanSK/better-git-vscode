@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.125
+
+- Log stage-and-next queue waits, Git and Undo timings, selected targets and navigation cancellation reasons when debug logging is enabled. Keep navigation, staging and input timing unchanged.
+
 ## 1.2.124
 
 - Expire deferred Worktree-link selection ten seconds after the link arrives, so returning to VS Code later cannot run an old collapse/select request. Preserve the immediate handoff and normal focus-interruption recovery within that window.

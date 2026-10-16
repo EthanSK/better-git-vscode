@@ -200,6 +200,7 @@ let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file 
 let stageTransactionStore: StageTransactionStore | undefined;
 let stageTransactionObserver: StageTransactionObserver | undefined;
 let stageUndoQueue: Promise<void> = Promise.resolve();
+let stageAttemptSequence = 0;
 // Git's getRepository(Uri) sorts its own repository array in place by path
 // length. SCM's discovery order does not change: retain the open-event order.
 const repositoryDiscoveryOrder = new Map<string, number>();
@@ -257,6 +258,7 @@ const runStageCommand = async (operation: () => Promise<void>): Promise<void> =>
         await operation();
     } catch (error) {
         if (error instanceof NavigationSuperseded) { throw error; }
+        debugLog("stage-flow", `stage action failed: ${String(error)}`);
         const candidate = error as { message?: unknown; stderr?: unknown };
         const detail = [candidate?.stderr, candidate?.message]
             .find((value): value is string => typeof value === "string" && value.trim().length > 0)
@@ -346,6 +348,11 @@ const stageBatchThroughExtension = async (
     preferPriorView = false
 ): Promise<void> => {
     if (uris.length === 0) { return; }
+    const attempt = ++stageAttemptSequence;
+    const started = performance.now();
+    const trace = (phase: string): void => debugLog("stage-flow",
+        `#${attempt} ${phase}; elapsed=${Math.round(performance.now() - started)}ms`);
+    trace(`start files=${uris.length}, first=${uris[0].fsPath}, focused=${vscode.window.state.focused}`);
     const selectedUris = new Set(uris.map(uri => uri.toString()));
     const activeView = captureActiveStageUndoView();
     // A held batch may be previewing its latest endpoint at release. Prefer
@@ -357,22 +364,28 @@ const stageBatchThroughExtension = async (
     let receiptCaptureError: unknown;
     if (repoRoot) {
         try {
+            trace("preparing Undo snapshot");
             await stageTransactionObserver?.prepare(repoRoot);
+            trace("Undo snapshot ready");
         } catch (error) {
             // Staging itself must remain available even if the independent
             // receipt snapshot cannot be prepared.
             receiptCaptureError = error;
         }
     }
+    trace("Git add starting");
     await runWithTransientGitIndexRetry(() => repo.add(uris.map(uri => uri.fsPath)));
+    trace("Git add finished");
     if (repoRoot && !receiptCaptureError) {
         try {
+            trace("saving Undo receipt");
             await stageTransactionObserver?.observe(repoRoot, {
                 kind: "betterGitStage",
                 uri: uris[0].toString(),
                 uris: uris.map(uri => uri.toString()),
                 view,
             });
+            trace("Undo receipt saved");
         } catch (error) {
             receiptCaptureError = error;
         }
@@ -389,6 +402,7 @@ const stageBatchThroughExtension = async (
         );
     }
     recordLastStagedBatch(uris); // success -> update the status bar with the files we just staged
+    trace(receiptCaptureError ? "stage complete; Undo receipt unavailable" : "stage complete");
 };
 const stageThroughExtension = (repo: any, uri: vscode.Uri, priorView?: StageUndoView): Promise<void> =>
     stageBatchThroughExtension(repo, [uri], priorView);
@@ -936,7 +950,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (!admitStageAndAdvancePress(args)) { return; }
         clearStageHoldFeedback();
         lastNavDirection = "next";
-        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("next", undefined, check)));
+        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("next", undefined, check)), false, "stage-next");
     });
 
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
@@ -945,7 +959,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (!admitStageAndAdvancePress(args)) { return; }
         clearStageHoldFeedback();
         lastNavDirection = "previous";
-        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("previous", undefined, check)));
+        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("previous", undefined, check)), false, "stage-previous");
     });
 
     let undoLastStageDisposable = vscode.commands.registerCommand(
@@ -999,7 +1013,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // isChangedFile guard), so the button never errors even when "advance" is meaningless.
     let disposable15 = vscode.commands.registerCommand("better-git-vscode.stage-current-file-and-advance", async () => {
         const direction = lastNavDirection;
-        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance(direction, undefined, check)));
+        await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance(direction, undefined, check)), false, `stage-${direction}`);
     });
 
     // Manual trigger for collapsing the worktree/repository section headers (see the big comment block
@@ -2109,7 +2123,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             if (event.textEditor === visibleEditorForActiveTab() &&
                 (event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)) {
                 worktreePresentation.dispose();
-                invalidateChangeNavigation(true);
+                invalidateChangeNavigation(true, "manual editor selection");
                 // A manual cursor move is no longer a Better Git-selected hunk. Clear immediately instead of
                 // spawning a Git diff on every arrow-key repeat; the next Better Git navigation repaints it.
                 clearCurrentHunkOverviewMarker();
@@ -2121,7 +2135,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
                 worktreePresentation.dispose();
-                invalidateChangeNavigation(true); // Git hunk coordinates no longer describe the displayed revision.
+                invalidateChangeNavigation(true, "reviewed document changed"); // Git hunk coordinates no longer describe the displayed revision.
                 clearCurrentHunkOverviewMarker();
             }
         }),
@@ -4543,6 +4557,7 @@ const noNavigationCheckpoint: NavigationCheckpoint = () => undefined;
 class NavigationSuperseded extends Error {}
 let changeNavigationTail: Promise<void> = Promise.resolve();
 let changeNavigationGeneration = 0;
+let lastNavigationInvalidation = "none";
 let navigationTab: vscode.Tab | undefined;
 let navigationGroup: vscode.TabGroup | undefined;
 let navigationOwnTabChange = false;
@@ -4601,8 +4616,9 @@ const anchorNavigationAtViewport = (editor: vscode.TextEditor | undefined, direc
     debugLog("nav", `${direction}: resume from viewport L${viewport.top + 1}-L${viewport.bottom + 1}, anchor L${line + 1}`);
 };
 
-const invalidateChangeNavigation = (preserveHeldSelection = false): void => {
+const invalidateChangeNavigation = (preserveHeldSelection = false, reason = "navigation context reset"): void => {
     changeNavigationGeneration++;
+    lastNavigationInvalidation = reason;
     if (preserveHeldSelection) {
         // Cursor/tab/document changes supersede old navigation work, not a physical hold.
         // Its captured files belong to that gesture until release or explicit cancellation.
@@ -4631,7 +4647,9 @@ const observeNavigationTab = (): void => {
         const previewOwner = ownedMouseStagePreview;
         const delayedOwnedPreview = previewOwner?.request === latestMouseHoldRequest
             && currentReviewFileUri()?.toString() === previewOwner?.uri;
-        if (!navigationOwnTabChange && !delayedOwnedPreview) { invalidateChangeNavigation(true); }
+        if (!navigationOwnTabChange && !delayedOwnedPreview) {
+            invalidateChangeNavigation(true, `active tab/group changed: ${tab?.label ?? "no tab"}`);
+        }
     }
 };
 
@@ -4670,17 +4688,23 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
 
 const serializeChangeNavigation = (
     operation: (check: NavigationCheckpoint) => Promise<void>,
-    commitCapturedStage = false
+    commitCapturedStage = false,
+    traceLabel?: string
 ): Promise<void> => {
+    const label = traceLabel ?? (commitCapturedStage ? "captured-stage" : undefined);
+    const queuedAt = label ? performance.now() : 0;
     pendingWorktreePresentation?.dispose();
     observeNavigationTab();
     queuedNavigationOperations++;
     const generation = changeNavigationGeneration;
     const check = () => {
         observeNavigationTab();
-        if (generation !== changeNavigationGeneration) { throw new NavigationSuperseded(); }
+        if (generation !== changeNavigationGeneration) {
+            throw new NavigationSuperseded(`generation ${generation}->${changeNavigationGeneration}: ${lastNavigationInvalidation}`);
+        }
     };
     const execute = async () => {
+        if (label) { debugLog("stage-flow", `${label} dequeued; wait=${Math.round(performance.now() - queuedAt)}ms, focused=${vscode.window.state.focused}`); }
         try {
             // An already-released, captured stage is a Git transaction. UI movement may
             // cancel its later navigation, but must not silently discard the transaction.
@@ -4688,7 +4712,9 @@ const serializeChangeNavigation = (
             await operation(check);
         } catch (error) {
             if (!(error instanceof NavigationSuperseded)) { throw error; }
+            debugLog("stage-flow", `${label ?? "navigation"} cancelled: ${error.message}`);
         } finally {
+            if (label) { debugLog("stage-flow", `${label} settled; elapsed=${Math.round(performance.now() - queuedAt)}ms`); }
             queuedNavigationOperations--;
         }
     };
@@ -5230,6 +5256,7 @@ const stageCurrentFileAndAdvance = async (
     const currentUri = capturedChange?.uri ?? await getActiveFileUri();
     check();
     if (!currentUri) {
+        debugLog("stage-flow", `${direction}: skipped, no active review file`);
         return;
     }
 
@@ -5238,6 +5265,7 @@ const stageCurrentFileAndAdvance = async (
     const activeSide = capturedChange ?? await getActiveChange();
     check();
     if (activeSide?.staged === true) {
+        debugLog("stage-flow", `${direction}: skipped staged review ${currentUri.fsPath}`);
         return;
     }
 
@@ -5270,6 +5298,7 @@ const stageCurrentFileAndAdvance = async (
     // git add as a no-op then close that editor — a nasty surprise. Testing membership against getFileChanges()
     // keeps this guard and the advance list below reading from the SAME set, so they can never diverge again.
     if (!allChanges.some((c) => pathMatches(c.uri))) {
+        debugLog("stage-flow", `${direction}: skipped, review file is not a Git change: ${currentUri.fsPath}`);
         return;
     }
 
@@ -5304,6 +5333,7 @@ const stageCurrentFileAndAdvance = async (
     // this function) now — the advance switches the editor to the NEXT file, so reading the active file
     // afterwards would record the wrong file. stageThroughExtension only updates the status bar if add()
     // succeeds, so a no-op/failed stage won't show a file in the bar.
+    debugLog("stage-flow", `${direction}: ${currentUri.fsPath} -> ${targetUnstagedChange?.uri.fsPath ?? "no remaining file"}`);
     await stageThroughExtension(activeRepo, currentUri, stageUndoViewFromMouseReview(currentUri, priorView));
     check(); // Finish the exact stage, but never pull the user back after a manual tab/worktree switch.
 
@@ -5324,7 +5354,9 @@ const stageCurrentFileAndAdvance = async (
     // the target never opened and the user was stranded on a blank/closed editor. openChangeEntry's unstaged
     // path has a shown-tab verification + showTextDocument fallback that handles exactly this silent-no-op —
     // so the mouse/keyboard/"+" stage-and-advance now inherits it for free, matching plain navigation.
+    debugLog("stage-flow", `${direction}: opening next review file`);
     await openNavigationTarget(targetUnstagedChange, check, !isPreview);
+    debugLog("stage-flow", `${direction}: next review opened; shown=${currentReviewFileUri()?.fsPath ?? "opaque image/non-text editor"}`);
     if (direction === "previous") {
         // Stage-and-Previous is a cross-file backward transition too: land new files at EOF and tall diff hunks
         // at their last line, exactly like openPreviousFile/openLastFile.
