@@ -8,6 +8,7 @@ import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp } from "./gitWorktreeFocus";
 import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS } from "./gitWorktreePresentation";
+import { repositoriesInScmRegistrationOrder } from "./gitScmDiscoveryOrder";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 import { StageTransactionStore, StageUndoView, StoredStageTransaction } from "./stageTransactionStore";
@@ -240,7 +241,15 @@ const startIndexTransitionObservation = async (context: vscode.ExtensionContext)
         }
     };
 
-    for (const repo of git.repositories ?? []) {
+    // Other extensions can call getRepository before Better Git activates,
+    // sorting this initial API snapshot in place. Seed from registration order
+    // where available; later open/close events retain it without polling.
+    const initialRepositories = git.repositories ?? [];
+    const registrationOrder = repositoriesInScmRegistrationOrder<any>(initialRepositories, gitExtension.exports);
+    if (registrationOrder.some((repo, index) => repo.rootUri.toString() !== initialRepositories[index].rootUri.toString())) {
+        debugLog("worktree-link", `Recovered SCM registration order for ${registrationOrder.length} existing repositories; the initial Git API snapshot was already reordered.`);
+    }
+    for (const repo of registrationOrder) {
         attach(repo);
     }
     if (typeof git.onDidOpenRepository === "function") {
@@ -2655,7 +2664,9 @@ const revealCollapsedWorktree = async (
         // Hidden/reordered repository headers can invalidate the position hint.
         // Close the candidate again; never cycle inputs or operate the wrong repo.
         await executeScmTreeCommand("manual", SCM_COLLAPSE_ALL_REPOS_COMMAND);
-        debugLog("worktree-link", `Native repository position did not match ${repository.rootUri.fsPath}; stopped presentation.`);
+        const selected = repositories.filter(candidate => candidate.ui.selected)
+            .map(candidate => candidate.rootUri.fsPath).join(", ") || "none";
+        debugLog("worktree-link", `Native repository position ${index + 1}/${ordered.length} (${order}) did not match ${repository.rootUri.fsPath}; selected=${selected}; stopped presentation.`);
         return false;
     }
     // Selection can move focus to the commit input. All headers are still

@@ -29,6 +29,7 @@ const testStageReveal = process.argv.includes('--stage-reveal');
 const testDeletedLink = process.argv.includes('--deleted-link');
 const testLinkOnly = process.argv.includes('--link-only');
 const testSingleRepository = process.argv.includes('--single-repository');
+const testPreorderedApi = process.argv.includes('--preordered-api');
 async function until(read, accept, description, timeout = 15_000) {
     const end = Date.now() + timeout;
     let last;
@@ -38,7 +39,7 @@ async function until(read, accept, description, timeout = 15_000) {
     }
     throw new Error(`${description}: ${JSON.stringify(last)}`);
 }
-const repositoryCount = Number(process.env.BGV_NATIVE_REPOSITORY_COUNT ?? 9);
+const repositoryCount = Number(process.env.BGV_NATIVE_REPOSITORY_COUNT ?? (testPreorderedApi ? 32 : 9));
 assert.ok(Number.isInteger(repositoryCount) && repositoryCount >= 9 && repositoryCount <= 32);
 const roots = Array.from({ length: repositoryCount }, (_, i) => path.join(root, `repo-${i}`));
 fs.mkdirSync(roots[0]);
@@ -92,7 +93,7 @@ const log = fs.openSync(path.join(evidence, 'native-worktree.log'), 'w');
 const child = spawn(executable, [workspace, `--user-data-dir=${profile}`, `--extensions-dir=${path.join(root, 'extensions')}`,
     `--extensionDevelopmentPath=${extensionRoot}`, `--extensionTestsPath=${path.join(extensionRoot, 'scripts/worktree-native-test-driver.cjs')}`,
     `--remote-debugging-port=${port}`, '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-telemetry'],
-{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '' }, stdio: ['ignore', log, log] });
+{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '', BGV_PREORDERED_API_TEST: testPreorderedApi ? '1' : '' }, stdio: ['ignore', log, log] });
 let socket;
 let activationMonitor;
 let nextRequest = 0;

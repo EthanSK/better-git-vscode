@@ -4,6 +4,17 @@ const path = require('node:path');
 exports.run = async () => {
  const root = process.env.BGV_SWITCH_ROOT;
  const git = (await vscode.extensions.getExtension('vscode.git').activate()).getAPI(1);
+ const roots = JSON.parse(fs.readFileSync(path.join(root,'roots.json'),'utf8'));
+ if (process.env.BGV_PREORDERED_API_TEST === '1') {
+  // Reproduce another extension looking up a repository before Better Git
+  // activates. Git sorts its API array in place; SCM header order stays put.
+  for (const p of roots.slice(0, -1)) {
+   const repo = git.getRepository(vscode.Uri.file(p)) ?? await git.openRepository(vscode.Uri.file(p));
+   await repo.status();
+  }
+  git.getRepository(vscode.Uri.file(roots[1]));
+  if (!git.repositories[0].rootUri.fsPath.endsWith('repo-10')) throw new Error('API reorder prerequisite was not reproduced');
+ }
  // Capture the real registered handler in the disposable host, avoiding OS URL
  // routing that could deliver a test link to an unrelated normal Code window.
  let uriHandler;
@@ -23,7 +34,6 @@ exports.run = async () => {
  let api;
  try { api = await vscode.extensions.getExtension('EthanSK.better-git-vscode').activate(); }
  finally { vscode.window.registerUriHandler=registerUriHandler; cp.execFile=originalExecFile; }
- const roots = JSON.parse(fs.readFileSync(path.join(root,'roots.json'),'utf8'));
  for(const p of process.env.BGV_NATIVE_SINGLE==='1' ? [roots[1]] : roots.slice(0, -1)) { const repo=git.getRepository(vscode.Uri.file(p)) ?? await git.openRepository(vscode.Uri.file(p)); await repo.status(); }
  await vscode.commands.executeCommand('workbench.view.scm');
  if(process.env.BGV_NATIVE_SINGLE!=='1') await vscode.commands.executeCommand('workbench.scm.action.expandAllRepositories');

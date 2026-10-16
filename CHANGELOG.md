@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.126
+
+- Recover Source Control's repository registration order when Git's API list was already reordered before Better Git activated. Preserve the existing collapse/expand sequence, delays and exact-root check, including staged-only and clean worktrees.
+- Include the attempted position and actual selected repository in debug logs when native selection does not match.
+
 ## 1.2.125
 
 - Log stage-and-next queue waits, Git and Undo timings, selected targets and navigation cancellation reasons when debug logging is enabled. Keep navigation, staging and input timing unchanged.
