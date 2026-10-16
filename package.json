@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.126",
+  "version": "1.2.127",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -290,8 +290,8 @@
         },
         "better-git-vscode.currentFileBadge": {
           "type": "string",
-          "default": "🔥🔥",
-          "description": "The badge shown on the file you're currently reviewing, in the Source Control panel (and Explorer/tabs). Max 2 characters — an emoji renders in colour and is the most visible option (the Source Control panel ignores decoration colours). Default is double fire 🔥🔥. Loud choices: 🔥 🔴 🚨 🟥 ❗ ⭐ 👉. Tip: two emoji (e.g. 🔥🔥) is allowed and renders a bit wider. Set to empty to disable the badge."
+          "default": "\ud83d\udd25\ud83d\udd25",
+          "description": "The badge shown on the file you're currently reviewing, in the Source Control panel (and Explorer/tabs). Max 2 characters \u2014 an emoji renders in colour and is the most visible option (the Source Control panel ignores decoration colours). Default is double fire \ud83d\udd25\ud83d\udd25. Loud choices: \ud83d\udd25 \ud83d\udd34 \ud83d\udea8 \ud83d\udfe5 \u2757 \u2b50 \ud83d\udc49. Tip: two emoji (e.g. \ud83d\udd25\ud83d\udd25) is allowed and renders a bit wider. Set to empty to disable the badge."
         },
         "better-git-vscode.navigationHands": {
           "type": "string",
@@ -316,7 +316,7 @@
         "better-git-vscode.showLastStagedInStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show a status bar item (bottom-left) with the last file you staged through this extension (stage-and-advance or the editor-title + button). Useful when stage-and-advance jumps so fast you don't notice what got staged — click the item to reopen that file's staged diff and unstage it if it was a mistake. Turn off to hide the indicator."
+          "description": "Show a status bar item (bottom-left) with the last file you staged through this extension (stage-and-advance or the editor-title + button). Useful when stage-and-advance jumps so fast you don't notice what got staged \u2014 click the item to reopen that file's staged diff and unstage it if it was a mistake. Turn off to hide the indicator."
         },
         "better-git-vscode.showStageAndAdvanceInStatusBar": {
           "type": "boolean",
@@ -337,7 +337,7 @@
           "type": "number",
           "default": 5,
           "minimum": 1,
-          "description": "For a genuinely NEW file (untracked / staged-new / intent-to-add) shown as a plain editor, the next/previous-change shortcuts have no per-change hunks to jump between — so instead they step the cursor this many lines down/up, letting you scroll through and review the entire new file. When you reach the bottom (or top), they fall through to the next (or previous) changed file as usual. Never affects modified, deleted or renamed files, or any side-by-side diff — those always navigate change-to-change."
+          "description": "For a genuinely NEW file (untracked / staged-new / intent-to-add) shown as a plain editor, the next/previous-change shortcuts have no per-change hunks to jump between \u2014 so instead they step the cursor this many lines down/up, letting you scroll through and review the entire new file. When you reach the bottom (or top), they fall through to the next (or previous) changed file as usual. Never affects modified, deleted or renamed files, or any side-by-side diff \u2014 those always navigate change-to-change."
         },
         "better-git-vscode.hunkStagingEnabled": {
           "type": "boolean",
@@ -438,12 +438,12 @@
       }
     },
     "_comment_navigation_keybindings": [
-      "LAYOUT KEYBINDINGS — the single-source-of-truth architecture (package.json is strict JSON,",
+      "LAYOUT KEYBINDINGS \u2014 the single-source-of-truth architecture (package.json is strict JSON,",
       "so this human-readable explanation lives in this ignored `_comment_*` key; VS Code ignores",
       "any contributes key it doesn't recognise).",
       "",
       "THE CANONICAL BEHAVIOUR lives in exactly TWO commands: `next-scm-change` and `previous-scm-change`",
-      "(goToNextDiff / goToPreviousDiff in src/extension.ts — hunk-to-hunk nav, new-file scroll mode,",
+      "(goToNextDiff / goToPreviousDiff in src/extension.ts \u2014 hunk-to-hunk nav, new-file scroll mode,",
       "cross-file fallthrough, all the accumulated fixes). Keyboard layouts do NOT get their own behaviour.",
       "Both pairs use thin QWERTY/Dvorak character remaps. Do not use printable-key scan codes here:",
       "VS Code deliberately falls back to key-code dispatch for macOS DVORAK-QWERTYCMD, so a contributed",
@@ -454,7 +454,7 @@
       "is both, so either hand works immediately. On QWERTY this intentionally claims the built-in Alt+Z",
       "Toggle Word Wrap shortcut; choosing right restores that built-in shortcut.",
       "",
-      "The right-hand pair is the PHYSICAL `>` and `<` keys (the . and , keycaps — the arrows literally",
+      "The right-hand pair is the PHYSICAL `>` and `<` keys (the . and , keycaps \u2014 the arrows literally",
       "point forward/back):",
       "  physical > key : QWERTY types `.`  -> alt+.  | Dvorak types `v` -> alt+v  => next-scm-change",
       "  physical < key : QWERTY types `,`  -> alt+,  | Dvorak types `w` -> alt+w  => previous-scm-change",
@@ -474,14 +474,14 @@
       "HISTORY OF THE v1.2.5 FIX (why next/previous-scm-change moved from alt+z/alt+a to alt+./alt+,):",
       "Before v1.2.5 the QWERTY >/< keys (alt+./alt+,) were bound to smart-forward/smart-back instead.",
       "Those are Ethan's MOUSE-button commands (Karabiner F13/F17), and commit 6043d05 intentionally",
-      "FLIPPED their in-diff direction for the mouse (forward = PREVIOUS change — his preference for the",
+      "FLIPPED their in-diff direction for the mouse (forward = PREVIOUS change \u2014 his preference for the",
       "thumb buttons). Because the keyboard >/< keys shared those commands, QWERTY keyboards inherited the",
       "mouse flip: pressing > went BACKWARD through changes, < went FORWARD, and outside a diff the keys",
-      "did editor history navigation instead of change navigation. Dvorak was immune the whole time —",
+      "did editor history navigation instead of change navigation. Dvorak was immune the whole time \u2014",
       "its physical >/< keys type v/w, which hit next/previous-scm-change directly. That working Dvorak",
       "path is the source of truth; v1.2.5 reverse-maps it back onto QWERTY so both layouts run the",
       "identical canonical commands from the identical physical keys. The old alt+z/alt+a QWERTY defaults",
-      "were dropped: alt+z was shadowing VS Code's built-in Toggle Word Wrap (a real conflict — that",
+      "were dropped: alt+z was shadowing VS Code's built-in Toggle Word Wrap (a real conflict \u2014 that",
       "default is restored now), and alt+a had no mnemonic; >/< is the advertised, correct home.",
       "",
       "smart-forward/smart-back ship NO default keyboard bindings in either layout. They are mouse-button",
@@ -500,12 +500,12 @@
       "ctrl+shift+g (the LAST entry in `keybindings` below) is a COMPOSITE binding built on VS Code's",
       "built-in `runCommands` command. `runCommands` runs each id in `args.commands` in order, and it IS",
       "supported directly inside contributes.keybindings (the manifest keybindings go through the SAME",
-      "resolver as a user keybindings.json, so the args-bearing form works identically here — no extension",
+      "resolver as a user keybindings.json, so the args-bearing form works identically here \u2014 no extension",
       "code needed). We use it so one chord does two things in sequence:",
-      "  1. better-git-vscode.open-change-at-position — open the active file's side-by-side diff scrolled to",
+      "  1. better-git-vscode.open-change-at-position \u2014 open the active file's side-by-side diff scrolled to",
       "     the EXACT cursor + top line you were viewing in the plain file (our new mirror-of-reveal command).",
-      "  2. workbench.view.scm — then focus/open the Source Control pane so the file is highlighted there.",
-      "WHY ctrl+shift+g: it shadows VS Code's default 'show Source Control' chord, which only did step 2 —",
+      "  2. workbench.view.scm \u2014 then focus/open the Source Control pane so the file is highlighted there.",
+      "WHY ctrl+shift+g: it shadows VS Code's default 'show Source Control' chord, which only did step 2 \u2014",
       "this upgrades it to 'jump into this file's changes at my position AND show Source Control'. We bind the",
       "SAME key on mac + win/linux (ctrl, not cmd) on purpose: cmd+shift+g is taken on mac (find-next-match),",
       "so ctrl+shift+g is the cross-platform-consistent choice. Users can override/disable it in their own",

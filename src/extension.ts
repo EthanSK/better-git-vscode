@@ -1,3 +1,4 @@
+import { parseWandReviewUri } from "./wandReviewUri";
 import * as vscode from "vscode";
 // fs + path are only used by resolveWorktreeRootUri's FALLBACK path (the filesystem `.git` walk used when the
 // git extension API can't tell us which worktree owns a file). Node built-ins are available in the extension
@@ -126,11 +127,11 @@ let lastNavDirection: "next" | "previous" = "next";
 // owns the actual decoration type, refresh coalescing and disposal.
 let requestCurrentHunkOverviewMarkerRefresh: () => void = () => undefined;
 
-type MouseReviewSource = "corsair" | "razer";
+type MouseReviewSource = "corsair" | "razer" | "wand";
 // `stageReadyRequested` is set synchronously when F20 arrives, before its queued Git/editor work. The adjacent
 // F16 chord uses this input-order fact to distinguish a quick Undo chord from a ready-hold cancel even if
 // navigation is busy. See mouseHoldChord.ts for the shared decision rule.
-type MouseHoldRequest = MouseHoldChordState & { releaseQueued?: boolean; excludePreviewOnRelease?: boolean };
+type MouseHoldRequest = MouseHoldChordState & { releaseQueued?: boolean; excludePreviewOnRelease?: boolean; wandReviewMode?: "changes" | "files" };
 type ActiveMouseStageSelection = MouseStageSelection<FileChange> & { request?: MouseHoldRequest };
 type MouseReviewView = {
     input: unknown;
@@ -161,8 +162,8 @@ const mouseNavigationOrigins = new Map<MouseReviewSource, {
     view?: MouseReviewView;
     navigateOnButtonDown: boolean;
 }>(); // A late stage press belongs to the file left by this mouse, never the newly displayed file. (Codex task: 01a039f7-873c-7c30-b3dc-af8a6724ace5)
-const isMouseReviewSource = (source: unknown): source is MouseReviewSource => source === "corsair" || source === "razer";
-const mouseSourceLabel = (source: MouseReviewSource): string => source === "corsair" ? "Corsair" : "Razer";
+const isMouseReviewSource = (source: unknown): source is MouseReviewSource => source === "corsair" || source === "razer" || source === "wand";
+const mouseSourceLabel = (source: MouseReviewSource): string => source === "wand" ? "Magic Wand" : source === "corsair" ? "Corsair" : "Razer";
 const mouseDirectionLabel = (direction: "next" | "previous"): string => direction === "next" ? "Next" : "Previous";
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
@@ -1199,8 +1200,59 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         "better-git-vscode.open-worktree-in-source-control",
         (...targets: unknown[]) => openWorktree(targets.find(target => target instanceof vscode.Uri) as vscode.Uri | undefined ?? findWorktreeRootUri(targets))
     );
+    // Own-source ordered transport only; the existing review transaction owns
+    // file membership, staging and Undo. A missing packet must never stage early.
+    type WandPacket=NonNullable<ReturnType<typeof parseWandReviewUri>>;
+    let wandReview:{id:string;seq:number;direction:"next"|"previous";mode:"changes"|"files";received:number}|undefined;
+    const wandPending=new Map<string,Map<number,WandPacket>>(),wandClosed=new Set<string>();
+    let wandReviewQueue:Promise<void>=Promise.resolve();
+    const retireWand=(id:string)=>{wandPending.delete(id);wandClosed.add(id);if(wandClosed.size>64){wandClosed.delete(wandClosed.values().next().value!);}};
+    const cancelWandReview=async()=>{if(wandReview){retireWand(wandReview.id);}wandReview=undefined;await cancelMouseNavigationHold("wand");};
+    const wandWatchdog=setInterval(()=>{if(wandReview&&performance.now()-wandReview.received>3000){void cancelWandReview();}},500);
+    context.subscriptions.push({dispose:()=>{clearInterval(wandWatchdog);void cancelWandReview();}});
+    const handleWandReview=async(uri:vscode.Uri):Promise<void>=>{
+        const parsed=parseWandReviewUri(uri);
+        if(!parsed || !vscode.window.state.focused){await cancelWandReview();wandPending.clear();return;}
+        if(wandClosed.has(parsed.id)){return;}
+        if(!wandPending.has(parsed.id)){
+            if(wandPending.size>=8){return;}
+            wandPending.set(parsed.id,new Map());
+        }
+        const pending=wandPending.get(parsed.id)!;
+        if(pending.size>=64){await cancelWandReview();wandPending.delete(parsed.id);return;}
+        pending.set(parsed.seq,parsed);
+        if(parsed.phase==="begin"){
+            if(parsed.seq!==1){retireWand(parsed.id);return;}
+            if(latestMouseHoldRequest?.active && mouseHoldRequests.get("wand")!==latestMouseHoldRequest){retireWand(parsed.id);return;}
+            if(wandReview?.id!==parsed.id){
+                if(wandReview){await cancelWandReview();}
+                wandReview={...parsed,seq:0,received:performance.now()};
+            }
+        }
+        if(!wandReview || wandReview.id!==parsed.id){return;}
+        wandReview.received=performance.now();
+        while(wandReview && pending.has(wandReview.seq+1)){
+            const packet=pending.get(wandReview.seq+1)!;pending.delete(packet.seq);wandReview.seq=packet.seq;
+            if(packet.phase==="begin"){
+                await vscode.commands.executeCommand("better-git-vscode.begin-mouse-navigation-hold",{source:"wand",direction:packet.direction});
+                const request=mouseHoldRequests.get("wand");if(request){request.wandReviewMode=packet.mode;}
+                await vscode.commands.executeCommand("better-git-vscode.stage-hold-ready","wand");
+            }else if(packet.phase==="cancel"){await cancelWandReview();return;}
+            else if(packet.phase==="step"){
+                if(wandReview.mode==="files"){await adjustStageHoldSelectionRequest("wand",packet.direction==="next"?"down":"up");}
+                else {await navigateStageHoldPreviewRequest("wand",packet.direction);}
+            }else if(packet.phase==="finish"){
+                const direction=wandReview.direction;retireWand(wandReview.id);wandReview=undefined;
+                await vscode.commands.executeCommand("better-git-vscode.finish-mouse-navigation-hold",{source:"wand",direction});
+            }
+        }
+    };
     const worktreeLinkHandler = vscode.window.registerUriHandler({
         async handleUri(uri) {
+            if(uri.path.startsWith("/wand-review/")){
+                wandReviewQueue=wandReviewQueue.then(()=>handleWandReview(uri)).catch(error=>{mouseDebug(`Magic Wand review failed: ${String(error)}`);return cancelWandReview();});
+                return wandReviewQueue;
+            }
             const modeMatch = /^\/mouse-stage-preview-mode\/(on|off)$/.exec(uri.path);
             if (modeMatch) {
                 const source = new URLSearchParams(uri.query).get("source");
@@ -1523,7 +1575,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     };
     prepareStageHoldReleaseRequest = (source, request) => {
         // Capture mode before feedback clears; queued ratchets still determine the final endpoint.
-        request.excludePreviewOnRelease = stagePreviewMode?.source === source && stagePreviewMode.request === request;
+        request.excludePreviewOnRelease = request.wandReviewMode === "changes" || (stagePreviewMode?.source === source && stagePreviewMode.request === request);
         const selection = stageHoldSelections.get(source);
         if (selection?.request === request) { releasedStageSelections.set(request, selection); }
         clearStageHoldFeedback(source);
