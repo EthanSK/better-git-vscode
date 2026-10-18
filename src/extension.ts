@@ -372,33 +372,25 @@ const stageBatchThroughExtension = async (
         .find(candidate => candidate && selectedUris.has(candidate.fileUri));
     const repoRoot = String(repo.rootUri?.fsPath ?? "");
     let receiptCaptureError: unknown;
-    if (repoRoot) {
-        try {
-            trace("preparing Undo snapshot");
-            await stageTransactionObserver?.prepare(repoRoot);
-            trace("Undo snapshot ready");
-        } catch (error) {
-            // Staging itself must remain available even if the independent
-            // receipt snapshot cannot be prepared.
-            receiptCaptureError = error;
-        }
-    }
-    trace("Git add starting");
-    await runWithTransientGitIndexRetry(() => repo.add(uris.map(uri => uri.fsPath)));
-    trace("Git add finished");
-    if (repoRoot && !receiptCaptureError) {
-        try {
+    const mutate = async (): Promise<void> => {
+        trace("Git add starting");
+        await runWithTransientGitIndexRetry(() => repo.add(uris.map(uri => uri.fsPath)));
+        trace("Git add finished");
+        if (repoRoot && stageTransactionObserver) {
             trace("saving Undo receipt");
-            await stageTransactionObserver?.observe(repoRoot, {
-                kind: "betterGitStage",
-                uri: uris[0].toString(),
-                uris: uris.map(uri => uri.toString()),
-                view,
-            });
-            trace("Undo receipt saved");
-        } catch (error) {
-            receiptCaptureError = error;
         }
+    };
+    if (repoRoot && stageTransactionObserver) {
+        trace("preparing Undo snapshot");
+        receiptCaptureError = await stageTransactionObserver.runObservedMutation(repoRoot, mutate, {
+            kind: "betterGitStage",
+            uri: uris[0].toString(),
+            uris: uris.map(uri => uri.toString()),
+            view,
+        });
+        if (!receiptCaptureError) { trace("Undo receipt saved"); }
+    } else {
+        await mutate();
     }
     if (receiptCaptureError) {
         const candidate = receiptCaptureError as { message?: unknown; stderr?: unknown };

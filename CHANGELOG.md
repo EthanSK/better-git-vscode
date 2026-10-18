@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.128
+
+- Keep each Better Git stage and its Undo receipt together so background repository checks cannot delay the next-file jump between them.
+
+
 ## 1.2.126
 
 - Recover Source Control's repository registration order when Git's API list was already reordered before Better Git activated. Preserve the existing collapse/expand sequence, delays and exact-root check, including staged-only and clean worktrees.
