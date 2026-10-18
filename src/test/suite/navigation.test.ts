@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile, execFileSync, execSync } from 'child_process';
 import { promisify } from 'util';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import * as vscode from 'vscode';
 import { resolveStagedLfsImage } from '../../stagedLfsImage';
 
@@ -140,7 +140,7 @@ suite('SCM change navigation E2E', () => {
 	};
 
 	const wsUri = (rel: string) => vscode.Uri.file(path.join(ws, rel));
-	const deliverMouseUri = async (route: string, source: string) => {
+	const deliverMouseUri = async (route: string, source: string, query?: string) => {
 		const profile = process.env.BGV_TEST_USER_DATA_PATH;
 		const executable = process.env.BGV_VSCODE_EXECUTABLE_PATH ?? (process.platform === 'darwin'
 			? path.resolve(vscode.env.appRoot, '../../MacOS/Code') : process.execPath);
@@ -151,7 +151,7 @@ suite('SCM change navigation E2E', () => {
 		await promisify(execFile)(executable!, [
 			cli,
 			`--user-data-dir=${profile}`, '--open-url',
-			`vscode://ethansk.better-git-vscode/${route}?source=${source}`
+			`vscode://ethansk.better-git-vscode/${route}?${query ?? `source=${source}`}`
 		], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 10000 });
 	};
 	const focusIsolatedTestWindow = async () => {
@@ -3073,6 +3073,37 @@ suite('SCM change navigation E2E', () => {
 		} finally { await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global); }
 	});
 
+
+    for(const mode of ["changes","files"] as const){for(const direction of ["next","previous"] as const){
+        test(`wand review native URI ${mode} ${direction} stages the existing selected range once`,async()=>{
+            const config=vscode.workspace.getConfiguration('better-git-vscode');
+            const ext=vscode.workspace.getConfiguration('extensions');
+            const previous=ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+            await ext.update('confirmedUriHandlerExtensionIds',['ethansk.better-git-vscode'],vscode.ConfigurationTarget.Global);
+            await config.update('experimentalMouseHoldNavigateOnButtonDown',false,vscode.ConfigurationTarget.Global);
+            try{
+                const names=['wand_a.txt','wand_b.txt','wand_c.txt'];for(const name of names){write(name,name);}
+                await refreshUntil(()=>names.every(isUntracked),'wand review fixtures');
+                const start=direction==='next'?0:2,endpoint=1;
+                await openPlainAt(names[start],0);await focusIsolatedTestWindow();
+                const id=randomUUID();
+                const send=(phase:string,seq:number)=>deliverMouseUri('wand-review/'+phase,'wand',new URLSearchParams({version:'1',id,seq:String(seq),direction,mode}).toString());
+                await send('begin',1);
+                await poll(()=>extensionApi.getReviewDecorationBadge(wsUri(names[start]))==='💥💥','wand stage ready without Eyes mode');
+                assert.strictEqual(git('diff --cached --name-only'),'');
+                await send('step',2);await poll(()=>activeTabPath()===wsUri(names[endpoint]).path,'wand detent');
+                assert.strictEqual(git('diff --cached --name-only'),'','navigation only marks; release owns staging');
+                // Deliberately deliver finish before an earlier heartbeat. It must
+                // wait for the gap instead of staging an incomplete gesture.
+                await send('finish',4);assert.strictEqual(git('diff --cached --name-only'),'');
+                await send('heartbeat',3);
+                const expected=(mode==='changes'?[names[start]]:[names[start],names[endpoint]]).sort().join('\n');
+                await poll(()=>git('diff --cached --name-only')===expected,'wand release exact index');
+                await send('finish',4);assert.strictEqual(git('diff --cached --name-only'),expected,'duplicate release inert');
+                await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');assert.strictEqual(git('diff --cached --name-only'),'');
+            }finally{await ext.update('confirmedUriHandlerExtensionIds',previous,vscode.ConfigurationTarget.Global);}
+        });
+    }}
 	test('mouse preview mode URI reaches the real handler for both mouse sources', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const previousLogging = config.inspect<boolean>('debugLogging')?.globalValue;

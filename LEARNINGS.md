@@ -6,6 +6,22 @@ Normal 1.2.127 logs show real 5–14-second stage-and-next delays. At 13:08:40 B
 
 Checked the released history through 1.2.127: 1.2.125 adds debug timing, 1.2.126 repairs initial SCM ordering, and `cc0d500`/`c8a608a` add the wand transport. The observer, receipt store and Git snapshot implementation are unchanged across those releases. The shared queue predates them; the most recent observer/store semantic change is the 25 September cursor/viewport receipt work. The live Undo JSON is 29205 bytes with three receipts and 100 baseline records, so an unbounded Undo-entry buffer is not supported by this evidence. Do not add navigation delays or remove exact cross-window Undo checks in response. Any performance fix must preserve accepted operation order and detect real index/HEAD changes; same visible file/status labels alone are not a safe cache key. This was a read-only runtime diagnosis: no extension install, restart, settings change or Git index mutation was performed.
 
+## Magic Wand review uses the existing staging transaction
+
+The wand is an independent review source, never a Corsair/Razer alias. Its strict versioned URI
+lifecycle carries an owner UUID, monotonic sequence, direction and change/file mode. Queue gaps
+before release; a missing packet must not commit an incomplete range. Duplicate/retired owners
+stay inert, active physical-mouse holds reject wand admission, and lost heartbeats cancel the
+wand's own transaction. Change review calls the existing preview navigation but does not enable
+Eyes mode; release excludes the current preview. File mode calls the existing file-range action.
+All index mutation and exact Undo remain in the existing Better Git transaction.
+
+146 non-GUI tests and four real Mini URI/index/Undo cases passed (both directions and modes),
+including a deliberately early finish held behind a missing heartbeat. The first Mini run exposed
+reused fixture UUIDs being correctly rejected; each gesture now uses a fresh UUID. These are
+transport and Git checks, not physical wand acceptance.
+
+
 ## 2026-10-16 — Recover repository order before the first API snapshot
 
 Two AIMVS11 Worktree links at 15:23:08 and 15:23:25 BST reached Better Git but stopped at the native repository-position check. Read-only Git status showed a staged-only worktree; no first unstaged file existed to reveal its header afterward. The native workspace snapshot listed all Git repositories visible in discovery order. The 1.2.120 open-event map protected later lookups but seeded existing roots from `git.repositories`, which another extension could already have sorted before Better Git activation.
