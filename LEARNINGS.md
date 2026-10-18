@@ -1,5 +1,13 @@
 # Learnings
 
+## Wand range reversal and actual extension activation
+
+A wand has no physical Next/Previous button defining a permanent selection direction. In a live trace, a session started Previous, then forward file-boundary crossings kept just one file because the fixed-direction range treated them as undo steps. Give only the wand an endpoint-rebase option in the existing MouseStageSelection helper: reverse steps still remove the departing file, but once only one endpoint remains, either direction can begin collecting again. Physical mouse holds retain their prior fixed-direction policy. Both file and eyes navigation continue through the same existing transaction and exact Undo code.
+
+Installed files are not proof of activation. Running Extensions showed 1.2.129 after the Gallery had installed 1.2.130 and Restart Extension Host had run. Confirm the actual Running Extensions version after the supported extension update/reload action; otherwise the Eyes setter can remain absent from the active runtime even though the installed bundle contains it. The wand's explicit finish action stages its set; app focus loss must cancel its pending set rather than borrowing physical mouse auto-stage-on-switch.
+
+Validation: 156 non-GUI tests passed. Seven focused native Mini cases passed across the main run and the corrected focus-helper run, including both review modes/directions, reversing beyond the initial file, exact stage/Undo and cancelling on app switch. The tested production bundle is `36cb361c218454d1f8cc900fec8175f0da8bca36d85ed3845c14f8e33e8c5fb0`. Physical wand acceptance is separate.
+
 ## Wand change review enables the existing Eyes mode
 
 The original wand URI route navigated preview changes but did not call the existing Eyes-mode setter. Its release excluded the current preview without showing the Eyes decoration. Enable the setter only after the same-source stage-ready command, with true for changes and false for files. Four native Mini URI tests cover the correct badge, both directions, exact staged range, out-of-order finish delivery and Undo. Preserve the latest stage/Undo latency work rather than branching a release from the older wand implementation.

@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.131
+
+- Let Magic Wand review build a selection in either direction after backtracking through its starting file. Keep physical mouse hold behavior and the existing staging/Undo transaction unchanged.
+
 ## 1.2.130
 
 - Show the existing Eyes review indicator for Magic Wand Review changes; keep file staging and exact Undo behavior unchanged.

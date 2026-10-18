@@ -818,6 +818,7 @@ const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefine
 };
 
 export function activate(context: vscode.ExtensionContext): BetterGitExtensionApi {
+    debugLog("activation", `Better Git ${context.extension.packageJSON.version} activated.`);
     registerStagedLfsImageProvider(context);
     registerAgentFlowSelectionBridge(context);
     registerDiffViewDisplay(context, (message) => debugLog("diff-display", message));
@@ -1558,8 +1559,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         // Snapshot before invalidation retires the physical gesture. Queued/in-flight
         // wheel work must not add files after the user has left this window.
         const request = latestMouseHoldRequest;
+        // Unlike releasing a physical mouse hold, leaving VS Code is not the
+        // wand's explicit Middle double-click confirmation. Cancel it safely.
         const owner = [...stageHoldSelections.entries()].find(([source, selection]) =>
-            request?.active && request.stageReadyRequested && selection.request === request
+            source !== "wand" && request?.active && request.stageReadyRequested && selection.request === request
             && mouseHoldRequests.get(source) === request
             && mouseNavigationOrigins.get(source)?.holdRequest === request);
         const origin = owner ? mouseNavigationOrigins.get(owner[0]) : undefined;
@@ -1786,7 +1789,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 const changes = distinctUnstagedChanges(await getFileChanges(target));
                 check(); // Focus loss may retire this hold while Git's file list is loading.
                 const anchorIndex = changes.findIndex(change => change.uri.toString() === target.toString());
-                const selection = createMouseStageSelection(changes, anchorIndex, origin?.direction ?? "next");
+                const selection = createMouseStageSelection(changes, anchorIndex, origin?.direction ?? "next", source === "wand");
                 if (!selection) {
                     if (request?.active && request === latestMouseHoldRequest) { request.stageReadyRequested = false; }
                     mouseDebug(`${mouseSourceLabel(source)} hold threshold ignored, review item is no longer unstaged.`);

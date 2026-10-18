@@ -41,6 +41,24 @@ suite("Mouse stage selection", () => {
         assert.strictEqual(createMouseStageSelection(items, items.length), undefined);
     });
 
+    test("wand circles can build either way after returning to a single endpoint", () => {
+        for (const initial of ["next", "previous"] as const) {
+            let selection = createMouseStageSelection(items, 1, initial, true)!;
+            selection = moveMouseStageSelection(selection, 1);
+            selection = moveMouseStageSelection(selection, 1);
+            assert.deepStrictEqual(selectedMouseStageItems(selection), ["b", "c", "d"]);
+            selection = moveMouseStageSelection(selection, -1);
+            assert.deepStrictEqual(selectedMouseStageItems(selection), ["b", "c"]);
+            selection = moveMouseStageSelection(selection, -1);
+            selection = moveMouseStageSelection(selection, -1);
+            assert.deepStrictEqual(selectedMouseStageItems(selection), ["a", "b"]);
+            assert.deepStrictEqual(selectedMouseStageItems(selection, true), ["b"]);
+            selection = moveMouseStageSelection(selection, 1);
+            selection = moveMouseStageSelection(selection, 1);
+            assert.deepStrictEqual(selectedMouseStageItems(selection), ["b", "c"]);
+        }
+    });
+
     test("preview backtracking removes the departing file and revisiting adds it again", () => {
         const marked = moveMouseStageSelection(createMouseStageSelection(items, 1)!, 1);
         const next = planMouseStagePreviewBoundary(marked, 2, "next")!;

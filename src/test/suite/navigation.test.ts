@@ -159,8 +159,9 @@ suite('SCM change navigation E2E', () => {
 		assert.ok(profile, 'the disposable VS Code profile must be identifiable before activating its window');
 		const matches = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' })
 			.split('\n').filter(line => line.includes(`--user-data-dir=${profile}`)
-				&& line.includes('/Visual Studio Code.app/Contents/MacOS/Code '));
-		assert.strictEqual(matches.length, 1, 'activate only this test host, never another VS Code window');
+				&& line.includes('/Visual Studio Code.app/Contents/MacOS/Code ')
+                && !line.includes('--open-url') && !line.includes('/Resources/app/out/cli.js'));
+		assert.strictEqual(matches.length, 1, `activate only this test host, never another VS Code window: ${JSON.stringify(matches)}`);
 		const pid = Number.parseInt(matches[0].trim(), 10);
 		assert.ok(Number.isInteger(pid) && pid > 0);
 		execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e',
@@ -3104,6 +3105,60 @@ suite('SCM change navigation E2E', () => {
             }finally{await ext.update('confirmedUriHandlerExtensionIds',previous,vscode.ConfigurationTarget.Global);}
         });
     }}
+    for (const mode of ['changes', 'files'] as const) {
+        test(`wand review direction reversal ${mode} preserves the set beyond its starting file`, async () => {
+            const ext = vscode.workspace.getConfiguration('extensions');
+            const previous = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+            await ext.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+            try {
+                const names = ['reverse_a.txt', 'reverse_b.txt', 'reverse_c.txt', 'reverse_d.txt'];
+                for (const name of names) { write(name, name); }
+                await refreshUntil(() => names.every(isUntracked), 'wand reverse fixtures');
+                await openPlainAt(names[1], 0); await focusIsolatedTestWindow();
+                const id = randomUUID(); let seq = 0;
+                const send = (phase: string, direction: string) => deliverMouseUri('wand-review/' + phase, 'wand',
+                    new URLSearchParams({ version: '1', id, seq: String(++seq), direction, mode }).toString());
+                await send('begin', 'previous');
+                await send('step', 'previous');
+                await poll(() => activeTabPath() === wsUri(names[0]).path, 'previous first');
+                for (const index of [1, 2, 3]) {
+                    await send('step', 'next');
+                    await poll(() => activeTabPath() === wsUri(names[index]).path, 'forward beyond starting file');
+                    assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(names[index])), mode === 'changes' ? '👀' : '💥💥');
+                }
+                assert.strictEqual(git('diff --cached --name-only'), '', 'circles never stage early');
+                await send('finish', 'previous');
+                const expected = names.slice(1, mode === 'changes' ? 3 : 4).join('\n');
+                await poll(() => git('diff --cached --name-only') === expected, 'reversed full set staged');
+                await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+                assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the full set');
+            } finally { await ext.update('confirmedUriHandlerExtensionIds', previous, vscode.ConfigurationTarget.Global); }
+        });
+    }
+    test('wand review app switch never stages an unconfirmed set', async () => {
+        const ext = vscode.workspace.getConfiguration('extensions');
+        const previous = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+        await ext.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+        try {
+            const names = ['unconfirmed_a.txt', 'unconfirmed_b.txt'];
+            for (const name of names) { write(name, name); }
+            await refreshUntil(() => names.every(isUntracked), 'unconfirmed wand files');
+            await openPlainAt(names[0], 0); await focusIsolatedTestWindow();
+            const id = randomUUID();
+            const send = (phase: string, seq: number) => deliverMouseUri('wand-review/' + phase, 'wand',
+                new URLSearchParams({ version: '1', id, seq: String(seq), direction: 'next', mode: 'changes' }).toString());
+            await send('begin', 1); await send('step', 2);
+            await poll(() => activeTabPath() === wsUri(names[1]).path, 'unconfirmed preview');
+            await switchAwayFromIsolatedTestWindow();
+            await extensionApi.whenStageTransactionsSettled();
+            assert.strictEqual(git('diff --cached --name-only'), '', 'leaving the app is not confirmation');
+            await focusIsolatedTestWindow(); await send('cancel', 3);
+            assert.strictEqual(git('diff --cached --name-only'), '', 'cancellation leaves the index unchanged');
+        } finally {
+            await focusIsolatedTestWindow();
+            await ext.update('confirmedUriHandlerExtensionIds', previous, vscode.ConfigurationTarget.Global);
+        }
+    });
 	test('mouse preview mode URI reaches the real handler for both mouse sources', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const previousLogging = config.inspect<boolean>('debugLogging')?.globalValue;
