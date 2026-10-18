@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.130
+
+- Show the existing Eyes review indicator for Magic Wand Review changes; keep file staging and exact Undo behavior unchanged.
+
 ## 1.2.129
 
 - Reduce the normal Undo snapshot check from three Git subprocesses to two, preserving fresh HEAD/index reads, ordered history, exact Undo and the existing compatibility fallback.

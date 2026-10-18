@@ -3089,7 +3089,7 @@ suite('SCM change navigation E2E', () => {
                 const id=randomUUID();
                 const send=(phase:string,seq:number)=>deliverMouseUri('wand-review/'+phase,'wand',new URLSearchParams({version:'1',id,seq:String(seq),direction,mode}).toString());
                 await send('begin',1);
-                await poll(()=>extensionApi.getReviewDecorationBadge(wsUri(names[start]))==='💥💥','wand stage ready without Eyes mode');
+                await poll(()=>extensionApi.getReviewDecorationBadge(wsUri(names[start]))===(mode==='changes'?'👀':'💥💥'),'wand mode matches Eyes or file review');
                 assert.strictEqual(git('diff --cached --name-only'),'');
                 await send('step',2);await poll(()=>activeTabPath()===wsUri(names[endpoint]).path,'wand detent');
                 assert.strictEqual(git('diff --cached --name-only'),'','navigation only marks; release owns staging');

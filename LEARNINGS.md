@@ -1,5 +1,10 @@
 # Learnings
 
+## Wand change review enables the existing Eyes mode
+
+The original wand URI route navigated preview changes but did not call the existing Eyes-mode setter. Its release excluded the current preview without showing the Eyes decoration. Enable the setter only after the same-source stage-ready command, with true for changes and false for files. Four native Mini URI tests cover the correct badge, both directions, exact staged range, out-of-order finish delivery and Undo. Preserve the latest stage/Undo latency work rather than branching a release from the older wand implementation.
+
+
 ## 2026-10-18 — Reduce snapshot subprocesses without changing history retention
 
 History baseline order is retention metadata: do not simply skip its no-change writes while claiming identical behavior at the 100-root boundary. The conservative optimization reads commit identity and tree together with an explicitly formatted, unsigned, undecorated `git log -1 --no-walk ... HEAD --`. It keeps every fresh index-tree read, queue position, shared lock, history write/retention policy and fallback to the original rev-parse flow. There is no snapshot cache, dropped event, input debounce or staging delay. A live replacement object must affect the next read even when HEAD object identity is unchanged.
@@ -36,7 +41,7 @@ The wand is an independent review source, never a Corsair/Razer alias. Its stric
 lifecycle carries an owner UUID, monotonic sequence, direction and change/file mode. Queue gaps
 before release; a missing packet must not commit an incomplete range. Duplicate/retired owners
 stay inert, active physical-mouse holds reject wand admission, and lost heartbeats cancel the
-wand's own transaction. Change review calls the existing preview navigation but does not enable
+wand's own transaction. Change review calls the existing preview navigation and enables
 Eyes mode; release excludes the current preview. File mode calls the existing file-range action.
 All index mutation and exact Undo remain in the existing Better Git transaction.
 

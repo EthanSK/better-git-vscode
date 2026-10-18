@@ -1238,6 +1238,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 await vscode.commands.executeCommand("better-git-vscode.begin-mouse-navigation-hold",{source:"wand",direction:packet.direction});
                 const request=mouseHoldRequests.get("wand");if(request){request.wandReviewMode=packet.mode;}
                 await vscode.commands.executeCommand("better-git-vscode.stage-hold-ready","wand");
+                setStagePreviewModeRequest("wand",packet.mode === "changes");
             }else if(packet.phase==="cancel"){await cancelWandReview();return;}
             else if(packet.phase==="step"){
                 if(wandReview.mode==="files"){await adjustStageHoldSelectionRequest("wand",packet.direction==="next"?"down":"up");}
