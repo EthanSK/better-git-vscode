@@ -14,6 +14,7 @@ import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
 import { StageTransactionStore, StageUndoView, StoredStageTransaction } from "./stageTransactionStore";
 import { StageTransactionObserver } from "./stageTransactionObserver";
+import { stageWithDeferredReceipt } from "./stageTransactionExecution";
 import { readIndexSnapshot, readStageTransactionPaths, restoreStageTransaction } from "./gitStageUndo";
 import { extractFileDiffSection } from "./gitDiffSection";
 import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./gitIndexRetry";
@@ -371,28 +372,8 @@ const stageBatchThroughExtension = async (
     const view = (preferPriorView ? [priorView, activeView] : [activeView, priorView])
         .find(candidate => candidate && selectedUris.has(candidate.fileUri));
     const repoRoot = String(repo.rootUri?.fsPath ?? "");
-    let receiptCaptureError: unknown;
-    const mutate = async (): Promise<void> => {
-        trace("Git add starting");
-        await runWithTransientGitIndexRetry(() => repo.add(uris.map(uri => uri.fsPath)));
-        trace("Git add finished");
-        if (repoRoot && stageTransactionObserver) {
-            trace("saving Undo receipt");
-        }
-    };
-    if (repoRoot && stageTransactionObserver) {
-        trace("preparing Undo snapshot");
-        receiptCaptureError = await stageTransactionObserver.runObservedMutation(repoRoot, mutate, {
-            kind: "betterGitStage",
-            uri: uris[0].toString(),
-            uris: uris.map(uri => uri.toString()),
-            view,
-        });
-        if (!receiptCaptureError) { trace("Undo receipt saved"); }
-    } else {
-        await mutate();
-    }
-    if (receiptCaptureError) {
+    const reportUndoError = (receiptCaptureError: unknown): void => {
+        trace(`Undo receipt unavailable: ${String(receiptCaptureError)}`);
         const candidate = receiptCaptureError as { message?: unknown; stderr?: unknown };
         const detail = [candidate?.stderr, candidate?.message]
             .find((value): value is string => typeof value === "string" && value.trim().length > 0)
@@ -402,9 +383,37 @@ const stageBatchThroughExtension = async (
         void vscode.window.showWarningMessage(
             `Better Git: Staged ${uris.length === 1 ? path.basename(uris[0].fsPath) : `${uris.length} files`}, but couldn't save the Undo details${detail ? ` — ${detail}` : "."}`
         );
-    }
+    };
+    const stage = async (): Promise<void> => {
+        trace("Git add starting");
+        await runWithTransientGitIndexRetry(() => repo.add(uris.map(uri => uri.fsPath)));
+        trace("Git add finished");
+    };
+    const observer = stageTransactionObserver;
+    let receiptState: "queued" | "unavailable" | undefined;
+    if (repoRoot && observer) {
+        receiptState = await stageWithDeferredReceipt({
+            prepareUndo: async () => {
+                trace("preparing Undo snapshot");
+                await observer.prepare(repoRoot);
+                trace("Undo snapshot ready");
+            },
+            stage,
+            saveUndo: async () => {
+                trace("saving Undo receipt");
+                await observer.observe(repoRoot, {
+                    kind: "betterGitStage",
+                    uri: uris[0].toString(),
+                    uris: uris.map(uri => uri.toString()),
+                    view,
+                });
+                trace("Undo receipt saved");
+            },
+            onUndoError: reportUndoError,
+        });
+    } else { await stage(); }
     recordLastStagedBatch(uris); // success -> update the status bar with the files we just staged
-    trace(receiptCaptureError ? "stage complete; Undo receipt unavailable" : "stage complete");
+    trace(receiptState ? `stage complete; Undo receipt ${receiptState}` : "stage complete");
 };
 const stageThroughExtension = (repo: any, uri: vscode.Uri, priorView?: StageUndoView): Promise<void> =>
     stageBatchThroughExtension(repo, [uri], priorView);

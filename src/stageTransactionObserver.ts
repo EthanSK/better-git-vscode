@@ -42,38 +42,6 @@ export class StageTransactionObserver {
         await this.enqueue(() => this.observeNow(repoRoot, details, suppressed));
     }
 
-    /// Keep an explicit stage and its receipt in one queue slot. Git emits
-    /// state notifications during add(); letting those (including other roots)
-    /// run before saving this receipt needlessly stalls stage-and-advance.
-    /// Earlier notifications still finish first, and later ones still run;
-    /// neither accepted input nor an observed index transition is discarded.
-    async runObservedMutation(
-        repoRoot: string,
-        mutate: () => Promise<void>,
-        details: StageTransactionDetails
-    ): Promise<unknown> {
-        let observationError: unknown;
-        await this.enqueue(async () => {
-            try {
-                if (!this.baselines.has(repoRoot)) {
-                    this.baselines.set(repoRoot, await this.readSnapshot(repoRoot));
-                }
-            } catch (error) {
-                observationError = error;
-            }
-            // Mutation failures must reject, not become an Undo warning.
-            await mutate();
-            if (!observationError) {
-                try {
-                    await this.observeNow(repoRoot, details, false);
-                } catch (error) {
-                    observationError = error;
-                }
-            }
-        });
-        return observationError;
-    }
-
     /// Fire-and-forget entry point for vscode.git state events. Suppression is
     /// captured when the event arrives, not when its queued work later runs.
     notify(repoRoot: string, details?: StageTransactionDetails): void {

@@ -2,7 +2,7 @@
 
 ## 1.2.128
 
-- Keep each Better Git stage and its Undo receipt together so background repository checks cannot delay the next-file jump between them.
+- Advance to the next file as soon as staging finishes, while preserving ordered Undo receipt saving and immediate Undo safety.
 
 
 ## 1.2.126
