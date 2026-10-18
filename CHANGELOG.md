@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.129
+
+- Reduce the normal Undo snapshot check from three Git subprocesses to two, preserving fresh HEAD/index reads, ordered history, exact Undo and the existing compatibility fallback.
+
 ## 1.2.128
 
 - Advance to the next file as soon as staging finishes, while preserving ordered Undo receipt saving and immediate Undo safety.

@@ -25,6 +25,22 @@ const git = async (root: string, args: string[], env = process.env): Promise<str
     (await exec("git", args, { cwd: root, env, encoding: "utf8" })).stdout.trim();
 
 const readHead = async (root: string): Promise<{ headTree: string; headCommit: string }> => {
+    // Read the commit and its tree from one resolved revision. No cache: HEAD,
+    // replacement objects and linked worktrees must be checked on every read.
+    // Explicit formatting suppresses user log/signature settings and -- keeps
+    // a working file named HEAD from making the revision ambiguous.
+    try {
+        const head = await git(root, [
+            "log", "-1", "--no-walk", "--format=%H%n%T", "--no-show-signature",
+            "--no-notes", "--no-decorate", "HEAD", "--",
+        ]);
+        const parts = head.split("\n");
+        if (parts.length === 2 && parts.every(value => /^[0-9a-f]{40,64}$/.test(value))) {
+            return { headCommit: parts[0], headTree: parts[1] };
+        }
+    } catch {
+        // Preserve the established unborn/error behavior on unusual Git setups.
+    }
     let headCommit: string;
     try {
         headCommit = await git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);

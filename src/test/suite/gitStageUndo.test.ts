@@ -33,6 +33,42 @@ suite("Git stage undo safety", () => {
             recordedAt: new Date().toISOString() };
     };
 
+    test("reads exact HEAD identity despite log settings and a file named HEAD", async () => {
+        write("HEAD", "a working file, not a revision\n");
+        git("config", "format.pretty", "oneline");
+        git("config", "log.showSignature", "true");
+        git("config", "log.decorate", "full");
+        const snapshot = await readIndexSnapshot(root);
+        assert.strictEqual(snapshot.headCommit, git("rev-parse", "--verify", "HEAD"));
+        assert.strictEqual(snapshot.headTree, git("rev-parse", "HEAD^{tree}"));
+        assert.strictEqual(snapshot.indexTree, git("write-tree"));
+    });
+
+    test("fresh snapshots see a same-tree HEAD move without cached identity", async () => {
+        const before = await readIndexSnapshot(root);
+        git("commit", "--allow-empty", "-qm", "same tree, new commit");
+        const after = await readIndexSnapshot(root);
+        assert.notStrictEqual(after.headCommit, before.headCommit);
+        assert.strictEqual(after.headTree, before.headTree);
+        assert.strictEqual(after.headCommit, git("rev-parse", "HEAD"));
+    });
+
+    test("reads a replacement commit tree afresh without changing the HEAD object id", async () => {
+        const before = await readIndexSnapshot(root);
+        write("a.txt", "replacement tree\n");
+        git("add", "a.txt");
+        git("commit", "-qm", "replacement");
+        const replacement = git("rev-parse", "HEAD");
+        git("reset", "--hard", before.headCommit!);
+        git("replace", before.headCommit!, replacement);
+        const replaced = await readIndexSnapshot(root);
+        assert.strictEqual(replaced.headCommit, before.headCommit);
+        assert.strictEqual(replaced.headTree, git("rev-parse", `${before.headCommit}^{tree}`));
+        assert.notStrictEqual(replaced.headTree, before.headTree);
+        git("replace", "-d", before.headCommit!);
+        assert.strictEqual((await readIndexSnapshot(root)).headTree, before.headTree);
+    });
+
     test("restores the exact prior index and keeps later working-file edits", async () => {
         const receipt = await stage();
         write("a.txt", "later unsaved-on-disk work\n");

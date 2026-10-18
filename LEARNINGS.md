@@ -1,5 +1,11 @@
 # Learnings
 
+## 2026-10-18 — Reduce snapshot subprocesses without changing history retention
+
+History baseline order is retention metadata: do not simply skip its no-change writes while claiming identical behavior at the 100-root boundary. The conservative optimization reads commit identity and tree together with an explicitly formatted, unsigned, undecorated `git log -1 --no-walk ... HEAD --`. It keeps every fresh index-tree read, queue position, shared lock, history write/retention policy and fallback to the original rev-parse flow. There is no snapshot cache, dropped event, input debounce or staging delay. A live replacement object must affect the next read even when HEAD object identity is unchanged.
+
+155 non-GUI tests pass, including new exact-value checks for custom log/signature settings with a working file named HEAD, a same-tree HEAD move and adding/removing a Git replacement. Existing unborn, linked/split/sparse indexes and cross-window Undo tests remain included. An interleaved disposable real-Git probe measured 60 versus 40 subprocesses across 20 snapshots each, median 21.77 versus 14.77 ms. This is local snapshot cost, not measured user end-to-end latency. Mini qualification and release remain pending.
+
 ## 2026-10-18 — Distinguish remaining pre-stage wait from redundant observer writes
 
 After 1.2.128 activation, normal-workspace stage-flow logs at 13:39:29 BST showed 954 ms waiting for observer preparation, 218 ms for Git add and 214 ms to open the next review. Five following operations prepared in 0 ms; their Git adds took 195–236 ms. Their next review opened before or independently of receipt completion, confirming deferred navigation on the installed runtime without treating one good sequence as full performance acceptance. Git's own output recorded 68 status completions in 13:39 (median 858.5 ms) and 26 in 13:40 (median 150 ms); these are Git status events, not proof that Better Git initiated them all or that any one event caused the observer wait.
