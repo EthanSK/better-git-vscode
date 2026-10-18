@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-10-18 — Distinguish remaining pre-stage wait from redundant observer writes
+
+After 1.2.128 activation, normal-workspace stage-flow logs at 13:39:29 BST showed 954 ms waiting for observer preparation, 218 ms for Git add and 214 ms to open the next review. Five following operations prepared in 0 ms; their Git adds took 195–236 ms. Their next review opened before or independently of receipt completion, confirming deferred navigation on the installed runtime without treating one good sequence as full performance acceptance. Git's own output recorded 68 status completions in 13:39 (median 858.5 ms) and 26 in 13:40 (median 150 ms); these are Git status events, not proof that Better Git initiated them all or that any one event caused the observer wait.
+
+A disposable non-GUI store probe confirmed another source-level inefficiency: ten alternating notifications for two repositories with identical snapshots caused ten history writes and zero Undo entries. `setBaseline` moves each observed repository to the end of the bounded baseline list; `update` sees that order change and rewrites the file. This is not a measured fraction of the user's lag. Avoid removing exact snapshots or reordering accepted operations merely to reduce writes; retention order and cross-window safety must be explicitly tested if optimizing it.
+
+The old host also reported a TypeScript 5.9.3 completion assertion through `MylesMurphy.prettify-ts` and native Git decoration capping. These establish separate errors/load, not causation for stage latency. The display-mode probe runs every five seconds and on focus, but it is independent of the stage command and this audit did not prove it blocks navigation. No runtime code, settings or user workspace were changed in this follow-up audit.
+
 ## 2026-10-18 — Advance after staging without changing observer ordering
 
 The old prepare/add/observe sequence made navigation wait behind all background notifications already queued when Git add completed. Keep that exact observer ordering and enqueue the receipt before returning, but let navigation proceed while persistence finishes. `stageWithDeferredReceipt` awaits preparation and the real Git add; the next explicit stage's `prepare` and immediate Undo's receipt lookup remain barriers behind the pending save. Staging failures still reject, and snapshot/save failures still report the original staged-file warning. No notification, valid input, exact index check or three-entry history limit is removed.
