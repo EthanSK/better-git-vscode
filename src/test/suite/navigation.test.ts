@@ -4247,6 +4247,49 @@ suite('SCM change navigation E2E', () => {
 		});
 	}
 
+    for (const direction of ['next', 'previous'] as const) {
+        test(`background warmup prepares both neighbours without moving review, then stage ${direction} marks only the opened target`, async () => {
+            const prefix = `warm-${direction}`;
+            const before = `${prefix}-a.txt`, origin = `${prefix}-b.txt`, after = `${prefix}-c.txt`;
+            for (const name of [before, origin, after]) { write(name, name); }
+            await refreshUntil(() => [before, origin, after].every(isUntracked), 'warmup neighbours');
+            await openPlainAt(origin, 0);
+            const originTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+            const indexBefore = git('write-tree');
+            await poll(() => [before, after].every(name => vscode.workspace.textDocuments.some(doc =>
+                !doc.isClosed && doc.uri.toString() === wsUri(name).toString())), 'both neighbouring text models to warm');
+            assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, originTab);
+            assert.strictEqual(git('write-tree'), indexBefore, 'preparation never stages');
+            const target = direction === 'next' ? after : before;
+            write(target, 'latest content after background preparation');
+            await refreshUntil(() => isUntracked(target), 'prepared target remains unstaged');
+            await vscode.commands.executeCommand(`better-git-vscode.stage-and-${direction}-changed-file`);
+            assert.strictEqual(activeTabPath(), wsUri(target).path);
+            assert.strictEqual(extensionApi.getCurrentReviewUri(), wsUri(target).toString(), 'badge must match verified open when command finishes');
+            assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(target)), '🔥🔥');
+            assert.ok(inIndex(origin));
+            assert.ok(!inIndex(target));
+            const document = await vscode.workspace.openTextDocument(wsUri(target));
+            await poll(() => document.getText() === 'latest content after background preparation', 'prepared document to reflect latest saved text');
+        });
+    }
+
+    test('background warmup skips large neighbours and recomputes a removed target at stage time', async () => {
+        write('warm-removed-a.txt', 'origin');
+        write('warm-removed-b.txt', 'x'.repeat(300 * 1024));
+        write('warm-removed-c.txt', 'valid replacement');
+        await refreshUntil(() => isUntracked('warm-removed-c.txt'), 'large neighbour fixture');
+        await openPlainAt('warm-removed-a.txt', 0);
+        await extensionApi.whenReviewDecorationSettled();
+        await sleep(150);
+        assert.ok(!vscode.workspace.textDocuments.some(doc => !doc.isClosed && doc.uri.toString() === wsUri('warm-removed-b.txt').toString()));
+        fs.unlinkSync(path.join(ws, 'warm-removed-b.txt'));
+        await refreshUntil(() => !isUntracked('warm-removed-b.txt'), 'deleted candidate to disappear');
+        await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+        await expectActiveTab('warm-removed-c.txt');
+        assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('warm-removed-c.txt')), '🔥🔥');
+    });
+
 	test('undo latest Stage + Next restores the exact pre-stage index', async () => {
 		const partiallyStaged = lines(24, 'mod_a').split('\n');
 		partiallyStaged[2] = 'mod_a PREVIOUSLY STAGED line 3';

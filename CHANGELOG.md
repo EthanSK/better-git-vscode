@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.132
+
+- Warm the neighbouring small text files in the background after a review opens, without delaying staging or navigation.
+- Update the current-file fire marker as soon as a navigation target is verified open, in both directions.
+
 ## 1.2.131
 
 - Let Magic Wand review build a selection in either direction after backtracking through its starting file. Keep physical mouse hold behavior and the existing staging/Undo transaction unchanged.

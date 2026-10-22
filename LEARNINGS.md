@@ -1,5 +1,11 @@
 # Learnings
 
+## 2026-10-22 — Background neighbours and verified-open fire marker
+
+Stage-and-next/previous already computes its target before Git add; do not claim target selection was previously done after staging. Live 1.2.131 logs show 140–260 ms typical editor-opening waits and a 1.14-second outlier after staging. Prepare only previous/next small ordinary text models after an active review opens, outside command/Undo queues, with one loader, bounded requests and stale-tab cancellation. Never await warmup in navigation, open a visible editor speculatively, or mark a file before it is verified open. Keep fresh SCM target selection at execution time so preloads do not authorize a removed/wrong-worktree target.
+
+Verified navigation now commits the existing review decoration immediately after confirming the visible target, invalidating older asynchronous decoration requests. This follows the existing applyReviewDecorationUri/refreshReviewDecoration path; no second badge implementation, index mutation, input debounce or navigation delay. Binary, merge, deleted and oversized targets retain their normal lazy opening path. Tests and release evidence follow below.
+
 ## Wand range reversal and actual extension activation
 
 A wand has no physical Next/Previous button defining a permanent selection direction. In a live trace, a session started Previous, then forward file-boundary crossings kept just one file because the fixed-direction range treated them as undo steps. Give only the wand an endpoint-rebase option in the existing MouseStageSelection helper: reverse steps still remove the departing file, but once only one endpoint remains, either direction can begin collecting again. Physical mouse holds retain their prior fixed-direction policy. Both file and eyes navigation continue through the same existing transaction and exact Undo code.

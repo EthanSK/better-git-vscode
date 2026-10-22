@@ -1,3 +1,4 @@
+import { ReviewDocumentWarmup } from "./gitReviewWarmup";
 import { parseWandReviewUri } from "./wandReviewUri";
 import * as vscode from "vscode";
 // fs + path are only used by resolveWorktreeRootUri's FALLBACK path (the filesystem `.git` walk used when the
@@ -32,6 +33,7 @@ import { registerAgentFlowSelectionBridge } from "./agentFlowSelectionBridge";
 import { registerDiffViewDisplay } from "./diffViewDisplay";
 import { registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedLfsImage";
 
+let confirmOpenedReview: (uri: vscode.Uri) => void = () => undefined;
 let pendingWorktreePresentation: DeferredWorktreePresentation | undefined;
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
@@ -2032,6 +2034,41 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // Recompute the current review file whenever the active editor/tab changes, and refresh the decoration
     // for both the old and new file so the badge moves with you. Resolution is async because current VS Code
     // exposes some non-text diffs (notably modified images) as an active Tab with no public `input` resource.
+    const documentWarmup = new ReviewDocumentWarmup();
+    context.subscriptions.push(documentWarmup);
+    let warmupTab: vscode.Tab | undefined;
+    const warmAdjacentReviewDocuments = (uri: vscode.Uri | undefined): void => {
+        const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        if (tab === warmupTab) { return; }
+        warmupTab = tab;
+        // Stage & Next / Previous already choose their target from fresh SCM state before
+        // Git add. Warm only neighbouring small text documents after the current review
+        // loads; this never opens an editor, predicts the fire badge or waits in an input path.
+        const current = () => vscode.window.tabGroups.activeTabGroup.activeTab === tab;
+        if (!uri || !tab) { documentWarmup.request([], current); return; }
+        documentWarmup.request([async () => {
+            const entries = distinctUnstagedChanges(await getFileChanges(uri));
+            if (!current()) { return; }
+            const index = entries.findIndex(entry => entry.uri.toString() === uri.toString());
+            if (index < 0) { return; }
+            const neighbours = [entries[index + 1], entries[index - 1]].filter((entry): entry is FileChange => !!entry);
+            const tasks: (() => Promise<unknown>)[] = [];
+            for (const entry of neighbours) {
+                // Binary/media/merge/deleted views keep their established lazy open path.
+                if (entry.status !== GitStatus.MODIFIED && entry.status !== GitStatus.UNTRACKED) { continue; }
+                if (!/\.(?:[cm]?[jt]sx?|json|html?|css|scss|sass|less|md|txt|ya?ml|toml|xml|svg|py|sh|go|rs|java|swift|sql)$/i.test(entry.uri.path)) { continue; }
+                tasks.push(async () => {
+                    const stat = await vscode.workspace.fs.stat(entry.uri);
+                    if (!current() || stat.type !== vscode.FileType.File || stat.size > 256 * 1024) { return; }
+                    await vscode.workspace.openTextDocument(entry.uri);
+                    if (current() && entry.status === GitStatus.MODIFIED) {
+                        await vscode.workspace.openTextDocument(toGitUri(entry.uri, "~"));
+                    }
+                });
+            }
+            if (current()) { documentWarmup.request(tasks, current); }
+        }], current);
+    };
     const applyReviewDecorationUri = (next: vscode.Uri | undefined) => {
         const prev = currentReviewUri;
         const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -2044,6 +2081,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
         currentReviewUri = next;
         currentReviewTab = nextTab;
+        warmAdjacentReviewDocuments(next);
         const changed: vscode.Uri[] = [];
         if (prev) {
             changed.push(prev);
@@ -2085,6 +2123,17 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         });
         return reviewDecorationRefreshPromise;
     };
+
+    const confirmedReview = (uri: vscode.Uri): void => {
+        // Use only a verified open. Invalidate an older async badge lookup so it cannot
+        // move the fire marker back while an opaque editor's path lookup finishes.
+        reviewDecorationRefreshRequest++;
+        applyReviewDecorationUri(uri);
+    };
+    confirmOpenedReview = confirmedReview;
+    context.subscriptions.push(new vscode.Disposable(() => {
+        if (confirmOpenedReview === confirmedReview) { confirmOpenedReview = () => undefined; }
+    }));
 
     // CLICK TARGET for the status bar item: reopen the diff of the last file staged via the extension, so
     // Ethan can review it and unstage it if it was an accident. We REUSE the extension's existing diff
@@ -4733,6 +4782,9 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
     navigationOwnTabChange = true;
     try {
         await openChangeEntry(entry);
+        if (currentReviewFileUri()?.toString() === entry.uri.toString()) {
+            confirmOpenedReview(entry.uri);
+        }
         // Closing first activates an unrelated background tab. A staged-only file: tab then
         // makes SCM Auto Reveal expand Staged Changes, even after the next review file opens.
         // Open the destination first and close only the captured, now-inactive clean tab.
@@ -4750,6 +4802,7 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
         // Opaque image tabs need the existing async path resolver.
         const shown = await currentReviewFileUriAsync();
         if (shown?.toString() !== entry.uri.toString()) { invalidateChangeNavigation(); }
+        else { confirmOpenedReview(entry.uri); }
     }
     check();
 };
