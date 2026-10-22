@@ -4274,6 +4274,27 @@ suite('SCM change navigation E2E', () => {
         });
     }
 
+    test('background warmup loads modified neighbours on both diff sides without moving the badge', async () => {
+        const names = ['warm-modified-a.txt', 'warm-modified-b.txt', 'warm-modified-c.txt'];
+        for (const name of names) { write(name, 'baseline text'); }
+        git('add warm-modified-a.txt warm-modified-b.txt warm-modified-c.txt');
+        git('commit -m "warmup fixture"');
+        for (const name of names) { write(name, 'working text'); }
+        await refreshUntil(() => names.every(name => inWorkingTree(name, 5)), 'modified warmup neighbours');
+        await vscode.commands.executeCommand('git.openChange', wsUri(names[1]));
+        const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        await poll(() => [names[0], names[2]].every(name =>
+            [wsUri(name), toGitUri(wsUri(name), '~')].every(uri =>
+                vscode.workspace.textDocuments.some(doc => !doc.isClosed && doc.uri.toString() === uri.toString()))),
+            'modified neighbours working and index documents');
+        assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, originalTab);
+        assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(names[1])), '🔥🔥');
+        assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(names[0])), undefined);
+        await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+        assert.strictEqual(activeTabPath(), wsUri(names[2]).path);
+        assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(names[2])), '🔥🔥');
+    });
+
     test('background warmup skips large neighbours and recomputes a removed target at stage time', async () => {
         write('warm-removed-a.txt', 'origin');
         write('warm-removed-b.txt', 'x'.repeat(300 * 1024));
