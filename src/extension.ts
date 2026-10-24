@@ -1532,11 +1532,20 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let currentReviewTab: vscode.Tab | undefined;
     const stageHoldSelections = new Map<MouseReviewSource, ActiveMouseStageSelection>();
     const releasedStageSelections = new WeakMap<MouseHoldRequest, ActiveMouseStageSelection>();
-    const heldWheelBurst = new HeldWheelBurst();
-    const admitHeldWheel = (source: MouseReviewSource, request: MouseHoldRequest): (() => boolean) => {
+    let heldWheelNow = () => performance.now();
+    const heldWheelBurst = new HeldWheelBurst(() => heldWheelNow());
+    const admitHeldWheel = (source: MouseReviewSource, request: MouseHoldRequest, action: string): (() => boolean) => {
         // The wand has its own ordered packet lifecycle; only physical held-wheel
         // backlog expires. File mode and "eyes mode" share this exact hold's burst.
-        return source === "wand" ? () => true : heldWheelBurst.admit(request);
+        if (source === "wand") { return () => true; }
+        const mayStart = heldWheelBurst.admit(request);
+        const admittedAt = performance.now();
+        debugLog("mouse-wheel", `${mouseSourceLabel(source)} ${action} accepted; pending=${queuedNavigationOperations}`);
+        return () => {
+            const fresh = mayStart();
+            debugLog("mouse-wheel", `${mouseSourceLabel(source)} ${action} ${fresh ? "started" : "skipped: scroll idle"}; wait=${Math.round(performance.now() - admittedAt)}ms`);
+            return fresh;
+        };
     };
     let stagePreviewMode: { source: MouseReviewSource; request: MouseHoldRequest } | undefined;
     const selectionUris = (selection: ActiveMouseStageSelection | undefined): vscode.Uri[] =>
@@ -1588,7 +1597,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }), true);
     };
     prepareStageHoldReleaseRequest = (source, request) => {
-        // Capture mode before feedback clears; queued ratchets still determine the final endpoint.
+        // Capture mode before feedback clears; fresh queued ratchets can still determine the final endpoint.
         request.excludePreviewOnRelease = request.wandReviewMode === "changes" || (stagePreviewMode?.source === source && stagePreviewMode.request === request);
         const selection = stageHoldSelections.get(source);
         if (selection?.request === request) { releasedStageSelections.set(request, selection); }
@@ -1631,12 +1640,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, no stage-ready hold is active.`);
             return Promise.resolve();
         }
-        const mayStart = admitHeldWheel(source, request);
+        const mayStart = admitHeldWheel(source, request, `selection ${direction}`);
         return serializeChangeNavigation(async check => {
-            if (!mayStart()) {
-                debugLog("mouse-wheel", `${mouseSourceLabel(source)} stale selection skipped after scrolling stopped.`);
-                return;
-            }
+            if (!mayStart()) { return; }
             const origin = mouseNavigationOrigins.get(source);
             const selection = activeStageSelection(source, request);
             if (!vscode.window.state.focused) {
@@ -1673,12 +1679,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
             return Promise.resolve();
         }
-        const mayStart = admitHeldWheel(source, request);
+        const mayStart = admitHeldWheel(source, request, `preview ${direction}`);
         return serializeChangeNavigation(async check => {
-            if (!mayStart()) {
-                debugLog("mouse-wheel", `${mouseSourceLabel(source)} stale preview skipped after scrolling stopped.`);
-                return;
-            }
+            if (!mayStart()) { return; }
             const origin = mouseNavigationOrigins.get(source);
             const selection = activeStageSelection(source, request);
             if (!vscode.window.state.focused) {
@@ -1691,7 +1694,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 return;
             }
             // Wheel review only edits the pending set. The source-owned release is the
-            // sole staging boundary, including ratchets already queued before it.
+            // sole staging boundary, including still-fresh ratchets queued before it.
             const preWheelView = captureMouseReviewView();
             const previewAtFileBoundary = async (boundaryCheck: NavigationCheckpoint): Promise<void> => {
                 const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -2301,6 +2304,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             // A deterministic slow-renderer barrier for isolated real-host queue tests only.
             queueNavigationForTest: serializeChangeNavigation,
             getNavigationQueueLengthForTest: () => queuedNavigationOperations,
+            useHeldWheelClockForTest: (clock?: () => number) => { heldWheelNow = clock ?? (() => performance.now()); },
         } : {}),
         whenScmTreeStateSettled,
         whenStageTransactionsSettled: () => stageTransactionObserver?.settled() ?? Promise.resolve(),

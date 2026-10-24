@@ -126,6 +126,7 @@ suite('SCM change navigation E2E', () => {
 		clearMouseDebugTrace(): void;
 		queueNavigationForTest(operation: () => Promise<void>): Promise<void>;
 		getNavigationQueueLengthForTest(): number;
+		useHeldWheelClockForTest(clock?: () => number): void;
 	};
 	let baseSha: string; // the base commit every test resets to
 	let previousMouseHoldNavigateOnButtonDown: boolean | undefined;
@@ -392,6 +393,7 @@ suite('SCM change navigation E2E', () => {
 	// Every test starts from a pristine base commit + empty editor area, so tests are order-independent
 	// and self-cleaning (rename/delete/stage state from a previous test can't leak in).
 	setup(async () => {
+		extensionApi.useHeldWheelClockForTest();
 		git(`reset --hard ${baseSha}`);
 		git('clean -fdq');
 		await refreshUntil(
@@ -2876,6 +2878,7 @@ suite('SCM change navigation E2E', () => {
 	}
 
 	test('queued file backtracking after eyes toggle finishes before release', async () => {
+		extensionApi.useHeldWheelClockForTest(() => 0); // Still-live input ordering, independent of renderer speed.
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
 		try {
@@ -3053,6 +3056,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('eyes release excludes the final endpoint after queued readiness and ratchets', async () => {
+		extensionApi.useHeldWheelClockForTest(() => 0); // Expiry has separate deterministic backlog coverage.
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
@@ -3309,7 +3313,7 @@ suite('SCM change navigation E2E', () => {
 						assert.strictEqual(activeTabPath(), wsUri(eyes ? names[2] : direction === 'next' ? names[3] : names[1]).path);
 						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
 						assert.strictEqual(git('diff --cached --name-only'), '', 'one exact Undo restores the surviving batch');
-						assert.strictEqual(activeTabPath(), wsUri(origin).path);
+						assert.strictEqual(activeTabPath(), wsUri(eyes ? origin : names[2]).path, 'Undo retains the existing mode-specific review position');
 					} finally {
 						unblock();
 						await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
@@ -3351,6 +3355,47 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('held wheel idle cutoff receives native URI ratchets before execution and resumes on fresh input', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+		const extensions = vscode.workspace.getConfiguration('extensions');
+		const previousHandlers = extensions.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		let now = 0;
+		extensionApi.useHeldWheelClockForTest(() => now);
+		let unblock = () => {};
+		try {
+			await extensions.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+			const names = ['uri_idle_a.txt', 'uri_idle_b.txt', 'uri_idle_c.txt'];
+			for (const name of names) { write(name, name); }
+			await refreshUntil(() => names.every(isUntracked), 'native URI idle fixture');
+			await openPlainAt(names[0], 0);
+			await focusIsolatedTestWindow();
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', true);
+			const barrier = extensionApi.queueNavigationForTest(() => new Promise<void>(resolve => { unblock = resolve; }));
+			await Promise.all([0, 1, 2].map(() => deliverMouseUri('mouse-stage-preview/next', 'corsair')));
+			await poll(() => extensionApi.getNavigationQueueLengthForTest() === 4, 'all native URI steps admitted while renderer blocked');
+			now = 301;
+			unblock();
+			await barrier;
+			await extensionApi.queueNavigationForTest(async () => {});
+			assert.strictEqual(activeTabPath(), wsUri(names[0]).path, 'expired native URI steps do not move the review');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+			await deliverMouseUri('mouse-stage-preview/next', 'corsair');
+			await expectActiveTab(names[1]);
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			assert.strictEqual(git('diff --cached --name-only'), names[0]);
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+		} finally {
+			unblock();
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+			await extensions.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('held wheel idle cutoff does not discard ordinary queued navigation presses', async () => {
 		write('idle_keyboard.txt', lines(90, 'keyboard'));
 		await refreshUntil(() => isUntracked('idle_keyboard.txt'), 'keyboard idle fixture');
@@ -3369,6 +3414,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('rapid held preview ratchets finish before release stages their accumulated batch', async () => {
+		extensionApi.useHeldWheelClockForTest(() => 0);
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
 		try {
@@ -3395,6 +3441,7 @@ suite('SCM change navigation E2E', () => {
 	});
 
 	test('rapid held preview backtracking finishes before release commits the reduced batch', async () => {
+		extensionApi.useHeldWheelClockForTest(() => 0);
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
 		try {
