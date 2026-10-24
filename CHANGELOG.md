@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.133
+
+- Stop replaying queued physical held-wheel review steps after 300 ms without new wheel input. Finish the current step safely, preserve the shown staging range and exact Undo, and let a new wheel burst resume immediately.
+- Keep ordinary next/previous presses and Magic Wand packet ordering unchanged.
+
 ## 1.2.132
 
 - Warm the neighbouring small text files in the background after a review opens, without delaying staging or navigation.

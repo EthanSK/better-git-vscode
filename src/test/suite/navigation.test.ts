@@ -124,6 +124,8 @@ suite('SCM change navigation E2E', () => {
 		getCurrentHunkOverviewMarker(): { uri: string; start: number; end: number } | undefined;
 		getMouseDebugTrace(): string[];
 		clearMouseDebugTrace(): void;
+		queueNavigationForTest(operation: () => Promise<void>): Promise<void>;
+		getNavigationQueueLengthForTest(): number;
 	};
 	let baseSha: string; // the base commit every test resets to
 	let previousMouseHoldNavigateOnButtonDown: boolean | undefined;
@@ -3270,6 +3272,100 @@ suite('SCM change navigation E2E', () => {
 			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
 			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
 		}
+	});
+
+	for (const source of ['corsair', 'razer'] as const) {
+		for (const direction of ['next', 'previous'] as const) {
+			for (const eyes of [false, true]) {
+				test(`held wheel idle cutoff ${source} ${direction} ${eyes ? 'eyes' : 'files'} preserves shown range and exact Undo`, async () => {
+					const config = vscode.workspace.getConfiguration('better-git-vscode');
+					const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+					await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+					let unblock = () => {};
+					try {
+						const names = ['idle_a.txt', 'idle_b.txt', 'idle_c.txt', 'idle_d.txt', 'idle_e.txt'];
+						for (const name of names) { write(name, name); }
+						await refreshUntil(() => names.every(isUntracked), 'idle cutoff fixture');
+						const origin = direction === 'next' ? names[1] : names[3];
+						await openPlainAt(origin, 0);
+						await focusIsolatedTestWindow();
+						await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction });
+						await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+						await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, eyes);
+						const step = () => vscode.commands.executeCommand(eyes
+							? 'better-git-vscode.navigate-mouse-stage-preview' : 'better-git-vscode.adjust-mouse-stage-selection',
+							source, eyes ? direction : direction === 'next' ? 'down' : 'up');
+						await step();
+						assert.strictEqual(activeTabPath(), wsUri(names[2]).path);
+						const barrier = extensionApi.queueNavigationForTest(() => new Promise<void>(resolve => { unblock = resolve; }));
+						const pending = [step(), step(), step()];
+						await poll(() => extensionApi.getNavigationQueueLengthForTest() === 4, 'ratchets admitted behind slow renderer');
+						await sleep(400); // Deliberately outlive the production idle cutoff.
+						const release = vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+						unblock();
+						await Promise.all([barrier, ...pending, release]);
+						const expected = eyes ? [origin] : [origin, names[2]].sort();
+						assert.strictEqual(git('diff --cached --name-only'), expected.join('\n'), 'no unseen queued file may enter the release batch');
+						assert.strictEqual(activeTabPath(), wsUri(eyes ? names[2] : direction === 'next' ? names[3] : names[1]).path);
+						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+						assert.strictEqual(git('diff --cached --name-only'), '', 'one exact Undo restores the surviving batch');
+						assert.strictEqual(activeTabPath(), wsUri(origin).path);
+					} finally {
+						unblock();
+						await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+					}
+				});
+			}
+		}
+	}
+
+	test('held wheel idle cutoff new reverse burst does not revive stale forward steps across mode toggles', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		let unblock = () => {};
+		try {
+			const names = ['fresh_a.txt', 'fresh_b.txt', 'fresh_c.txt', 'fresh_d.txt'];
+			for (const name of names) { write(name, name); }
+			await refreshUntil(() => names.every(isUntracked), 'fresh burst fixture');
+			await openPlainAt(names[0], 0);
+			await focusIsolatedTestWindow();
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next');
+			const barrier = extensionApi.queueNavigationForTest(() => new Promise<void>(resolve => { unblock = resolve; }));
+			const stale = [0, 1].map(() => vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down'));
+			await poll(() => extensionApi.getNavigationQueueLengthForTest() === 3, 'old file-mode ratchets admitted');
+			await sleep(400);
+			await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', true);
+			const fresh = vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'previous');
+			await poll(() => extensionApi.getNavigationQueueLengthForTest() === 4, 'fresh eyes reverse ratchet admitted');
+			unblock();
+			await Promise.all([barrier, ...stale, fresh]);
+			assert.strictEqual(activeTabPath(), wsUri(names[0]).path, 'only the fresh reverse step may run');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			assert.strictEqual(git('diff --cached --name-only'), '', 'backtracking to the eyes anchor leaves an empty batch');
+		} finally {
+			unblock();
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('held wheel idle cutoff does not discard ordinary queued navigation presses', async () => {
+		write('idle_keyboard.txt', lines(90, 'keyboard'));
+		await refreshUntil(() => isUntracked('idle_keyboard.txt'), 'keyboard idle fixture');
+		await openPlainAt('idle_keyboard.txt', 0);
+		await focusIsolatedTestWindow();
+		let unblock = () => {};
+		const barrier = extensionApi.queueNavigationForTest(() => new Promise<void>(resolve => { unblock = resolve; }));
+		try {
+			const presses = [nextChange(), nextChange()];
+			await poll(() => extensionApi.getNavigationQueueLengthForTest() === 3, 'ordinary presses admitted');
+			await sleep(400);
+			unblock();
+			await Promise.all([barrier, ...presses]);
+			await expectCursorAt('idle_keyboard.txt', 10);
+		} finally { unblock(); }
 	});
 
 	test('rapid held preview ratchets finish before release stages their accumulated batch', async () => {

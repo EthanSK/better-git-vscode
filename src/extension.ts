@@ -1,4 +1,5 @@
 import { ReviewDocumentWarmup } from "./gitReviewWarmup";
+import { HeldWheelBurst } from "./heldWheelBurst";
 import { parseWandReviewUri } from "./wandReviewUri";
 import * as vscode from "vscode";
 // fs + path are only used by resolveWorktreeRootUri's FALLBACK path (the filesystem `.git` walk used when the
@@ -1531,6 +1532,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let currentReviewTab: vscode.Tab | undefined;
     const stageHoldSelections = new Map<MouseReviewSource, ActiveMouseStageSelection>();
     const releasedStageSelections = new WeakMap<MouseHoldRequest, ActiveMouseStageSelection>();
+    const heldWheelBurst = new HeldWheelBurst();
+    const admitHeldWheel = (source: MouseReviewSource, request: MouseHoldRequest): (() => boolean) => {
+        // The wand has its own ordered packet lifecycle; only physical held-wheel
+        // backlog expires. File mode and "eyes mode" share this exact hold's burst.
+        return source === "wand" ? () => true : heldWheelBurst.admit(request);
+    };
     let stagePreviewMode: { source: MouseReviewSource; request: MouseHoldRequest } | undefined;
     const selectionUris = (selection: ActiveMouseStageSelection | undefined): vscode.Uri[] =>
         selection ? selectedMouseStageItems(selection).map(change => change.uri) : [];
@@ -1618,13 +1625,18 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         return selected;
     };
     adjustStageHoldSelectionRequest = (source, direction) => {
-        // Like eyes ratchets, admit file ratchets before release and keep their exact request.
+        // Admit before release, but do not replay a physical wheel backlog after scrolling stops.
         const request = mouseHoldRequests.get(source);
         if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest || !request.stageReadyRequested) {
             mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, no stage-ready hold is active.`);
             return Promise.resolve();
         }
+        const mayStart = admitHeldWheel(source, request);
         return serializeChangeNavigation(async check => {
+            if (!mayStart()) {
+                debugLog("mouse-wheel", `${mouseSourceLabel(source)} stale selection skipped after scrolling stopped.`);
+                return;
+            }
             const origin = mouseNavigationOrigins.get(source);
             const selection = activeStageSelection(source, request);
             if (!vscode.window.state.focused) {
@@ -1654,14 +1666,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         });
     };
     navigateStageHoldPreviewRequest = (source, direction) => {
-        // Admit at input arrival. A normal release may arrive before these queued ratchets execute; they
-        // still belong before that release and must finish before it snapshots the files to stage.
+        // Admit at input arrival. Fresh ratchets keep their order before release;
+        // stale queued ratchets must not add unseen files after scrolling stops.
         const request = mouseHoldRequests.get(source);
         if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest || !request.stageReadyRequested) {
             mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
             return Promise.resolve();
         }
+        const mayStart = admitHeldWheel(source, request);
         return serializeChangeNavigation(async check => {
+            if (!mayStart()) {
+                debugLog("mouse-wheel", `${mouseSourceLabel(source)} stale preview skipped after scrolling stopped.`);
+                return;
+            }
             const origin = mouseNavigationOrigins.get(source);
             const selection = activeStageSelection(source, request);
             if (!vscode.window.state.focused) {
@@ -2280,6 +2297,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     rememberReviewViewport(visibleEditorForActiveTab());
 
     return {
+        ...(context.extensionMode === vscode.ExtensionMode.Test ? {
+            // A deterministic slow-renderer barrier for isolated real-host queue tests only.
+            queueNavigationForTest: serializeChangeNavigation,
+            getNavigationQueueLengthForTest: () => queuedNavigationOperations,
+        } : {}),
         whenScmTreeStateSettled,
         whenStageTransactionsSettled: () => stageTransactionObserver?.settled() ?? Promise.resolve(),
         whenReviewDecorationSettled: () => reviewDecorationRefreshPromise,
