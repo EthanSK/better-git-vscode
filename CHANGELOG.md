@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.134
+
+- In Eyes review, another Next change after the end of the final file includes that file in the pending selection. It shows the ready badge and waits for the normal commit action. Previous and cancel retain their existing behavior.
+
 ## 1.2.133
 
 - Stop replaying queued physical held-wheel review steps after 300 ms without new wheel input. Finish the current step safely, preserve the shown staging range and exact Undo, and let a new wheel burst resume immediately.

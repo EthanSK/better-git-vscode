@@ -4,6 +4,9 @@ export interface MouseStageSelection<T> {
     readonly initialDirection: "next" | "previous";
     readonly selectedIndices: readonly number[];
     readonly rebaseDirectionAtEndpoint?: boolean;
+    // Eyes review normally excludes its current preview. An extra Next at the
+    // final file explicitly confirms it into the selection (formerly "set").
+    readonly includeCurrentPreview?: boolean;
 }
 
 export const createMouseStageSelection = <T>(
@@ -18,7 +21,7 @@ export const createMouseStageSelection = <T>(
     return { items, cursorIndex: anchorIndex, initialDirection, selectedIndices: [anchorIndex], rebaseDirectionAtEndpoint };
 };
 
-// Both wheel modes edit the same set. Toggling modes cannot restore an old range.
+// Both wheel modes edit the same selection. Toggling modes cannot restore an old range.
 const moveToMouseStageItem = <T>(
     selection: MouseStageSelection<T>, currentIndex: number, cursorIndex: number
 ): MouseStageSelection<T> => {
@@ -33,7 +36,7 @@ const moveToMouseStageItem = <T>(
     if (direction === initialDirection) { marked.add(currentIndex); }
     else { marked.delete(currentIndex); }
     marked.add(cursorIndex);
-    return { ...selection, initialDirection, cursorIndex, selectedIndices: [...marked] };
+    return { ...selection, initialDirection, cursorIndex, selectedIndices: [...marked], includeCurrentPreview: false };
 };
 
 export const moveMouseStageSelection = <T>(
@@ -46,7 +49,7 @@ export const selectedMouseStageItems = <T>(
     selection: MouseStageSelection<T>, excludeCurrent = false
 ): readonly T[] => {
     const marked = new Set(selection.selectedIndices);
-    if (excludeCurrent) { marked.delete(selection.cursorIndex); }
+    if (excludeCurrent && !selection.includeCurrentPreview) { marked.delete(selection.cursorIndex); }
     return selection.items.filter((_, index) => marked.has(index));
 };
 
@@ -59,8 +62,11 @@ export const planMouseStagePreviewBoundary = <T>(
     const nextIndex = currentIndex + (direction === "next" ? 1 : -1);
     const hasTarget = nextIndex >= 0 && nextIndex < selection.items.length;
     const cursorIndex = hasTarget ? nextIndex : currentIndex;
+    const moved = moveToMouseStageItem(selection, currentIndex, cursorIndex);
     return {
-        selection: moveToMouseStageItem(selection, currentIndex, cursorIndex),
+        selection: !hasTarget && direction === "next"
+            ? { ...moved, cursorIndex, selectedIndices: [...new Set([...moved.selectedIndices, cursorIndex])], includeCurrentPreview: true }
+            : moved,
         target: hasTarget ? selection.items[cursorIndex] : undefined,
     };
 };

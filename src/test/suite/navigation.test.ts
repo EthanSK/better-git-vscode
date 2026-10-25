@@ -3550,6 +3550,47 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	for (const source of ['corsair', 'razer', 'wand']) {
+		for (const finish of ['commit', 'reverse', 'cancel']) {
+			test(`final eyes confirmation ${source} ${finish} includes only an explicitly completed preview`, async () => {
+				const config = vscode.workspace.getConfiguration('better-git-vscode');
+				const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+				try {
+					for (const name of ['confirm_a.txt', 'confirm_b.txt']) { write(name, name); }
+					await refreshUntil(() => isUntracked('confirm_a.txt') && isUntracked('confirm_b.txt'), 'final eyes selection');
+					await openPlainAt('confirm_a.txt', 0);
+					await focusIsolatedTestWindow();
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction: 'next' });
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, true);
+					await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', source, 'next');
+					assert.strictEqual(activeTabPath(), wsUri('confirm_b.txt').path);
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('confirm_b.txt')), '👀', 'arrival alone must still exclude the final preview');
+					for (let n = 0; n < 2; n++) {
+						await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', source, 'next');
+						assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('confirm_b.txt')), '💥💥', 'extra Next confirms the final file exactly once');
+						assert.strictEqual(activeTabPath(), wsUri('confirm_b.txt').path, 'confirmation never crosses repositories');
+						assert.strictEqual(git('diff --cached --name-only'), '', 'confirmation edits only the selection, never the index');
+					}
+					if (finish === 'reverse') {
+						await vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', source, 'previous');
+						assert.strictEqual(activeTabPath(), wsUri('confirm_a.txt').path);
+						assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('confirm_b.txt')), '💥💥', 'previous removes the confirmed file');
+					} else if (finish === 'cancel') {
+						await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', source);
+					}
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction: 'next' });
+					assert.strictEqual(git('diff --cached --name-only'), finish === 'commit' ? 'confirm_a.txt\nconfirm_b.txt' : '');
+					if (finish === 'commit') {
+						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+						assert.strictEqual(git('diff --cached --name-only'), '', 'one exact Undo restores the complete committed selection');
+					}
+				} finally { await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global); }
+			});
+		}
+	}
+
 	test('stage-ready wheel previews endpoint diffs and cancel restores the exact original diff view', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);

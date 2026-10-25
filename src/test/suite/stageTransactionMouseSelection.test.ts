@@ -139,4 +139,38 @@ suite("Mouse stage selection", () => {
         assert.strictEqual(planMouseStagePreviewBoundary(first, -1, "next"), undefined);
         assert.strictEqual(planMouseStagePreviewBoundary(first, 4, "next"), undefined);
     });
+
+    test("an extra Next beyond the final eyes preview confirms it once without moving", () => {
+        const start = createMouseStageSelection(items, 2)!;
+        const last = planMouseStagePreviewBoundary(start, 2, "next")!;
+        assert.deepStrictEqual(selectedMouseStageItems(last.selection, true), ["c"]);
+        const confirmed = planMouseStagePreviewBoundary(last.selection, 3, "next")!;
+        assert.strictEqual(confirmed.target, undefined);
+        assert.strictEqual(confirmed.selection.cursorIndex, 3);
+        assert.strictEqual(confirmed.selection.includeCurrentPreview, true);
+        assert.deepStrictEqual(selectedMouseStageItems(confirmed.selection, true), ["c", "d"]);
+        const repeated = planMouseStagePreviewBoundary(confirmed.selection, 3, "next")!;
+        assert.deepStrictEqual(selectedMouseStageItems(repeated.selection, true), ["c", "d"]);
+        assert.deepStrictEqual(selectedMouseStageItems(last.selection, true), ["c"], "confirmation does not mutate the old selection");
+    });
+
+    test("backtracking clears final confirmation across eyes and file modes", () => {
+        const last = planMouseStagePreviewBoundary(createMouseStageSelection(items, 3)!, 3, "next")!.selection;
+        for (const previous of [planMouseStagePreviewBoundary(last, 3, "previous")!.selection, moveMouseStageSelection(last, -1)]) {
+            assert.strictEqual(previous.includeCurrentPreview, false);
+            assert.deepStrictEqual(selectedMouseStageItems(previous, true), []);
+            assert.deepStrictEqual(selectedMouseStageItems(previous), ["c"]);
+            const revisit = planMouseStagePreviewBoundary(previous, 2, "next")!.selection;
+            assert.deepStrictEqual(selectedMouseStageItems(revisit, true), ["c"], "revisited last file needs explicit Next confirmation again");
+        }
+        const first = planMouseStagePreviewBoundary(createMouseStageSelection(items, 0)!, 0, "previous")!.selection;
+        assert.deepStrictEqual(selectedMouseStageItems(first, true), [], "Previous at the top does not confirm anything");
+    });
+
+    test("single-file and manually entered final previews confirm only the current file", () => {
+        const single = planMouseStagePreviewBoundary(createMouseStageSelection(["only"], 0)!, 0, "next")!.selection;
+        assert.deepStrictEqual(selectedMouseStageItems(single, true), ["only"]);
+        const manual = planMouseStagePreviewBoundary(createMouseStageSelection(items, 0)!, 3, "next")!.selection;
+        assert.deepStrictEqual(selectedMouseStageItems(manual, true), ["a", "d"], "manual entry never includes unreviewed gaps");
+    });
 });
