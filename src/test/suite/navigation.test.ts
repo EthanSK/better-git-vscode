@@ -3578,7 +3578,9 @@ suite('SCM change navigation E2E', () => {
 						assert.strictEqual(activeTabPath(), wsUri('confirm_a.txt').path);
 						assert.notStrictEqual(extensionApi.getReviewDecorationBadge(wsUri('confirm_b.txt')), '💥💥', 'previous removes the confirmed file');
 					} else if (finish === 'cancel') {
-						await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', source);
+						// The adjacent cancel action is exact Undo while stage-ready.
+						// cancel-mouse-navigation-hold only registers a short release.
+						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', source);
 					}
 					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction: 'next' });
 					assert.strictEqual(git('diff --cached --name-only'), finish === 'commit' ? 'confirm_a.txt\nconfirm_b.txt' : '');
