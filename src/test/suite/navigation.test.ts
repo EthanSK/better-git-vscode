@@ -3182,6 +3182,37 @@ suite('SCM change navigation E2E', () => {
         } finally { await ext.update('confirmedUriHandlerExtensionIds', previous, vscode.ConfigurationTarget.Global); }
     });
 
+    for (const mode of ['changes', 'files'] as const) {
+        for (const finish of ['finish', 'cancel'] as const) {
+            test(`wand mode before first motion ${mode} ${finish} includes only the current file`, async () => {
+                const ext = vscode.workspace.getConfiguration('extensions');
+                const previous = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+                await ext.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+                try {
+                    for (const name of ['begin_a.txt', 'begin_b.txt']) { write(name, name); }
+                    await refreshUntil(() => isUntracked('begin_a.txt') && isUntracked('begin_b.txt'), 'begin-only mode fixtures');
+                    await openPlainAt('begin_a.txt', 0); await focusIsolatedTestWindow();
+                    const id = randomUUID(); let seq = 0;
+                    const send = (phase: string, nextMode = mode) => deliverMouseUri('wand-review/' + phase, 'wand',
+                        new URLSearchParams({ version: '1', id, seq: String(++seq), direction: 'next', mode: nextMode }).toString());
+                    await send('begin');
+                    await send('mode', mode === 'changes' ? 'files' : 'changes');
+                    await send('mode', mode);
+                    assert.strictEqual(activeTabPath(), wsUri('begin_a.txt').path, 'mode entry does not navigate');
+                    assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('begin_a.txt')), '💥💥');
+                    assert.strictEqual(git('diff --cached --name-only'), '', 'mode entry does not commit');
+                    await send(finish);
+                    if (finish === 'cancel') { await send('finish'); }
+                    assert.strictEqual(git('diff --cached --name-only'), finish === 'finish' ? 'begin_a.txt' : '');
+                    if (finish === 'finish') {
+                        await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+                        assert.strictEqual(git('diff --cached --name-only'), '');
+                    }
+                } finally { await ext.update('confirmedUriHandlerExtensionIds', previous, vscode.ConfigurationTarget.Global); }
+            });
+        }
+    }
+
     for (const manual of [false, true]) {
         test(`wand mode transition ${manual ? 'includes the manually viewed file' : 'ignores an applied retry after further navigation'}`, async () => {
             const ext = vscode.workspace.getConfiguration('extensions');
