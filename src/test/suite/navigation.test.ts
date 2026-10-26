@@ -125,6 +125,7 @@ suite('SCM change navigation E2E', () => {
 		getMouseDebugTrace(): string[];
 		clearMouseDebugTrace(): void;
 		queueNavigationForTest(operation: () => Promise<void>): Promise<void>;
+		whenWandReviewSettledForTest(): Promise<void>;
 		getNavigationQueueLengthForTest(): number;
 		useHeldWheelClockForTest(clock?: () => number): void;
 	};
@@ -156,6 +157,13 @@ suite('SCM change navigation E2E', () => {
 			`--user-data-dir=${profile}`, '--open-url',
 			`vscode://ethansk.better-git-vscode/${route}?${query ?? `source=${source}`}`
 		], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 10000 });
+	};
+	const deliverWandPacket = async (phase: string, id: string, seq: number, direction: string, mode: string) => {
+		await deliverMouseUri('wand-review/' + phase, 'wand',
+			new URLSearchParams({ version: '1', id, seq: String(seq), direction, mode }).toString());
+		// The native CLI acknowledges dispatch, not completion of the asynchronous
+		// handler. Observe its real queue before asserting results or issuing Undo.
+		await extensionApi.whenWandReviewSettledForTest();
 	};
 	const focusIsolatedTestWindow = async () => {
 		const profile = process.env.BGV_TEST_USER_DATA_PATH;
@@ -3126,9 +3134,7 @@ suite('SCM change navigation E2E', () => {
                         await openPlainAt(names[start], 0); await focusIsolatedTestWindow();
                         const id = randomUUID(); let seq = 0;
                         const send = (phase: string, nextMode: string = mode, nextDirection: string = direction) =>
-                            deliverMouseUri('wand-review/' + phase, 'wand', new URLSearchParams({
-                                version: '1', id, seq: String(++seq), direction: nextDirection, mode: nextMode
-                            }).toString());
+                            deliverWandPacket(phase, id, ++seq, nextDirection, nextMode);
                         await send('begin'); await send('step');
                         assert.strictEqual(activeTabPath(), wsUri(names[1]).path);
                         const other = mode === 'changes' ? 'files' : 'changes';
@@ -3166,8 +3172,7 @@ suite('SCM change navigation E2E', () => {
             await refreshUntil(() => names.every(isUntracked), 'ordered mode fixtures');
             await openPlainAt(names[0], 0); await focusIsolatedTestWindow();
             const id = randomUUID();
-            const send = (phase: string, seq: number, mode = 'changes') => deliverMouseUri('wand-review/' + phase, 'wand',
-                new URLSearchParams({ version: '1', id, seq: String(seq), direction: 'next', mode }).toString());
+            const send = (phase: string, seq: number, mode = 'changes') => deliverWandPacket(phase, id, seq, 'next', mode);
             await send('begin', 1); await send('step', 2);
             await send('mode', 4, 'files');
             await send('mode', 4, 'changes'); // A conflicting retry cannot replace the first packet.
@@ -3193,8 +3198,7 @@ suite('SCM change navigation E2E', () => {
                     await refreshUntil(() => isUntracked('begin_a.txt') && isUntracked('begin_b.txt'), 'begin-only mode fixtures');
                     await openPlainAt('begin_a.txt', 0); await focusIsolatedTestWindow();
                     const id = randomUUID(); let seq = 0;
-                    const send = (phase: string, nextMode = mode) => deliverMouseUri('wand-review/' + phase, 'wand',
-                        new URLSearchParams({ version: '1', id, seq: String(++seq), direction: 'next', mode: nextMode }).toString());
+                    const send = (phase: string, nextMode = mode) => deliverWandPacket(phase, id, ++seq, 'next', nextMode);
                     await send('begin');
                     await send('mode', mode === 'changes' ? 'files' : 'changes');
                     await send('mode', mode);
@@ -3226,8 +3230,7 @@ suite('SCM change navigation E2E', () => {
                 await openPlainAt(names[0], 0); await focusIsolatedTestWindow();
                 const id = randomUUID();
                 const initialMode = scenario === 'manual-files' ? 'files' : 'changes';
-                const send = (phase: string, seq: number, mode = initialMode) => deliverMouseUri('wand-review/' + phase, 'wand',
-                    new URLSearchParams({ version: '1', id, seq: String(seq), direction: 'next', mode }).toString());
+                const send = (phase: string, seq: number, mode = initialMode) => deliverWandPacket(phase, id, seq, 'next', mode);
                 await send('begin', 1); await send('step', 2);
                 if (manual) {
                     await openPlainAt(names[2], 0);
