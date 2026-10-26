@@ -22,6 +22,7 @@ import { extractFileDiffSection } from "./gitDiffSection";
 import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./gitIndexRetry";
 import {
     createMouseStageSelection,
+    includeCurrentMouseStageItem,
     MouseStageSelection,
     moveMouseStageSelection,
     planMouseStagePreviewBoundary,
@@ -1211,6 +1212,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let wandReview:{id:string;seq:number;direction:"next"|"previous";mode:"changes"|"files";received:number}|undefined;
     const wandPending=new Map<string,Map<number,WandPacket>>(),wandClosed=new Set<string>();
     let wandReviewQueue:Promise<void>=Promise.resolve();
+    let transitionWandReviewMode:(mode:WandPacket["mode"])=>Promise<boolean>=async()=>false;
     const retireWand=(id:string)=>{wandPending.delete(id);wandClosed.add(id);if(wandClosed.size>64){wandClosed.delete(wandClosed.values().next().value!);}};
     const cancelWandReview=async()=>{if(wandReview){retireWand(wandReview.id);}wandReview=undefined;await cancelMouseNavigationHold("wand");};
     const wandWatchdog=setInterval(()=>{if(wandReview&&performance.now()-wandReview.received>3000){void cancelWandReview();}},500);
@@ -1219,11 +1221,15 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         const parsed=parseWandReviewUri(uri);
         if(!parsed || !vscode.window.state.focused){await cancelWandReview();wandPending.clear();return;}
         if(wandClosed.has(parsed.id)){return;}
+        // Retries retain their original sequence. Do not retain already-applied
+        // packets or let duplicates replace a pending mode transition.
+        if(wandReview?.id===parsed.id && parsed.seq<=wandReview.seq){return;}
         if(!wandPending.has(parsed.id)){
             if(wandPending.size>=8){return;}
             wandPending.set(parsed.id,new Map());
         }
         const pending=wandPending.get(parsed.id)!;
+        if(pending.has(parsed.seq)){return;}
         if(pending.size>=64){await cancelWandReview();wandPending.delete(parsed.id);return;}
         pending.set(parsed.seq,parsed);
         if(parsed.phase==="begin"){
@@ -1244,6 +1250,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 await vscode.commands.executeCommand("better-git-vscode.stage-hold-ready","wand");
                 setStagePreviewModeRequest("wand",packet.mode === "changes");
             }else if(packet.phase==="cancel"){await cancelWandReview();return;}
+            else if(packet.phase==="mode"){
+                const review:NonNullable<typeof wandReview>=wandReview;
+                if(await transitionWandReviewMode(packet.mode) && wandReview===review){review.mode=packet.mode;}
+            }
             else if(packet.phase==="step"){
                 if(wandReview.mode==="files"){await adjustStageHoldSelectionRequest("wand",packet.direction==="next"?"down":"up");}
                 else {await navigateStageHoldPreviewRequest("wand",packet.direction);}
@@ -1623,6 +1633,36 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             repaintStagePreviewMode(selection);
         }
         mouseDebug(`${mouseSourceLabel(source)} stage preview mode ${enabled ? "on" : "off"}.`);
+    };
+    transitionWandReviewMode = async mode => {
+        const request = mouseHoldRequests.get("wand");
+        if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest || !request.stageReadyRequested) {
+            return false;
+        }
+        let applied = false;
+        await serializeChangeNavigation(async check => {
+            const selection = activeStageSelection("wand", request);
+            if (!vscode.window.state.focused || !request.active || request.releaseQueued
+                || request !== latestMouseHoldRequest || selection?.request !== request
+                || mouseNavigationOrigins.get("wand")?.holdRequest !== request) { return; }
+            const currentUri = await getActiveFileUri();
+            check();
+            const currentIndex = selection.items.findIndex(change => change.uri.toString() === currentUri?.toString());
+            const included = includeCurrentMouseStageItem(selection, currentIndex);
+            if (!included) {
+                mouseDebug("Magic Wand mode change ignored, current file is outside the pending selection's worktree.");
+                return;
+            }
+            // Double-Middle changes Review changes (eyes) / Stage files in this
+            // same transaction; it confirms the current file, never commits it.
+            setActiveStageSelection("wand", request, { ...included, request });
+            request.wandReviewMode = mode;
+            setStagePreviewModeRequest("wand", mode === "changes");
+            reviewDecoEmitter.fire([...selectionUris(selection), ...selectionUris(included)]);
+            mouseDebug(`Magic Wand mode changed to ${mode}; ${selectionUris(included).length} files remain selected.`);
+            applied = true;
+        });
+        return applied;
     };
     takeStageHoldSelectionRequest = (source, request) => {
         const selection = releasedStageSelections.get(request) ?? stageHoldSelections.get(source);

@@ -3112,6 +3112,77 @@ suite('SCM change navigation E2E', () => {
         });
     }}
     for (const mode of ['changes', 'files'] as const) {
+        for (const direction of ['next', 'previous'] as const) {
+            for (const outcome of ['commit', 'reverse', 'cancel'] as const) {
+                test(`wand mode transition ${mode} ${direction} ${outcome} keeps one pending selection`, async () => {
+                    const ext = vscode.workspace.getConfiguration('extensions');
+                    const previous = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+                    await ext.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+                    try {
+                        const names = ['toggle_a.txt', 'toggle_b.txt', 'toggle_c.txt'];
+                        for (const name of names) { write(name, name); }
+                        await refreshUntil(() => names.every(isUntracked), 'wand mode fixtures');
+                        const start = direction === 'next' ? 0 : 2;
+                        await openPlainAt(names[start], 0); await focusIsolatedTestWindow();
+                        const id = randomUUID(); let seq = 0;
+                        const send = (phase: string, nextMode: string = mode, nextDirection: string = direction) =>
+                            deliverMouseUri('wand-review/' + phase, 'wand', new URLSearchParams({
+                                version: '1', id, seq: String(++seq), direction: nextDirection, mode: nextMode
+                            }).toString());
+                        await send('begin'); await send('step');
+                        assert.strictEqual(activeTabPath(), wsUri(names[1]).path);
+                        const other = mode === 'changes' ? 'files' : 'changes';
+                        await send('mode', other);
+                        await send('mode', mode);
+                        for (const index of [start, 1]) {
+                            assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(names[index])), '💥💥', 'each mode transition includes the current file and retains prior members');
+                        }
+                        assert.strictEqual(activeTabPath(), wsUri(names[1]).path, 'mode changes never navigate');
+                        assert.strictEqual(git('diff --cached --name-only'), '', 'mode changes never stage');
+                        if (outcome === 'reverse') {
+                            await send('step', mode, direction === 'next' ? 'previous' : 'next');
+                            assert.strictEqual(activeTabPath(), wsUri(names[start]).path);
+                        } else if (outcome === 'cancel') { await send('cancel'); }
+                        await send('finish');
+                        const expected = outcome === 'cancel' || (outcome === 'reverse' && mode === 'changes')
+                            ? '' : (outcome === 'reverse' ? [names[start]] : [names[start], names[1]]).sort().join('\n');
+                        assert.strictEqual(git('diff --cached --name-only'), expected, 'the same transaction commits only its remaining selection');
+                        if (expected) {
+                            await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+                            assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the entire selection');
+                        }
+                    } finally { await ext.update('confirmedUriHandlerExtensionIds', previous, vscode.ConfigurationTarget.Global); }
+                });
+            }
+        }
+    }
+
+    test('wand mode transition waits for sequence gaps and ignores duplicate packets', async () => {
+        const ext = vscode.workspace.getConfiguration('extensions');
+        const previous = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+        await ext.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+        try {
+            const names = ['order_a.txt', 'order_b.txt']; for (const name of names) { write(name, name); }
+            await refreshUntil(() => names.every(isUntracked), 'ordered mode fixtures');
+            await openPlainAt(names[0], 0); await focusIsolatedTestWindow();
+            const id = randomUUID();
+            const send = (phase: string, seq: number, mode = 'changes') => deliverMouseUri('wand-review/' + phase, 'wand',
+                new URLSearchParams({ version: '1', id, seq: String(seq), direction: 'next', mode }).toString());
+            await send('begin', 1); await send('step', 2);
+            await send('mode', 4, 'files');
+            await send('mode', 4, 'changes'); // A conflicting retry cannot replace the first packet.
+            await send('finish', 5);
+            assert.strictEqual(git('diff --cached --name-only'), '', 'missing earlier packets prevent early commit');
+            assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(names[1])), '👀');
+            await send('heartbeat', 3);
+            assert.strictEqual(git('diff --cached --name-only'), names.join('\n'));
+            await send('mode', 4); await send('finish', 5);
+            await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+            assert.strictEqual(git('diff --cached --name-only'), '', 'duplicates never create another transaction');
+        } finally { await ext.update('confirmedUriHandlerExtensionIds', previous, vscode.ConfigurationTarget.Global); }
+    });
+
+    for (const mode of ['changes', 'files'] as const) {
         test(`wand review direction reversal ${mode} preserves the set beyond its starting file`, async () => {
             const ext = vscode.workspace.getConfiguration('extensions');
             const previous = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;

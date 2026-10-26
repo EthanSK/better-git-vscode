@@ -1,6 +1,7 @@
 import * as assert from "assert";
 import {
     createMouseStageSelection,
+    includeCurrentMouseStageItem,
     moveMouseStageSelection,
     planMouseStagePreviewBoundary,
     selectedMouseStageItems,
@@ -8,6 +9,35 @@ import {
 
 suite("Mouse stage selection", () => {
     const items = ["a", "b", "c", "d"];
+
+    test("mode inclusion preserves membership and explicitly includes the preview in either mode", () => {
+        const start = createMouseStageSelection(items, 0)!;
+        const moved = moveMouseStageSelection(start, 1);
+        const included = includeCurrentMouseStageItem(moved)!;
+        assert.deepStrictEqual(selectedMouseStageItems(moved, true), ["a"]);
+        assert.deepStrictEqual(selectedMouseStageItems(included, true), ["a", "b"]);
+        assert.deepStrictEqual(selectedMouseStageItems(included), ["a", "b"]);
+        assert.deepStrictEqual(includeCurrentMouseStageItem(included), included, "repeated mode changes are idempotent");
+        const back = moveMouseStageSelection(included, -1);
+        assert.deepStrictEqual(selectedMouseStageItems(back), ["a"]);
+        assert.deepStrictEqual(selectedMouseStageItems(back, true), []);
+        assert.strictEqual(moved.includeCurrentPreview, false, "the previous selection remains immutable");
+    });
+
+    test("mode inclusion adds only the manually viewed file without filling gaps", () => {
+        const start = createMouseStageSelection(items, 0, "previous", true)!;
+        const included = includeCurrentMouseStageItem(start, 3)!;
+        assert.deepStrictEqual(selectedMouseStageItems(included, true), ["a", "d"]);
+        assert.strictEqual(included.cursorIndex, 3);
+        assert.strictEqual(included.initialDirection, start.initialDirection);
+        assert.strictEqual(included.rebaseDirectionAtEndpoint, true);
+        assert.deepStrictEqual(selectedMouseStageItems(start), ["a"]);
+    });
+
+    test("mode inclusion refuses invalid current-file indexes", () => {
+        const start = createMouseStageSelection(items, 0)!;
+        for (const index of [-1, 4, 0.5, NaN]) { assert.strictEqual(includeCurrentMouseStageItem(start, index), undefined); }
+    });
 
     test("starts at the held file and expands one item per wheel step", () => {
         const start = createMouseStageSelection(items, 1);

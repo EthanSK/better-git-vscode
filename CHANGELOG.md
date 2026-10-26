@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.135
+
+- Keep the Magic Wand selection when switching Review changes and Stage files, and include the current file without staging it. The ordered mode-transition packet preserves the same transaction, cancellation and exact Undo.
+
 ## 1.2.134
 
 - In Eyes review, another Next change after the end of the final file includes that file in the pending selection. It shows the ready badge and waits for the normal commit action. Previous and cancel retain their existing behavior.

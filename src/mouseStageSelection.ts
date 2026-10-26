@@ -4,8 +4,8 @@ export interface MouseStageSelection<T> {
     readonly initialDirection: "next" | "previous";
     readonly selectedIndices: readonly number[];
     readonly rebaseDirectionAtEndpoint?: boolean;
-    // Eyes review normally excludes its current preview. An extra Next at the
-    // final file explicitly confirms it into the selection (formerly "set").
+    // Eyes review normally excludes its current preview. Final-file Next and
+    // the wand's mode switch explicitly include it in the selection (formerly "set").
     readonly includeCurrentPreview?: boolean;
 }
 
@@ -53,6 +53,18 @@ export const selectedMouseStageItems = <T>(
     return selection.items.filter((_, index) => marked.has(index));
 };
 
+export const includeCurrentMouseStageItem = <T>(
+    selection: MouseStageSelection<T>, currentIndex = selection.cursorIndex
+): MouseStageSelection<T> | undefined => {
+    if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= selection.items.length) {
+        return undefined;
+    }
+    // An explicit inclusion keeps every existing member, including across a
+    // mode switch or a manually opened file. It is not a navigation/reversal.
+    return { ...selection, cursorIndex: currentIndex,
+        selectedIndices: [...new Set([...selection.selectedIndices, currentIndex])], includeCurrentPreview: true };
+};
+
 export const planMouseStagePreviewBoundary = <T>(
     selection: MouseStageSelection<T>, currentIndex: number, direction: "next" | "previous"
 ): { selection: MouseStageSelection<T>; target?: T } | undefined => {
@@ -65,7 +77,7 @@ export const planMouseStagePreviewBoundary = <T>(
     const moved = moveToMouseStageItem(selection, currentIndex, cursorIndex);
     return {
         selection: !hasTarget && direction === "next"
-            ? { ...moved, cursorIndex, selectedIndices: [...new Set([...moved.selectedIndices, cursorIndex])], includeCurrentPreview: true }
+            ? includeCurrentMouseStageItem(moved, cursorIndex)!
             : moved,
         target: hasTarget ? selection.items[cursorIndex] : undefined,
     };
