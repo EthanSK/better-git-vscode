@@ -159,12 +159,21 @@ suite('SCM change navigation E2E', () => {
 		], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 10000 });
 	};
 	const deliverWandPacket = async (phase: string, id: string, seq: number, direction: string, mode: string) => {
+		if (phase === 'begin') {
+			await vscode.workspace.getConfiguration('better-git-vscode').update('debugLogging', true, vscode.ConfigurationTarget.Global);
+			extensionApi.clearMouseDebugTrace();
+		}
 		await deliverMouseUri('wand-review/' + phase, 'wand',
 			new URLSearchParams({ version: '1', id, seq: String(seq), direction, mode }).toString());
 		// The native CLI acknowledges dispatch, not completion of the asynchronous
 		// handler. Observe its real queue before asserting results or issuing Undo.
 		await extensionApi.whenWandReviewSettledForTest();
 	};
+	teardown(function () {
+		if (this.currentTest?.state === 'failed' && /^wand mode/.test(this.currentTest.title)) {
+			console.error('WAND_MODE_FAILURE', this.currentTest.err?.stack, JSON.stringify(extensionApi.getMouseDebugTrace()));
+		}
+	});
 	const focusIsolatedTestWindow = async () => {
 		const profile = process.env.BGV_TEST_USER_DATA_PATH;
 		assert.ok(profile, 'the disposable VS Code profile must be identifiable before activating its window');
