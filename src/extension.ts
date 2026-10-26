@@ -2345,6 +2345,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             // A deterministic slow-renderer barrier for isolated real-host queue tests only.
             queueNavigationForTest: serializeChangeNavigation,
             whenWandReviewSettledForTest: () => wandReviewQueue,
+            hasReceivedWandPacketForTest: (id: string, seq: number) => wandClosed.has(id)
+                || (wandReview?.id === id && wandReview.seq >= seq) || !!wandPending.get(id)?.has(seq),
             getNavigationQueueLengthForTest: () => queuedNavigationOperations,
             useHeldWheelClockForTest: (clock?: () => number) => { heldWheelNow = clock ?? (() => performance.now()); },
         } : {}),

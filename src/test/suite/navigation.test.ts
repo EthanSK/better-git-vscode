@@ -126,6 +126,7 @@ suite('SCM change navigation E2E', () => {
 		clearMouseDebugTrace(): void;
 		queueNavigationForTest(operation: () => Promise<void>): Promise<void>;
 		whenWandReviewSettledForTest(): Promise<void>;
+		hasReceivedWandPacketForTest(id: string, seq: number): boolean;
 		getNavigationQueueLengthForTest(): number;
 		useHeldWheelClockForTest(clock?: () => number): void;
 	};
@@ -174,6 +175,7 @@ suite('SCM change navigation E2E', () => {
 			new URLSearchParams({ version: '1', id, seq: String(seq), direction, mode }).toString());
 		// The native CLI acknowledges dispatch, not completion of the asynchronous
 		// handler. Observe its real queue before asserting results or issuing Undo.
+		await poll(() => extensionApi.hasReceivedWandPacketForTest(id, seq), `wand packet ${phase} ${seq} admitted`);
 		await extensionApi.whenWandReviewSettledForTest();
 	};
 	teardown(async function () {
