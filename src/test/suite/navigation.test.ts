@@ -158,9 +158,16 @@ suite('SCM change navigation E2E', () => {
 			`vscode://ethansk.better-git-vscode/${route}?${query ?? `source=${source}`}`
 		], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 10000 });
 	};
+	let wandModeTestSettings: { navigation: boolean | undefined; debug: boolean | undefined } | undefined;
 	const deliverWandPacket = async (phase: string, id: string, seq: number, direction: string, mode: string) => {
 		if (phase === 'begin') {
-			await vscode.workspace.getConfiguration('better-git-vscode').update('debugLogging', true, vscode.ConfigurationTarget.Global);
+			const config = vscode.workspace.getConfiguration('better-git-vscode');
+			wandModeTestSettings ??= {
+				navigation: config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue,
+				debug: config.inspect<boolean>('debugLogging')?.globalValue,
+			};
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+			await config.update('debugLogging', true, vscode.ConfigurationTarget.Global);
 			extensionApi.clearMouseDebugTrace();
 		}
 		await deliverMouseUri('wand-review/' + phase, 'wand',
@@ -169,9 +176,16 @@ suite('SCM change navigation E2E', () => {
 		// handler. Observe its real queue before asserting results or issuing Undo.
 		await extensionApi.whenWandReviewSettledForTest();
 	};
-	teardown(function () {
+	teardown(async function () {
 		if (this.currentTest?.state === 'failed' && /^wand mode/.test(this.currentTest.title)) {
 			console.error('WAND_MODE_FAILURE', this.currentTest.err?.stack, JSON.stringify(extensionApi.getMouseDebugTrace()));
+		}
+		if (wandModeTestSettings) {
+			const saved = wandModeTestSettings;
+			wandModeTestSettings = undefined;
+			const config = vscode.workspace.getConfiguration('better-git-vscode');
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', saved.navigation, vscode.ConfigurationTarget.Global);
+			await config.update('debugLogging', saved.debug, vscode.ConfigurationTarget.Global);
 		}
 	});
 	const focusIsolatedTestWindow = async () => {
