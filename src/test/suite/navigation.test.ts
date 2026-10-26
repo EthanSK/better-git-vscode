@@ -3213,8 +3213,9 @@ suite('SCM change navigation E2E', () => {
         }
     }
 
-    for (const manual of [false, true]) {
-        test(`wand mode transition ${manual ? 'includes the manually viewed file' : 'ignores an applied retry after further navigation'}`, async () => {
+    for (const scenario of ['retry', 'manual-eyes', 'manual-files'] as const) {
+        const manual = scenario !== 'retry';
+        test(`wand mode transition ${manual ? 'includes the manually viewed file from ' + scenario : 'ignores an applied retry after further navigation'}`, async () => {
             const ext = vscode.workspace.getConfiguration('extensions');
             const previous = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
             await ext.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
@@ -3224,12 +3225,13 @@ suite('SCM change navigation E2E', () => {
                 await refreshUntil(() => names.every(isUntracked), 'current wand mode fixtures');
                 await openPlainAt(names[0], 0); await focusIsolatedTestWindow();
                 const id = randomUUID();
-                const send = (phase: string, seq: number, mode = 'changes') => deliverMouseUri('wand-review/' + phase, 'wand',
+                const initialMode = scenario === 'manual-files' ? 'files' : 'changes';
+                const send = (phase: string, seq: number, mode = initialMode) => deliverMouseUri('wand-review/' + phase, 'wand',
                     new URLSearchParams({ version: '1', id, seq: String(seq), direction: 'next', mode }).toString());
                 await send('begin', 1); await send('step', 2);
                 if (manual) {
                     await openPlainAt(names[2], 0);
-                    await send('mode', 3);
+                    await send('mode', 3, 'changes');
                 } else {
                     await send('mode', 3, 'files'); await send('mode', 4);
                     await send('step', 5);
@@ -3240,7 +3242,7 @@ suite('SCM change navigation E2E', () => {
                 assert.strictEqual(activeTabPath(), wsUri(names[2]).path);
                 assert.strictEqual(git('diff --cached --name-only'), '');
                 await send('finish', manual ? 4 : 6);
-                const expected = names.slice(0, manual ? 3 : 2).join('\n');
+                const expected = (scenario === 'manual-eyes' ? [names[0], names[2]] : names.slice(0, manual ? 3 : 2)).join('\n');
                 assert.strictEqual(git('diff --cached --name-only'), expected);
                 await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
                 assert.strictEqual(git('diff --cached --name-only'), '');

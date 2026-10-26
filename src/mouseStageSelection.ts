@@ -54,15 +54,17 @@ export const selectedMouseStageItems = <T>(
 };
 
 export const includeCurrentMouseStageItem = <T>(
-    selection: MouseStageSelection<T>, currentIndex = selection.cursorIndex
+    selection: MouseStageSelection<T>, currentIndex = selection.cursorIndex, excludePreviousPreview = false
 ): MouseStageSelection<T> | undefined => {
     if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= selection.items.length) {
         return undefined;
     }
     // An explicit inclusion keeps every existing member, including across a
     // mode switch or a manually opened file. It is not a navigation/reversal.
-    return { ...selection, cursorIndex: currentIndex,
-        selectedIndices: [...new Set([...selection.selectedIndices, currentIndex])], includeCurrentPreview: true };
+    const marked = new Set(selection.selectedIndices);
+    if (excludePreviousPreview && !selection.includeCurrentPreview) { marked.delete(selection.cursorIndex); }
+    marked.add(currentIndex);
+    return { ...selection, cursorIndex: currentIndex, selectedIndices: [...marked], includeCurrentPreview: true };
 };
 
 export const planMouseStagePreviewBoundary = <T>(

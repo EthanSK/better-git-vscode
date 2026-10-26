@@ -39,6 +39,16 @@ suite("Mouse stage selection", () => {
         for (const index of [-1, 4, 0.5, NaN]) { assert.strictEqual(includeCurrentMouseStageItem(start, index), undefined); }
     });
 
+    test("changing mode after a manual file click does not include an unconfirmed former eyes preview", () => {
+        const selection = moveMouseStageSelection(createMouseStageSelection(items, 0)!, 1);
+        const included = includeCurrentMouseStageItem(selection, 3, true)!;
+        assert.deepStrictEqual(selectedMouseStageItems(selection, true), ["a"]);
+        assert.deepStrictEqual(selectedMouseStageItems(included, true), ["a", "d"]);
+        const confirmed = includeCurrentMouseStageItem(selection)!;
+        assert.deepStrictEqual(selectedMouseStageItems(includeCurrentMouseStageItem(confirmed, 3, true)!, true), ["a", "b", "d"],
+            "an explicitly included previous file remains a member");
+    });
+
     test("starts at the held file and expands one item per wheel step", () => {
         const start = createMouseStageSelection(items, 1);
         assert.ok(start);

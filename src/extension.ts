@@ -1648,7 +1648,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             const currentUri = await getActiveFileUri();
             check();
             const currentIndex = selection.items.findIndex(change => change.uri.toString() === currentUri?.toString());
-            const included = includeCurrentMouseStageItem(selection, currentIndex);
+            const included = includeCurrentMouseStageItem(selection, currentIndex, request.wandReviewMode === "changes");
             if (!included) {
                 mouseDebug("Magic Wand mode change ignored, current file is outside the pending selection's worktree.");
                 return;
