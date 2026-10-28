@@ -3501,6 +3501,52 @@ suite('SCM change navigation E2E', () => {
 		} finally { await focusIsolatedTestWindow(); }
 	});
 
+	test('background physical release survives an app switch while its staging queue is busy', async () => {
+		write('background_release.txt', 'pending');
+		await refreshUntil(() => isUntracked('background_release.txt'), 'queued release fixture');
+		await openPlainAt('background_release.txt', 0);
+		await focusIsolatedTestWindow();
+		const id = randomUUID(); let seq = 0, unblock = () => {};
+		const send = (phase: string) => extensionApi.receiveMouseHoldForTest({ version: 1, phase, id, seq: ++seq,
+			source: 'corsair', direction: 'next', mode: 'files' });
+		send('begin'); await extensionApi.whenMouseHoldSettledForTest();
+		send('ready'); await extensionApi.whenMouseHoldSettledForTest();
+		const barrier = extensionApi.queueNavigationForTest(() => new Promise<void>(resolve => { unblock = resolve; }));
+		await poll(() => extensionApi.getNavigationQueueLengthForTest() > 0, 'staging barrier');
+		send('finish');
+		try {
+			await switchAwayFromIsolatedTestWindow();
+			assert.strictEqual(git('diff --cached --name-only'), '');
+			unblock(); await barrier; await extensionApi.whenMouseHoldSettledForTest();
+			assert.strictEqual(git('diff --cached --name-only'), 'background_release.txt');
+			assert.strictEqual(vscode.window.state.focused, false);
+		} finally { unblock(); await focusIsolatedTestWindow(); }
+	});
+
+	test('background physical eyes scrolls within the captured file without raising VS Code', async () => {
+		write('background_long.txt', lines(90, 'background review'));
+		await refreshUntil(() => isUntracked('background_long.txt'), 'long background fixture');
+		await openPlainAt('background_long.txt', 0);
+		await focusIsolatedTestWindow();
+		const id = randomUUID(); let seq = 0;
+		const send = async (phase: string) => {
+			assert.strictEqual(extensionApi.receiveMouseHoldForTest({ version: 1, phase, id, seq: ++seq,
+				source: 'razer', direction: 'next', mode: 'changes' }).accepted, true);
+			await extensionApi.whenMouseHoldSettledForTest();
+		};
+		await send('begin'); await send('ready');
+		await switchAwayFromIsolatedTestWindow();
+		try {
+			const start = visibleEditorFor(wsUri('background_long.txt'))!.selection.active.line;
+			await send('step');
+			assert.ok(visibleEditorFor(wsUri('background_long.txt'))!.selection.active.line > start);
+			assert.strictEqual(activeTabPath(), wsUri('background_long.txt').path);
+			await send('finish');
+			assert.strictEqual(git('diff --cached --name-only'), '', 'unconfirmed current Eyes file stays unstaged');
+			assert.strictEqual(vscode.window.state.focused, false);
+		} finally { await focusIsolatedTestWindow(); }
+	});
+
 	for (const source of ['corsair', 'razer'] as const) {
 		for (const direction of ['next', 'previous'] as const) {
 			for (const mode of ['changes', 'files'] as const) {

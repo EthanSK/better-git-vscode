@@ -44,6 +44,7 @@ export class MouseHoldProtocol {
     }
 
     get canBegin(): boolean { return !this.session && this.hooks.canBegin(); }
+    get hasSession(): boolean { return this.session !== undefined; }
     settled(): Promise<void> { return this.tail; }
 
     receive(value: unknown): MouseHoldReply {

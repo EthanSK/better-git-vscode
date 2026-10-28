@@ -1647,9 +1647,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     };
     clearStageHoldFeedbackRequest = clearStageHoldFeedback;
     const stageHeldSelectionOnFocusLoss = (): Promise<void> => {
-        if (latestMouseHoldRequest?.active && latestMouseHoldRequest.backgroundView) {
+        if (mouseHoldProtocol.hasSession && transportMouseRequest?.backgroundView) {
             // App focus is not physical button-up. Keep selection and the pinned review window intact.
-            latestMouseHoldRequest.backgroundView = captureBackgroundMouseView();
+            transportMouseRequest.backgroundView = captureBackgroundMouseView();
             return Promise.resolve();
         }
         // Snapshot before invalidation retires the physical gesture. Queued/in-flight
@@ -4843,6 +4843,14 @@ const mouseNavigationCheckpoint = (base: NavigationCheckpoint, request?: MouseHo
     backgroundMouseCheckpoints.set(check, request);
     return check;
 };
+const rememberOwnedBackgroundView = (check: NavigationCheckpoint): void => {
+    const request = backgroundMouseCheckpoints.get(check);
+    if (!request?.backgroundView) { return; }
+    if (!vscode.window.state.focused && request.backgroundView.group !== vscode.window.tabGroups.activeTabGroup) {
+        throw new NavigationSuperseded("background physical review moved to another editor group");
+    }
+    request.backgroundView = captureBackgroundMouseView();
+};
 let changeNavigationTail: Promise<void> = Promise.resolve();
 let changeNavigationGeneration = 0;
 let lastNavigationInvalidation = "none";
@@ -4955,8 +4963,7 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
         await openChangeEntry(entry, !vscode.window.state.focused && backgroundMouseCheckpoints.has(check));
         if (currentReviewFileUri()?.toString() === entry.uri.toString()) {
             confirmOpenedReview(entry.uri);
-            const request = backgroundMouseCheckpoints.get(check);
-            if (request) { request.backgroundView = captureBackgroundMouseView(); }
+            rememberOwnedBackgroundView(check);
         }
         // Closing first activates an unrelated background tab. A staged-only file: tab then
         // makes SCM Auto Reveal expand Staged Changes, even after the next review file opens.
@@ -4977,8 +4984,7 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
         if (shown?.toString() !== entry.uri.toString()) { invalidateChangeNavigation(); }
         else {
             confirmOpenedReview(entry.uri);
-            const request = backgroundMouseCheckpoints.get(check);
-            if (request) { request.backgroundView = captureBackgroundMouseView(); }
+            rememberOwnedBackgroundView(check);
         }
     }
     check();
@@ -5054,8 +5060,7 @@ const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mous
             } else {
                 await openChangeEntry(origin.change, preserveFocus);
             }
-            const request = backgroundMouseCheckpoints.get(check);
-            if (request) { request.backgroundView = captureBackgroundMouseView(); }
+            rememberOwnedBackgroundView(check);
         } finally { observeNavigationTab(); navigationOwnTabChange = false; }
     }
     check();
