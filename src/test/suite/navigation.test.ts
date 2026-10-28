@@ -210,9 +210,14 @@ suite('SCM change navigation E2E', () => {
 	};
 	const switchAwayFromIsolatedTestWindow = async () => {
 		assert.ok(vscode.window.state.focused, 'start from the real focused test window');
-		execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e',
-			"ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);"]);
-		await poll(() => !vscode.window.state.focused, 'actual app switch away from the test window');
+		// macOS can ignore an activation request while an earlier window transition settles.
+		// Retry only this test precondition; background actions below must keep focus away themselves.
+		for (let attempt = 0; attempt < 3; attempt++) {
+			execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e',
+				"ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);"]);
+			try { await poll(() => !vscode.window.state.focused, 'actual app switch away from the test window', 1500); return; }
+			catch (error) { if (attempt === 2) { throw error; } }
+		}
 	};
 
 	// n lines joined WITHOUT a trailing newline, so document.lineCount === n exactly — keeps the
@@ -3473,6 +3478,7 @@ suite('SCM change navigation E2E', () => {
 				if (!readyBeforeBlur) { await send('short-release'); }
 				await send('cancel');
 				assert.strictEqual(git('diff --cached --name-only'), readyBeforeBlur ? 'background_history.txt' : '');
+				assert.strictEqual(vscode.window.state.focused, false, 'background cancellation cannot raise VS Code');
 				assert.ok(isUntracked('background_cancel.txt'), 'cancel never stages pending content');
 			} finally { await focusIsolatedTestWindow(); }
 		});
