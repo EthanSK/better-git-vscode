@@ -1,5 +1,7 @@
 import { ReviewDocumentWarmup } from "./gitReviewWarmup";
 import { HeldWheelBurst } from "./heldWheelBurst";
+import { MouseHoldProtocol } from "./mouseHoldProtocol";
+import { startMouseHoldBridge } from "./mouseHoldBridge";
 import { parseWandReviewUri } from "./wandReviewUri";
 import * as vscode from "vscode";
 // fs + path are only used by resolveWorktreeRootUri's FALLBACK path (the filesystem `.git` walk used when the
@@ -136,7 +138,8 @@ type MouseReviewSource = "corsair" | "razer" | "wand";
 // `stageReadyRequested` is set synchronously when F20 arrives, before its queued Git/editor work. The adjacent
 // F16 chord uses this input-order fact to distinguish a quick Undo chord from a ready-hold cancel even if
 // navigation is busy. See mouseHoldChord.ts for the shared decision rule.
-type MouseHoldRequest = MouseHoldChordState & { releaseQueued?: boolean; excludePreviewOnRelease?: boolean; wandReviewMode?: "changes" | "files" };
+type BackgroundMouseView = { group: vscode.TabGroup; tab: vscode.Tab | undefined; documents: Map<vscode.TextDocument, number> };
+type MouseHoldRequest = MouseHoldChordState & { releaseQueued?: boolean; excludePreviewOnRelease?: boolean; wandReviewMode?: "changes" | "files"; backgroundView?: BackgroundMouseView };
 type ActiveMouseStageSelection = MouseStageSelection<FileChange> & { request?: MouseHoldRequest };
 type MouseReviewView = {
     input: unknown;
@@ -150,10 +153,10 @@ let clearStageHoldFeedbackRequest: (source?: MouseReviewSource) => void = () => 
 let prepareStageHoldReleaseRequest: (source: MouseReviewSource, request: MouseHoldRequest) => void = () => undefined;
 let setStagePreviewModeRequest: (source: MouseReviewSource, enabled: boolean) => void = () => undefined;
 let adjustStageHoldSelectionRequest: (
-    source: MouseReviewSource, direction: "up" | "down"
+    source: MouseReviewSource, direction: "up" | "down", mayStart?: () => boolean
 ) => Promise<void> = async () => undefined;
 let navigateStageHoldPreviewRequest: (
-    source: MouseReviewSource, direction: "next" | "previous"
+    source: MouseReviewSource, direction: "next" | "previous", mayStart?: () => boolean
 ) => Promise<void> = async () => undefined;
 let takeStageHoldSelectionRequest: (
     source: MouseReviewSource, request: MouseHoldRequest
@@ -1206,6 +1209,66 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         "better-git-vscode.open-worktree-in-source-control",
         (...targets: unknown[]) => openWorktree(targets.find(target => target instanceof vscode.Uri) as vscode.Uri | undefined ?? findWorktreeRootUri(targets))
     );
+    let transportMouseRequest: MouseHoldRequest | undefined;
+    let transportMouseSource: "corsair" | "razer" | undefined;
+    const mouseHoldProtocol = new MouseHoldProtocol({
+        canBegin: () => vscode.window.state.focused && !latestMouseHoldRequest?.active,
+        begin: packet => {
+            const view = captureBackgroundMouseView();
+            clearStageHoldFeedbackRequest();
+            lastNavDirection = packet.direction;
+            // The physical bridge is release-only. Never enable experimental button-down jumps.
+            const begun = navigateWithMouseOrigin(packet.direction, packet.source, true, false);
+            transportMouseRequest = mouseHoldRequests.get(packet.source);
+            transportMouseSource = packet.source;
+            if (transportMouseRequest) { transportMouseRequest.backgroundView = view; }
+            return begun;
+        },
+        perform: async (packet, mayStart) => {
+            const request = transportMouseRequest;
+            if (!request || mouseHoldRequests.get(packet.source) !== request || !request.active) {
+                throw new NavigationSuperseded("physical hold ownership changed");
+            }
+            validateBackgroundMouseView(request);
+            if (packet.phase === "ready") {
+                await vscode.commands.executeCommand("better-git-vscode.stage-hold-ready", packet.source);
+                setStagePreviewModeRequest(packet.source, packet.mode === "changes");
+            } else if (packet.phase === "step") {
+                if (packet.mode === "changes") { await navigateStageHoldPreviewRequest(packet.source, packet.direction, mayStart); }
+                else { await adjustStageHoldSelectionRequest(packet.source, packet.direction === "next" ? "down" : "up", mayStart); }
+            } else if (packet.phase === "mode") {
+                setStagePreviewModeRequest(packet.source, packet.mode === "changes");
+            } else if (packet.phase === "short-release") {
+                await vscode.commands.executeCommand("better-git-vscode.cancel-mouse-navigation-hold", packet.source);
+            } else if (packet.phase === "boundary") {
+                await vscode.commands.executeCommand("better-git-vscode.stage-hold-clear", packet.source);
+            } else if (packet.phase === "finish") {
+                await stageMouseNavigationOrigin({ source: packet.source, direction: packet.direction }, true);
+            } else if (packet.phase === "cancel") {
+                await vscode.commands.executeCommand("better-git-vscode.undo-last-stage-and-advance", packet.source);
+            }
+        },
+        abandon: () => {
+            const request = transportMouseRequest, source = transportMouseSource;
+            if (request && source && mouseHoldRequests.get(source) === request) {
+                request.active = false;
+                request.releaseQueued = false;
+                mouseHoldRequests.delete(source);
+                if (mouseNavigationOrigins.get(source)?.holdRequest === request) { mouseNavigationOrigins.delete(source); }
+                if (latestMouseHoldRequest === request) { latestMouseHoldRequest = undefined; }
+                invalidateChangeNavigation(true, "physical hold transport abandoned");
+                clearStageHoldFeedbackRequest(source);
+                mouseDebug(`${mouseSourceLabel(source)} transport abandoned; nothing staged.`);
+            }
+        },
+    });
+    const physicalHoldWatchdog = setInterval(() => mouseHoldProtocol.expire(), 500);
+    const physicalHoldBridge = process.platform === "darwin" && !vscode.env.remoteName
+        ? startMouseHoldBridge(packet => mouseHoldProtocol.receive(packet), () => ({ version: 1,
+            extensionVersion: context.extension.packageJSON.version, backgroundHold: true, canBegin: mouseHoldProtocol.canBegin })) : undefined;
+    context.subscriptions.push({ dispose: () => {
+        clearInterval(physicalHoldWatchdog); mouseHoldProtocol.drop(); physicalHoldBridge?.dispose();
+    } });
     // Own-source ordered transport only; the existing review transaction owns
     // file membership, staging and Undo. A missing packet must never stage early.
     type WandPacket=NonNullable<ReturnType<typeof parseWandReviewUri>>;
@@ -1584,6 +1647,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     };
     clearStageHoldFeedbackRequest = clearStageHoldFeedback;
     const stageHeldSelectionOnFocusLoss = (): Promise<void> => {
+        if (latestMouseHoldRequest?.active && latestMouseHoldRequest.backgroundView) {
+            // App focus is not physical button-up. Keep selection and the pinned review window intact.
+            latestMouseHoldRequest.backgroundView = captureBackgroundMouseView();
+            return Promise.resolve();
+        }
         // Snapshot before invalidation retires the physical gesture. Queued/in-flight
         // wheel work must not add files after the user has left this window.
         const request = latestMouseHoldRequest;
@@ -1673,19 +1741,21 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         reviewDecoEmitter.fire(selected.map(change => change.uri));
         return selected;
     };
-    adjustStageHoldSelectionRequest = (source, direction) => {
+    adjustStageHoldSelectionRequest = (source, direction, admittedStart) => {
         // Admit before release, but do not replay a physical wheel backlog after scrolling stops.
         const request = mouseHoldRequests.get(source);
         if (!request?.active || request.releaseQueued || request !== latestMouseHoldRequest || !request.stageReadyRequested) {
             mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, no stage-ready hold is active.`);
             return Promise.resolve();
         }
-        const mayStart = admitHeldWheel(source, request, `selection ${direction}`);
-        return serializeChangeNavigation(async check => {
+        const mayStart = admittedStart ?? admitHeldWheel(source, request, `selection ${direction}`);
+        return serializeChangeNavigation(async baseCheck => {
+            const check = mouseNavigationCheckpoint(baseCheck, request);
             if (!mayStart()) { return; }
+            check();
             const origin = mouseNavigationOrigins.get(source);
             const selection = activeStageSelection(source, request);
-            if (!vscode.window.state.focused) {
+            if (!vscode.window.state.focused && !request.backgroundView) {
                 mouseDebug(`${mouseSourceLabel(source)} stage selection wheel ignored, VS Code is not focused.`);
                 return;
             }
@@ -1711,7 +1781,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
         });
     };
-    navigateStageHoldPreviewRequest = (source, direction) => {
+    navigateStageHoldPreviewRequest = (source, direction, admittedStart) => {
         // Admit at input arrival. Fresh ratchets keep their order before release;
         // stale queued ratchets must not add unseen files after scrolling stops.
         const request = mouseHoldRequests.get(source);
@@ -1719,12 +1789,14 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, no stage-ready hold is active.`);
             return Promise.resolve();
         }
-        const mayStart = admitHeldWheel(source, request, `preview ${direction}`);
-        return serializeChangeNavigation(async check => {
+        const mayStart = admittedStart ?? admitHeldWheel(source, request, `preview ${direction}`);
+        return serializeChangeNavigation(async baseCheck => {
+            const check = mouseNavigationCheckpoint(baseCheck, request);
             if (!mayStart()) { return; }
+            check();
             const origin = mouseNavigationOrigins.get(source);
             const selection = activeStageSelection(source, request);
-            if (!vscode.window.state.focused) {
+            if (!vscode.window.state.focused && !request.backgroundView) {
                 mouseDebug(`${mouseSourceLabel(source)} stage preview navigation ignored, VS Code is not focused.`);
                 return;
             }
@@ -1806,8 +1878,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (request?.active && request === latestMouseHoldRequest) {
             request.stageReadyRequested = true;
         }
-        return serializeChangeNavigation(async check => {
-            if (!vscode.window.state.focused) {
+        return serializeChangeNavigation(async baseCheck => {
+            const check = mouseNavigationCheckpoint(baseCheck, request);
+            check();
+            if (!vscode.window.state.focused && !request?.backgroundView) {
                 mouseDebug(`${mouseSourceLabel(source)} event ignored, VS Code is not focused.`);
                 return;
             }
@@ -1877,7 +1951,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
         clearStageHoldFeedback(source);
         const request = mouseHoldRequests.get(source);
-        return serializeChangeNavigation(async check => {
+        return serializeChangeNavigation(async baseCheck => {
+            const check = mouseNavigationCheckpoint(baseCheck, request);
+            check();
             const origin = mouseNavigationOrigins.get(source);
             const shortDirection = request?.active && request.shortReleasePending && origin?.holdRequest === request
                 && !origin.navigateOnButtonDown ? origin.direction : undefined;
@@ -2345,6 +2421,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             // A deterministic slow-renderer barrier for isolated real-host queue tests only.
             queueNavigationForTest: serializeChangeNavigation,
             whenWandReviewSettledForTest: () => wandReviewQueue,
+            receiveMouseHoldForTest: (packet: unknown) => mouseHoldProtocol.receive(packet),
+            whenMouseHoldSettledForTest: () => mouseHoldProtocol.settled(),
+            getMouseHoldSocketForTest: () => physicalHoldBridge?.socketPath,
             hasReceivedWandPacketForTest: (id: string, seq: number) => wandClosed.has(id)
                 || (wandReview?.id === id && wandReview.seq >= seq) || !!wandPending.get(id)?.has(seq),
             getNavigationQueueLengthForTest: () => queuedNavigationOperations,
@@ -4742,6 +4821,28 @@ async function landPreviousDiffAtLastChange(check = noNavigationCheckpoint): Pro
 type NavigationCheckpoint = () => void;
 const noNavigationCheckpoint: NavigationCheckpoint = () => undefined;
 class NavigationSuperseded extends Error {}
+const backgroundMouseCheckpoints = new WeakMap<NavigationCheckpoint, MouseHoldRequest>();
+const captureBackgroundMouseView = (): BackgroundMouseView => {
+    const group = vscode.window.tabGroups.activeTabGroup;
+    return { group, tab: group.activeTab, documents: new Map(vscode.window.visibleTextEditors
+        .filter(editor => editor.viewColumn === group.viewColumn)
+        .map(editor => [editor.document, editor.document.version])) };
+};
+const validateBackgroundMouseView = (request?: MouseHoldRequest): void => {
+    const view = request?.backgroundView;
+    if (!view || vscode.window.state.focused) { return; }
+    const group = vscode.window.tabGroups.activeTabGroup;
+    if (view.group !== group || view.tab !== group.activeTab ||
+        [...view.documents].some(([document, version]) => document.isClosed || document.version !== version)) {
+        throw new NavigationSuperseded("background physical review changed editor or document");
+    }
+};
+const mouseNavigationCheckpoint = (base: NavigationCheckpoint, request?: MouseHoldRequest): NavigationCheckpoint => {
+    if (!request?.backgroundView) { return base; }
+    const check = () => { base(); validateBackgroundMouseView(request); };
+    backgroundMouseCheckpoints.set(check, request);
+    return check;
+};
 let changeNavigationTail: Promise<void> = Promise.resolve();
 let changeNavigationGeneration = 0;
 let lastNavigationInvalidation = "none";
@@ -4851,9 +4952,11 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
     const previousTab = closeCurrent ? vscode.window.tabGroups.activeTabGroup.activeTab : undefined;
     navigationOwnTabChange = true;
     try {
-        await openChangeEntry(entry);
+        await openChangeEntry(entry, !vscode.window.state.focused && backgroundMouseCheckpoints.has(check));
         if (currentReviewFileUri()?.toString() === entry.uri.toString()) {
             confirmOpenedReview(entry.uri);
+            const request = backgroundMouseCheckpoints.get(check);
+            if (request) { request.backgroundView = captureBackgroundMouseView(); }
         }
         // Closing first activates an unrelated background tab. A staged-only file: tab then
         // makes SCM Auto Reveal expand Staged Changes, even after the next review file opens.
@@ -4872,7 +4975,11 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
         // Opaque image tabs need the existing async path resolver.
         const shown = await currentReviewFileUriAsync();
         if (shown?.toString() !== entry.uri.toString()) { invalidateChangeNavigation(); }
-        else { confirmOpenedReview(entry.uri); }
+        else {
+            confirmOpenedReview(entry.uri);
+            const request = backgroundMouseCheckpoints.get(check);
+            if (request) { request.backgroundView = captureBackgroundMouseView(); }
+        }
     }
     check();
 };
@@ -4938,14 +5045,17 @@ const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mous
     if (!sameInput) {
         navigationOwnTabChange = true;
         try {
-            const options = { viewColumn: view.column, preview: view.preview };
+            const preserveFocus = !vscode.window.state.focused && backgroundMouseCheckpoints.has(check);
+            const options = { viewColumn: view.column, preview: view.preview, preserveFocus };
             if (view.input instanceof vscode.TabInputTextDiff) {
                 await vscode.commands.executeCommand("vscode.diff", view.input.original, view.input.modified, undefined, options);
             } else if (view.input instanceof vscode.TabInputText) {
                 await vscode.window.showTextDocument(view.input.uri, options);
             } else {
-                await openChangeEntry(origin.change);
+                await openChangeEntry(origin.change, preserveFocus);
             }
+            const request = backgroundMouseCheckpoints.get(check);
+            if (request) { request.backgroundView = captureBackgroundMouseView(); }
         } finally { observeNavigationTab(); navigationOwnTabChange = false; }
     }
     check();
@@ -4986,7 +5096,9 @@ const cancelMouseNavigationHold = (source?: MouseReviewSource): Promise<void> | 
     const [ownerSource] = owner;
     request.active = false; // Readiness arriving behind this input must not relight or stage the hold.
     clearStageHoldFeedbackRequest(ownerSource);
-    return serializeChangeNavigation(async check => {
+    return serializeChangeNavigation(async baseCheck => {
+        const check = mouseNavigationCheckpoint(baseCheck, request);
+        check();
         const origin = mouseNavigationOrigins.get(ownerSource);
         let restored = false;
         let stayedStill = false;
@@ -5020,6 +5132,8 @@ const navigateWithMouseOrigin = (
     navigateOnButtonDown = true,
 ): Promise<void> => {
     const requestedAt = performance.now();
+    const initialTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const initialGroup = vscode.window.tabGroups.activeTabGroup;
     observeNavigationTab();
     const holdRequest: MouseHoldRequest | undefined = held && isMouseReviewSource(source)
         ? { active: true, navigateOnButtonDown }
@@ -5031,6 +5145,9 @@ const navigateWithMouseOrigin = (
         if (holdRequest) { mouseHoldRequests.set(source, holdRequest); } else { mouseHoldRequests.delete(source); }
     }
     return serializeChangeNavigation(async (check) => {
+        if (held && (initialTab !== vscode.window.tabGroups.activeTabGroup.activeTab || initialGroup !== vscode.window.tabGroups.activeTabGroup)) {
+            throw new NavigationSuperseded("physical hold origin changed before capture");
+        }
         if (isMouseReviewSource(source)) {
             mouseNavigationOrigins.delete(source);
             const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -5081,7 +5198,9 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
         request.active = false;
         prepareStageHoldReleaseRequest(source, request);
     }
-    return serializeChangeNavigation(check => runStageCommand(async () => {
+    return serializeChangeNavigation(baseCheck => runStageCommand(async () => {
+        const check = mouseNavigationCheckpoint(baseCheck, request);
+        check();
         const heldSelection = request ? takeStageHoldSelectionRequest(source, request) : undefined;
         const origin = releasedOrigin ?? mouseNavigationOrigins.get(source);
         if (mouseNavigationOrigins.get(source)?.holdRequest === request) { mouseNavigationOrigins.delete(source); }

@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as net from 'net';
 import { execFile, execFileSync, execSync } from 'child_process';
 import { promisify } from 'util';
 import { createHash, randomUUID } from 'crypto';
@@ -126,6 +127,9 @@ suite('SCM change navigation E2E', () => {
 		clearMouseDebugTrace(): void;
 		queueNavigationForTest(operation: () => Promise<void>): Promise<void>;
 		whenWandReviewSettledForTest(): Promise<void>;
+		whenMouseHoldSettledForTest(): Promise<void>;
+		getMouseHoldSocketForTest(): string | undefined;
+		receiveMouseHoldForTest(packet: unknown): { accepted: boolean };
 		hasReceivedWandPacketForTest(id: string, seq: number): boolean;
 		getNavigationQueueLengthForTest(): number;
 		useHeldWheelClockForTest(clock?: () => number): void;
@@ -3444,6 +3448,122 @@ suite('SCM change navigation E2E', () => {
 			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
 		}
 	});
+
+	for (const readyBeforeBlur of [false, true]) {
+		test(`background physical cancellation ${readyBeforeBlur ? 'ready' : 'short'} preserves its Undo rule`, async () => {
+			write('background_history.txt', 'history');
+			write('background_cancel.txt', 'pending');
+			await refreshUntil(() => isUntracked('background_history.txt') && isUntracked('background_cancel.txt'), 'background cancel fixtures');
+			await openPlainAt('background_history.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+			await extensionApi.whenStageTransactionsSettled();
+			await openPlainAt('background_cancel.txt', 0);
+			await focusIsolatedTestWindow();
+			const id = randomUUID(); let seq = 0;
+			const send = async (phase: string) => {
+				assert.strictEqual(extensionApi.receiveMouseHoldForTest({ version: 1, phase, id, seq: ++seq,
+					source: 'corsair', direction: 'next', mode: 'changes' }).accepted, true);
+				await extensionApi.whenMouseHoldSettledForTest();
+			};
+			await send('begin');
+			if (readyBeforeBlur) { await send('ready'); }
+			await switchAwayFromIsolatedTestWindow();
+			try {
+				assert.strictEqual(git('diff --cached --name-only'), 'background_history.txt');
+				if (!readyBeforeBlur) { await send('short-release'); }
+				await send('cancel');
+				assert.strictEqual(git('diff --cached --name-only'), readyBeforeBlur ? 'background_history.txt' : '');
+				assert.ok(isUntracked('background_cancel.txt'), 'cancel never stages pending content');
+			} finally { await focusIsolatedTestWindow(); }
+		});
+	}
+
+	test('background physical readiness survives blur but changed editor rejects release', async () => {
+		for (const name of ['background_first.txt', 'background_other.txt']) { write(name, name); }
+		await refreshUntil(() => isUntracked('background_first.txt') && isUntracked('background_other.txt'), 'background editor fixtures');
+		await openPlainAt('background_first.txt', 0);
+		await focusIsolatedTestWindow();
+		const id = randomUUID(); let seq = 0;
+		const send = async (phase: string) => {
+			const reply = extensionApi.receiveMouseHoldForTest({ version: 1, phase, id, seq: ++seq,
+				source: 'razer', direction: 'next', mode: 'files' });
+			await extensionApi.whenMouseHoldSettledForTest(); return reply;
+		};
+		assert.strictEqual((await send('begin')).accepted, true);
+		await switchAwayFromIsolatedTestWindow();
+		try {
+			assert.strictEqual((await send('ready')).accepted, true);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('background_first.txt')), '💥💥');
+			assert.strictEqual(vscode.window.state.focused, false);
+			await vscode.window.showTextDocument(wsUri('background_other.txt'), { preserveFocus: true });
+			await send('finish');
+			assert.strictEqual(git('diff --cached --name-only'), '', 'changed editor cannot consume the old physical release');
+		} finally { await focusIsolatedTestWindow(); }
+	});
+
+	for (const source of ['corsair', 'razer'] as const) {
+		for (const direction of ['next', 'previous'] as const) {
+			for (const mode of ['changes', 'files'] as const) {
+				test(`background physical socket ${source} ${direction} ${mode} keeps selection until release`, async () => {
+					const socketPath = extensionApi.getMouseHoldSocketForTest();
+					assert.ok(socketPath, 'production private transport must be running');
+					const names = ['background_a.txt', 'background_b.txt', 'background_c.txt', 'background_d.txt'];
+					for (const name of names) { write(name, name); }
+					await refreshUntil(() => names.every(isUntracked), 'background mouse files');
+					const ordered = direction === 'next' ? names : [...names].reverse();
+					await openPlainAt(ordered[0], 0);
+					await focusIsolatedTestWindow();
+					let seq = 0, tail = Promise.resolve(), stopped = false;
+					const id = randomUUID();
+					const send = (phase: string, stepDirection = direction): Promise<void> => {
+						const packet = { version: 1, phase, id, seq: ++seq, source, direction: stepDirection, mode };
+						tail = tail.then(() => new Promise<void>((resolve, reject) => {
+							const socket = net.createConnection(socketPath!); let reply = '';
+							socket.setTimeout(2000, () => socket.destroy(new Error('mouse socket timeout')));
+							socket.on('connect', () => socket.write(JSON.stringify(packet) + '\n'));
+							socket.on('data', chunk => { reply += chunk; });
+							socket.on('end', () => { try { assert.strictEqual(JSON.parse(reply).accepted, true, reply); resolve(); } catch (e) { reject(e); } });
+							socket.on('error', reject);
+						}));
+						return tail;
+					};
+					await send('begin');
+					const timer = setInterval(() => { if (!stopped) { void send('heartbeat').catch(() => {}); } }, 500);
+					try {
+						await extensionApi.whenMouseHoldSettledForTest();
+						await send('ready'); await extensionApi.whenMouseHoldSettledForTest();
+						await send('step'); await extensionApi.whenMouseHoldSettledForTest();
+						assert.strictEqual(activeTabPath(), wsUri(ordered[1]).path);
+						const before = names.map(name => extensionApi.getReviewDecorationBadge(wsUri(name)));
+						await switchAwayFromIsolatedTestWindow();
+						assert.strictEqual(git('diff --cached --name-only'), '', 'app switch cannot stage');
+						assert.deepStrictEqual(names.map(name => extensionApi.getReviewDecorationBadge(wsUri(name))), before,
+							'app switch cannot change pending membership');
+						await send('step'); await extensionApi.whenMouseHoldSettledForTest();
+						assert.strictEqual(activeTabPath(), wsUri(ordered[2]).path, 'background wheel previews the next file');
+						assert.strictEqual(vscode.window.state.focused, false, 'preview cannot raise the window');
+						await send('step', direction === 'next' ? 'previous' : 'next');
+						await extensionApi.whenMouseHoldSettledForTest();
+						assert.strictEqual(activeTabPath(), wsUri(ordered[1]).path);
+						assert.strictEqual(git('diff --cached --name-only'), '', 'wheel/backtracking cannot stage');
+						stopped = true; clearInterval(timer); await tail;
+						await send('finish'); await extensionApi.whenMouseHoldSettledForTest();
+						const expected = mode === 'changes' ? [ordered[0]] : ordered.slice(0, 2);
+						assert.strictEqual(git('diff --cached --name-only'), expected.sort().join('\n'));
+						assert.strictEqual(vscode.window.state.focused, false, 'release cannot raise the window');
+						await focusIsolatedTestWindow();
+						await extensionApi.whenStageTransactionsSettled();
+						await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+						assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the exact released batch');
+					} finally {
+						stopped = true; clearInterval(timer);
+						await send('abandon').catch(() => {});
+						await focusIsolatedTestWindow();
+					}
+				});
+			}
+		}
+	}
 
 	for (const source of ['corsair', 'razer'] as const) {
 		for (const direction of ['next', 'previous'] as const) {
