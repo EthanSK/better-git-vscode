@@ -5150,7 +5150,7 @@ const navigateWithMouseOrigin = (
         if (holdRequest) { mouseHoldRequests.set(source, holdRequest); } else { mouseHoldRequests.delete(source); }
     }
     return serializeChangeNavigation(async (check) => {
-        if (held && (initialTab !== vscode.window.tabGroups.activeTabGroup.activeTab || initialGroup !== vscode.window.tabGroups.activeTabGroup)) {
+        if (holdRequest?.backgroundView && (initialTab !== vscode.window.tabGroups.activeTabGroup.activeTab || initialGroup !== vscode.window.tabGroups.activeTabGroup)) {
             throw new NavigationSuperseded("physical hold origin changed before capture");
         }
         if (isMouseReviewSource(source)) {
@@ -5205,7 +5205,9 @@ const stageMouseNavigationOrigin = (args: unknown, held = false): Promise<void> 
     }
     return serializeChangeNavigation(baseCheck => runStageCommand(async () => {
         const check = mouseNavigationCheckpoint(baseCheck, request);
-        check();
+        // Captured physical release already owns its index transaction. Preserve the existing
+        // skip-initial-generation-check rule; only validate this new background window context here.
+        validateBackgroundMouseView(request);
         const heldSelection = request ? takeStageHoldSelectionRequest(source, request) : undefined;
         const origin = releasedOrigin ?? mouseNavigationOrigins.get(source);
         if (mouseNavigationOrigins.get(source)?.holdRequest === request) { mouseNavigationOrigins.delete(source); }
