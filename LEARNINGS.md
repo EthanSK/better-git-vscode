@@ -1,5 +1,13 @@
 # Learnings
 
+## 2026-10-29 — Source Control lookahead needs viewport access
+
+Ethan wants the current batch-review file moved near the top of the native Changes list when too few following rows remain visible, leaving roughly ten files below it. The installed workbench's SCM Auto Reveal calls `tree.reveal(resource)` without a relative position. The extension API exposes neither that built-in tree nor its viewport. The built-in `list.scrollUp` / `list.scrollDown` commands move only ten pixels on the last-focused list; they do not accept a resource or a row-at-top position. Do not approximate this by walking selection through other files or issuing blind scroll commands against a possibly focused Graph.
+
+Native inspection identifies the main list as AXOutline “Source Control Management”; visible resource descendants include full worktree paths in their descriptions. Match the exact resource, rather than assuming the SCM selection equals the Better Git preview: the isolated keyboard fixture had c.txt open and eyes-marked while the native row selection still pointed to a.txt. macOS Accessibility access must be checked in the responsible application context. Both the Mini's SSH probe and its Code-owned terminal probe reported no access; the MacBook's existing system permission record grants Code Accessibility. A Mini failure therefore does not justify asking for another MacBook grant.
+
+No scrolling implementation is qualified or installed from this investigation. Native test access remains pending at the Mini's desktop sign-in and Code Accessibility setup. The earlier keyboard fixture was used for intrusive terminal/permission probes, after which its pending review was cancelled; that resumed fixture is not a clean staging regression result. Preserve the previously qualified 1.2.139 behavior while completing a separate scrolling test.
+
 ## 2026-10-29 — Option-held Shift release alternates keyboard review modes
 
 Ethan corrected the keyboard contract after 1.2.138: hold Option, tap/release Shift to enter Review changes (eyes), then alternate eyes and Stage files (explosion) without an empty mode while holding. Preserve the same populated selection across mode changes. Releasing every relevant held modifier/navigation key commits once; Shift taps never commit. Eyes excludes the current endpoint, file mode includes it. Escape and app blur cancel. Option+Shift+Next/Previous retains immediate whole-file staging and its original physical repeat guard; that chord consumes its Shift tap, so its release cannot also change mode or commit an old batch. Mouse/wand transports and lifecycle remain unchanged.
