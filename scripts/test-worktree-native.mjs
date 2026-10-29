@@ -76,6 +76,7 @@ fs.writeFileSync(workspace, JSON.stringify({ folders: (testSingleRepository ? [r
     // The dedicated Mini uses Dvorak - QWERTY Cmd. Physical X is therefore the contributed Shift+Option+Q
     // binding while still reporting hardware key code 7 to the release monitor.
     'better-git-vscode.dvorakMode': testKeyboardRepeat,
+    'better-git-vscode.debugLogging': testKeyboardRepeat,
 } }));
 const profile = path.join(root, 'profile');
 fs.mkdirSync(path.join(profile, 'User'), { recursive: true });
@@ -675,70 +676,50 @@ try {
     await capture('hold-ready');
     await key('F15', 'F15', 126, 7);
     await until(() => request('state'), state => state.badge === '🔥🔥', 'hold release clears readiness');
-    // Shift + navigation now toggles keyboard eyes review. Exercise real OS key-state changes so the shared
-    // release monitor sees X held during auto-repeat (CDP cannot set CoreGraphics' global key state).
+    // Modifier-only review feeds the exact native state interpreter in this isolated host; renderer keys
+    // exercise the real legacy keybindings/navigation. OS input-posting permission is not required or claimed.
     if (testKeyboardRepeat) {
+        const sample = (option=false, shift=false, navigation=false, usedShift=false) =>
+            request('review-keys', {keys:{option,shift,navigation,usedShift}});
+        const tap = async () => {await sample(true,true); await sample(true);};
+        const baselineIndex = git(roots[1], 'diff', '--cached', '--name-only');
+        const withBatch = names => [...new Set([...baselineIndex.trim().split('\n'), ...names])].filter(Boolean).sort().join('\n')+'\n';
+        await request('plain', {repo:1, file:'a.txt'});
+        await sample(); await sample(true); await tap();
+        await until(() => request('state'), state => state.keyboardReviewActive && state.badge === '👀', 'Shift release enters eyes');
+        await capture('keyboard-eyes-entered');
+        await key('v', 'KeyV', 86, 1);
+        await until(() => request('state'), state => state.active.endsWith('/b.txt'), 'normal next reviews a');
+        await tap(); // files, same pending set
+        await key('v', 'KeyV', 86, 1);
+        await until(() => request('state'), state => state.active.endsWith('/c.txt'), 'file mode selects c');
+        await tap(); // eyes, no empty mode and no reset
+        assert.equal((await request('badge',{repo:1,file:'a.txt'})).value,'💥💥');
+        assert.equal((await request('badge',{repo:1,file:'b.txt'})).value,'💥💥');
+        assert.equal((await request('badge',{repo:1,file:'c.txt'})).value,'👀');
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), baselineIndex, 'mode taps never stage');
+        await capture('keyboard-mode-switch-preserves-batch');
         if (process.env.BGV_KEYBOARD_MANUAL_GATE) {
             const gate = process.env.BGV_KEYBOARD_MANUAL_GATE;
-            fs.writeFileSync(`${gate}.ready.json`, JSON.stringify({ root, state: await request('state') }));
-            await until(() => fs.existsSync(`${gate}.continue`), Boolean, 'manual keyboard review pass', 10 * 60_000);
+            fs.writeFileSync(`${gate}.ready.json`, JSON.stringify({root, evidence}));
+            await until(() => fs.existsSync(`${gate}.continue`), Boolean, 'manual mode/paint inspection', 10*60_000);
         }
-        const keyScript = path.join(root, 'keyboard-review-input.swift');
-        fs.writeFileSync(keyScript, `import Cocoa
-import CoreGraphics
-let down = CGEvent(keyboardEventSource: nil, virtualKey: 7, keyDown: true)!
-down.flags = [.maskAlternate, .maskShift]
-down.post(tap: .cghidEventTap)
-Thread.sleep(forTimeInterval: 0.2)
-for _ in 0..<25 {
-    let repeated = CGEvent(keyboardEventSource: nil, virtualKey: 7, keyDown: true)!
-    repeated.flags = [.maskAlternate, .maskShift]
-    repeated.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
-    repeated.post(tap: .cghidEventTap)
-    Thread.sleep(forTimeInterval: 0.01)
-}
-let up = CGEvent(keyboardEventSource: nil, virtualKey: 7, keyDown: false)!
-up.flags = []
-up.post(tap: .cghidEventTap)
-`);
-        const mayPostKeys = execFileSync('/usr/bin/swift', ['-e', 'import CoreGraphics; print(CGPreflightPostEventAccess())'], { encoding: 'utf8' }).trim() === 'true';
-        console.log(`KEYBOARD_INPUT_MODE=${mayPostKeys ? 'CoreGraphics, including held auto-repeat' : 'isolated renderer; OS input-posting permission unavailable, repeat safety unit-covered'}`);
-        const shiftedBurst = async () => {
-            assert.equal((await request('state')).focused, true, 'input requires the isolated Code window');
-            if (mayPostKeys) { execFileSync('/usr/bin/swift', [keyScript], { stdio: 'pipe' }); }
-            else { await key('q', 'KeyQ', 81, 9); }
-        };
-        const baselineIndex = git(roots[1], 'diff', '--cached', '--name-only');
-        await request('command', { command: 'workbench.action.focusActiveEditorGroup' });
-        await shiftedBurst();
-        await until(() => request('state'), state => state.keyboardReviewActive && state.badge === '👀', 'one keyboard toggle starts eyes review');
-        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), baselineIndex, 'starting and releasing the shortcut never stages');
-        await capture('keyboard-eyes-toggle-on');
-        for (let step = 0; step < 5; step++) {
-            const state = await request('command', { command: 'better-git-vscode.next-scm-change' });
-            if (state.active.endsWith('/b.txt')) { break; }
-        }
-        assert.ok((await request('state')).active.endsWith('/b.txt'), 'ordinary Next continues into the next file');
-        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), baselineIndex, 'review never stages before the second toggle');
-        await capture('keyboard-eyes-pending-batch');
-        await shiftedBurst();
-        await until(() => request('state'), state => !state.keyboardReviewActive, 'a fresh shifted press finishes once');
-        await until(() => git(roots[1], 'diff', '--cached', '--name-only'), value => /^a.txt$/m.test(value), 'reviewed file to stage');
-        assert.ok((await request('state')).active.endsWith('/b.txt'), 'current eyes file stays open');
-        assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['a.txt', ...baselineIndex.trim().split('\n')].sort());
-        await capture('keyboard-eyes-toggle-finished');
-        await shiftedBurst();
-        await until(() => request('state'), state => state.keyboardReviewActive, 'start another review for Escape cancellation');
-        await key('Escape', 'Escape', 27);
-        await until(() => request('state'), state => !state.keyboardReviewActive, 'Escape cancels keyboard review');
-        await key('F18', 'F18', 129);
-        await check(1, 'untagged-mouse-stage-after-keyboard', 'c.txt');
-    } else {
-        await key('F18', 'F18', 129);
-        await check(1, 'stage-and-next', 'b.txt');
-        assert.match(git(roots[1], 'diff', '--cached', '--name-only'), /^a.txt$/m);
-        await key('F18', 'F18', 129); await key('F18', 'F18', 129);
-        await check(1, 'rapid-stage-and-next', 'd.txt');
+        await sample(false,true,true); await sample(false,false,true);
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), baselineIndex, 'wait for final held key');
+        await sample();
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), withBatch(['a.txt','b.txt']), JSON.stringify(await request('state')));
+        assert.ok((await request('state')).active.endsWith('/c.txt'));
+        await capture('keyboard-release-stages-reviewed-only');
+        await request('command', {command:'better-git-vscode.undo-last-stage-and-advance'});
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), baselineIndex);
+        await sample(true); await tap(); await key('Escape', 'Escape', 27);
+        await sample(); assert.equal(git(roots[1], 'diff', '--cached', '--name-only'),baselineIndex);
+        await request('plain', {repo:1,file:'c.txt'});
+        await key('q', 'KeyQ', 81, 9); // real shipped Dvorak Shift+Option+X mapping
+        await until(() => request('state'), state=>state.active.endsWith('/d.txt'),'legacy shifted next still advances');
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), withBatch(['c.txt']));
+        assert.equal((await request('state')).keyboardReviewActive,false);
+        console.log('BETTER_GIT_KEYBOARD_CYCLE_VERIFIED modifier-state=isolated-input legacy-shortcut=renderer modes=eyes-files-eyes batch=preserved release=one-stage current-eyes=excluded undo=exact');
     }
     if (!testKeyboardRepeat) {
         for (const file of ['c.txt', 'b.txt', 'a.txt']) { await key('F16', 'F16', 127); await check(1, `undo-to-${file}`, file); }
@@ -792,7 +773,7 @@ up.post(tap: .cghidEventTap)
         assert.deepEqual(git(roots[2], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged.txt']);
     }
     if (testKeyboardRepeat) {
-        console.log('BETTER_GIT_KEYBOARD_REVIEW_VERIFIED toggle-on=unstaged toggle-off=reviewed-batch current-preview=retained escape=cancel untagged-F18=unchanged');
+        console.log('BETTER_GIT_KEYBOARD_LEGACY_AND_RELEASE_VERIFIED');
     }
     }
     if (!testNoUnstaged && !testMergeLink && !testSingleRepository) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {

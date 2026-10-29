@@ -1,9 +1,11 @@
 // KEYBOARD REVIEW — Ethan's keyboard "eyes mode" (review changes).
 //
-// The old keyboard Shift + Next/Previous stages the whole current file straight away. Keyboard review instead
+// Keyboard Option+Shift+Next/Previous still stages the whole current file straight away. Modifier-only
+// Option-held Shift taps enter Review changes (eyes), then alternate with Stage files (explosion).
+// Final gesture-key release stages once. The shared review machinery instead
 // builds the same pending staging set that a held mouse button or the Magic Wand builds in eyes
 // mode: Next/Previous review hunks, crossing into another file adds the reviewed file being left, moving back
-// removes it again, and the file still being viewed stays unstaged when the review is finished. Nothing
+// removes it again. Eyes mode leaves the file still being viewed unstaged; file mode includes it. Nothing
 // reaches the Git index until an explicit finish, which runs the existing exact batch transaction and Undo.
 //
 // extension.ts implements this as one more review-hold source ("keyboard") on the existing hold machinery, so

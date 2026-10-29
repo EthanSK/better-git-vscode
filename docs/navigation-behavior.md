@@ -57,3 +57,11 @@ The isolated real VS Code Extension Development Host suite covers navigation sce
 The nearby-run regressions first prove native backward recentering, then require monotonic rapid Next and Previous. Separate cases preserve deleted-only stops, trim-whitespace settings, and unsaved changes. Run the optional real-keyboard acceptance harness with `BGV_UI_SMOKE=1 BGV_UI_SCROLL=1`: it waits for three Next and two Previous inputs and verifies both the exact caret sequence and viewport events without invoking the navigation commands itself.
 
 The detailed incident evidence remains in [`LEARNINGS.md`](../LEARNINGS.md), and the user-facing release history is in [`CHANGELOG.md`](../CHANGELOG.md).
+
+## Keyboard pending batch (macOS)
+
+Hold Option and tap/release Shift to enter Review changes (eyes). Keep Option held and use normal Next/Previous to review hunks. Crossing a file boundary adds the file being left; the current preview stays unstaged. Further Shift taps alternate Review changes and Stage files (explosion), preserving the same populated set. File mode moves the endpoint by whole files. Reverse navigation removes departing files in either mode.
+
+Only releasing every relevant Option/Shift/navigation key commits the pending set once. Eyes excludes its current endpoint; Stage files includes it. Escape restores the starting view without staging, and app blur cancels safely. Each fresh gesture starts in eyes mode; mode changes never stage, reset the selection or cycle through an empty state.
+
+Existing Option+Shift+Next/Previous bindings still stage the current whole file and advance immediately, once per physical key hold. A navigation key or another keydown during the Shift chord disqualifies the modifier tap, so its release does not also toggle. Mouse/wand lifecycles are independent. The modifier observer is macOS-only, read-only, focused-window scoped and disposed on blur; no additional permission prompt or command debounce is required.

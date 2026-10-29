@@ -28,6 +28,8 @@ import {
 } from "./mouseStageSelection";
 import { MouseHoldChordState, registerMouseShortRelease, resolveAdjacentMouseChord } from "./mouseHoldChord";
 import { KeyboardStageRepeatGuard, parseKeyboardStageArgs } from "./keyboardStageRepeatGuard";
+import { KeyboardReviewGesture, KeyboardReviewMode, ReviewKeyState } from "./keyboardReviewGesture";
+import { MacReviewKeyMonitor } from "./macReviewKeyMonitor";
 import {
     decideKeyboardReviewBegin,
     decideKeyboardReviewStep,
@@ -153,6 +155,8 @@ type MouseHoldRequest = MouseHoldChordState & {
     wandReviewMode?: "changes" | "files";
     // The direction a keyboard review began with; its finish uses the same exact release checks as a mouse.
     keyboardReviewDirection?: "next" | "previous";
+    keyboardReviewMode?: KeyboardReviewMode;
+    keyboardExcludePreview?: boolean;
 };
 type ActiveMouseStageSelection = MouseStageSelection<FileChange> & { request?: MouseHoldRequest };
 type MouseReviewView = {
@@ -741,6 +745,9 @@ interface BetterGitExtensionApi {
     clearMouseDebugTrace(): void;
     // The last value published to the `better-git-vscode.keyboardReviewActive` context key.
     isKeyboardReviewActive(): boolean;
+    // Isolated Extension Development Hosts only: feed the same physical state interpreter without OS injection.
+    sampleKeyboardReviewKeys?(state: ReviewKeyState): void;
+    whenKeyboardGestureSettled?(): Promise<void>;
 }
 
 // The only automatic behavior still available is a double opt-in, one-shot collapse-all. The master
@@ -1006,11 +1013,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         keyReleaseMonitor.dispose();
     });
 
-    // Tagged Shift shortcuts toggle Ethan's keyboard eyes mode; untagged mouse/palette/button commands keep
-    // immediate Stage + Next/Previous. The existing physical repeat guard admits one toggle per key hold.
+    // Legacy shifted navigation always stages immediately. It consumes the modifier-only Shift tap so
+    // releasing Shift cannot also cycle modes; the existing guard still admits one stage per physical hold.
     let disposable6 = vscode.commands.registerCommand("better-git-vscode.stage-and-next-changed-file", async (args?: unknown) => {
+        if (parseKeyboardStageArgs(args)) { keyboardGesture.consumeStageShortcut(); }
         if (!admitStageAndAdvancePress(args)) { return; }
-        if (parseKeyboardStageArgs(args)) { return toggleKeyboardReview("next"); }
         clearStageHoldFeedback();
         lastNavDirection = "next";
         await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("next", undefined, check)), false, "stage-next");
@@ -1019,8 +1026,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // Mirror of disposable6 for reverse-order (bottom-to-top) review: stage the current file, then jump to the
     // PREVIOUS unstaged file instead of the next. Bound to "shift + previous" so it parallels "shift + next".
     let disposable7 = vscode.commands.registerCommand("better-git-vscode.stage-and-previous-changed-file", async (args?: unknown) => {
+        if (parseKeyboardStageArgs(args)) { keyboardGesture.consumeStageShortcut(); }
         if (!admitStageAndAdvancePress(args)) { return; }
-        if (parseKeyboardStageArgs(args)) { return toggleKeyboardReview("previous"); }
         clearStageHoldFeedback();
         lastNavDirection = "previous";
         await serializeChangeNavigation(check => runStageCommand(() => stageCurrentFileAndAdvance("previous", undefined, check)), false, "stage-previous");
@@ -1642,8 +1649,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     };
     prepareStageHoldReleaseRequest = (source, request) => {
         // Capture mode before feedback clears; queued ratchets still determine the final endpoint.
-        // Keyboard review is always eyes mode, so its finish always leaves the viewed file unstaged.
-        request.excludePreviewOnRelease = request.wandReviewMode === "changes" || source === "keyboard"
+        // Keyboard mode captures its current eyes/file inclusion policy before the release clears feedback.
+        request.excludePreviewOnRelease = request.wandReviewMode === "changes" || (source === "keyboard" && request.keyboardExcludePreview !== false)
             || (stagePreviewMode?.source === source && stagePreviewMode.request === request);
         const selection = stageHoldSelections.get(source);
         if (selection?.request === request) { releasedStageSelections.set(request, selection); }
@@ -1943,11 +1950,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // Begin captures the current review file in place and enters eyes mode. Step reviews changes like the eyes
     // wheel: within a file it only moves, and at a file boundary it adds the file being left to the pending
     // selection (moving back removes it). Finish stages that selection once through the same exact batch
-    // transaction and Undo as a mouse release, leaving the file still being viewed unstaged. Cancel discards the
+    // transaction and Undo as a mouse release, excluding the current eyes preview. Cancel discards the
     // selection and restores the starting view. Nothing touches the index before finish.
     //
-    // Ethan's Shift + Next/Previous shortcuts toggle this session: release Shift without finishing; press the
-    // shifted shortcut again to finish. Untagged Stage + Next/Previous keeps its immediate whole-file behavior.
+    // Ethan holds Option and taps/releases Shift to enter eyes (Review changes), then alternate eyes
+    // and explosion (Stage files). Only releasing every gesture key finishes. Shift+Option+Next/Previous
+    // remains immediate staging and consumes its Shift tap. Mouse and wand lifecycles are unchanged.
     const keyboardReviewContext = new KeyboardReviewContext(active => {
         void Promise.resolve(vscode.commands.executeCommand("setContext", KEYBOARD_REVIEW_CONTEXT_KEY, active))
             .catch(error => debugLog("keyboard-review", `Could not publish keyboard review state: ${String(error)}`));
@@ -1966,7 +1974,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         // Like a release-only mouse hold, Begin captures the exact review file and view without moving.
         const begun = navigateWithMouseOrigin(direction, "keyboard", true, false);
         const request = mouseHoldRequests.get("keyboard");
-        if (request) { request.keyboardReviewDirection = direction; }
+        if (request) {
+            request.keyboardReviewDirection = direction;
+            request.keyboardReviewMode = "changes";
+            request.keyboardExcludePreview = true;
+        }
         const ready = markStageHoldReady("keyboard");
         setStagePreviewModeRequest("keyboard", true);
         syncKeyboardReviewContext();
@@ -1990,6 +2002,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             return navigateWithMouseOrigin(direction, undefined);
         }
         const request = holds.keyboard;
+        if (request?.keyboardReviewMode === "files") {
+            return adjustStageHoldSelectionRequest("keyboard", direction === "next" ? "down" : "up");
+        }
         return navigateStageHoldPreviewRequest("keyboard", direction, async check => {
             // The review ended, or never established its selection, after this press was admitted.
             if (retireKeyboardReviewRequest("its pending selection was no longer available", request)) {
@@ -2009,13 +2024,52 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         return stageReviewHoldOrigin("keyboard", request.keyboardReviewDirection ?? lastNavDirection, true);
     };
     const cancelKeyboardReview = (): Promise<void> => {
+        keyboardGesture.cancel();
         const cancelled = cancelMouseNavigationHold("keyboard");
         if (!cancelled) { mouseDebug("Keyboard review cancel ignored, no keyboard review is in progress."); }
         syncKeyboardReviewContext();
         return cancelled ?? Promise.resolve();
     };
-    const toggleKeyboardReview = (direction: "next" | "previous"): Promise<void> =>
-        liveKeyboardReview(keyboardReviewHolds()) ? finishKeyboardReview() : beginKeyboardReview(direction);
+    const setKeyboardReviewMode = (mode: KeyboardReviewMode, direction = lastNavDirection): Promise<void> => {
+        let request = liveKeyboardReview(keyboardReviewHolds());
+        let begun: Promise<void> = Promise.resolve();
+        if (!request) {
+            if (mode === "normal") { return Promise.resolve(); }
+            begun = beginKeyboardReview(direction);
+            request = liveKeyboardReview(keyboardReviewHolds());
+            if (!request) { return begun; }
+            // Begin admits synchronously; mode intent is set before queued selection/navigation can run.
+        }
+        request.keyboardReviewMode = mode;
+        if (mode !== "normal") { request.keyboardExcludePreview = mode === "changes"; }
+        setStagePreviewModeRequest("keyboard", mode === "changes");
+        reviewDecoEmitter.fire(selectionUris(stageHoldSelections.get("keyboard")));
+        mouseDebug(`Keyboard review mode: ${mode}.`);
+        return begun;
+    };
+    const toggleKeyboardReview = (direction: "next" | "previous"): Promise<void> => {
+        const request = liveKeyboardReview(keyboardReviewHolds());
+        const mode = request?.keyboardReviewMode ?? "normal";
+        return setKeyboardReviewMode(mode === "changes" ? "files" : "changes", direction);
+    };
+    let keyboardGestureWork: Promise<void> = Promise.resolve();
+    const trackKeyboardGesture = (work: Promise<void>): void => {
+        keyboardGestureWork = work;
+        void work.catch(error => debugLog("keyboard-review", String(error)));
+    };
+    const keyboardGesture = new KeyboardReviewGesture(
+        mode => trackKeyboardGesture(setKeyboardReviewMode(mode)),
+        () => trackKeyboardGesture(finishKeyboardReview())
+    );
+    const keyboardKeyMonitor = new MacReviewKeyMonitor(
+        state => keyboardGesture.sample(state),
+        () => {
+            keyboardGesture.reset();
+            if (liveKeyboardReview(keyboardReviewHolds())) { void cancelKeyboardReview(); }
+        },
+        message => debugLog("keyboard-review", message)
+    );
+    keyboardKeyMonitor.focus(vscode.window.state.focused);
     const keyboardReviewCommands = [
         vscode.commands.registerCommand("better-git-vscode.toggle-keyboard-review", (args?: unknown) => {
             const direction = args === undefined ? lastNavDirection : parseKeyboardReviewDirection(args);
@@ -2034,7 +2088,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         vscode.commands.registerCommand("better-git-vscode.finish-keyboard-review", () => finishKeyboardReview()),
         vscode.commands.registerCommand("better-git-vscode.cancel-keyboard-review", () => cancelKeyboardReview()),
-        new vscode.Disposable(() => { publishKeyboardReviewContext = () => undefined; }),
+        new vscode.Disposable(() => { keyboardKeyMonitor.dispose(); publishKeyboardReviewContext = () => undefined; }),
     ];
     const reviewDecorationProvider: vscode.FileDecorationProvider = {
         onDidChangeFileDecorations: reviewDecoEmitter.event,
@@ -2056,7 +2110,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 const count = selectedMouseStageItems(activeSelection, !!stagePreviewMode && stagePreviewMode.request === activeSelection.request).length;
                 return {
                     badge: "💥💥",
-                    // Mouse release/scroll instructions do not apply to the keyboard's persistent toggle.
+                    // Mouse scroll instructions do not apply to the keyboard modifier gesture.
                     tooltip: activeSelection.request === mouseHoldRequests.get("keyboard") ? undefined : count === 1
                         ? "Release to stage. Scroll to select more files."
                         : `Release to stage ${count} files. Scroll to change the selection.`,
@@ -2385,6 +2439,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         stageHoldPreviewNavigationCommand, stagePreviewModeCommand,
         ...keyboardReviewCommands,
         vscode.window.onDidChangeWindowState(state => {
+            keyboardKeyMonitor.focus(state.focused);
             if (!state.focused) { void stageHeldSelectionOnFocusLoss(); }
         }),
         openIndexInSystemBrowserCommand,
@@ -2478,6 +2533,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         getMouseDebugTrace: () => [...mouseDebugTrace],
         clearMouseDebugTrace: () => { mouseDebugTrace.length = 0; },
         isKeyboardReviewActive: () => keyboardReviewContext.active,
+        ...(context.extensionMode === vscode.ExtensionMode.Development || context.extensionMode === vscode.ExtensionMode.Test
+            ? { sampleKeyboardReviewKeys: (state: ReviewKeyState) => keyboardGesture.sample(state),
+                whenKeyboardGestureSettled: () => keyboardGestureWork } : {}),
     };
 }
 

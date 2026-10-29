@@ -42,7 +42,7 @@ exports.run = async () => {
  let previous=0, busy=false;
  let watchedTabs=[];
  let tabWatch;
- const state=()=>({ repositories:git.repositories.map(repo=>({root:repo.rootUri.fsPath,selected:repo.ui.selected})), keyboardReviewActive:api.isKeyboardReviewActive?.() ?? false, mergeEditor: Boolean(vscode.window.tabGroups.activeTabGroup.activeTab?.input?.result), focused:vscode.window.state.focused, badge:api.getCurrentReviewUri() ? api.getReviewDecorationBadge(vscode.Uri.parse(api.getCurrentReviewUri())) : undefined, trace:api.getScmTreeCommandTrace(), active:String(vscode.window.activeTextEditor?.document.uri), tabs:vscode.window.tabGroups.activeTabGroup.tabs.map(t=>({label:t.label,active:t.isActive})) });
+ const state=()=>({ repositories:git.repositories.map(repo=>({root:repo.rootUri.fsPath,selected:repo.ui.selected})), keyboardReviewActive:api.isKeyboardReviewActive?.() ?? false, mouseTrace:api.getMouseDebugTrace(), mergeEditor: Boolean(vscode.window.tabGroups.activeTabGroup.activeTab?.input?.result), focused:vscode.window.state.focused, badge:api.getCurrentReviewUri() ? api.getReviewDecorationBadge(vscode.Uri.parse(api.getCurrentReviewUri())) : undefined, trace:api.getScmTreeCommandTrace(), active:String(vscode.window.activeTextEditor?.document.uri), tabs:vscode.window.tabGroups.activeTabGroup.tabs.map(t=>({label:t.label,active:t.isActive})) });
  fs.writeFileSync(path.join(root,'ready.json'),JSON.stringify({ roots, version:vscode.version, ...state() }));
  await new Promise(resolve=> {
   const timer=setInterval(async()=> {
@@ -57,6 +57,7 @@ exports.run = async () => {
      tabWatch=vscode.window.tabGroups.onDidChangeTabs(()=>{const input=vscode.window.tabGroups.activeTabGroup.activeTab?.input; watchedTabs.push(String(input?.modified??input?.uri));});
     }
     else if(request.action==='watched-tabs') {tabWatch?.dispose(); value=watchedTabs;}
+    else if(request.action==='review-keys') {api.sampleKeyboardReviewKeys(request.keys); await api.whenKeyboardGestureSettled();}
     else if(request.action==='badge') value=api.getReviewDecorationBadge(vscode.Uri.file(path.join(roots[request.repo],request.file)));
     else if(request.action==='open') value=await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control',vscode.Uri.file(roots[request.repo]));
     else if(request.action==='plain') value=await vscode.commands.executeCommand('vscode.open',vscode.Uri.file(path.join(roots[request.repo],request.file??'a.txt')), {preview:request.preview??true});

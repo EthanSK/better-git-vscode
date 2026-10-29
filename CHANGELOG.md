@@ -1,5 +1,12 @@
 # Change Log
 
+## 1.2.139
+
+- Enter keyboard Review changes by holding Option and tapping/releasing Shift. Further Shift taps alternate Review changes and Stage files while preserving the same pending batch.
+- Stage the batch once when all gesture keys are released; eyes review leaves the current preview unstaged. Escape and app blur cancel safely.
+- Restore immediate whole-file staging for existing Option + Shift + Next/Previous shortcuts, without also toggling modes on Shift release. Preserve held-key repeat protection and mouse/wand behavior.
+- Supersede the 1.2.138 persistent shifted-navigation toggle; document both the new modifier-only gesture and the legacy shortcuts.
+
 ## 1.2.138
 
 - Toggle pending keyboard eyes review with Shift + Next/Previous instead of immediately staging the whole file. Use ordinary Next/Previous to review hunks and collect reviewed files, then toggle again to stage the batch while leaving the current preview unstaged.

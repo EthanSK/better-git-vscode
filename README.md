@@ -28,13 +28,17 @@ One key flies to the next or previous change. At the end of a file, it continues
 
 `Option+.` next · `Option+,` previous — literally the `>` / `<` keys, pointing the way.
 
-### 2. Toggle keyboard review with Shift
+### 2. Build a review batch with Option + Shift
 
-Press **Shift + your Next/Previous shortcut** to start eyes review. Release Shift and use normal Next/Previous to review hunks. Crossing a file boundary adds the reviewed file to the pending set; going back removes it. Git stays unchanged while you browse.
+On **macOS**, hold **Option**, tap **Shift**, then release **Shift while keeping Option held** to enter **👀 Review changes**. Use your normal Next/Previous shortcuts to review hunks. Only crossing into another file adds the reviewed file being left; going back removes it. The current eyes file is a preview and stays out of the staged batch.
 
-Press the shifted shortcut again to stage the batch. The current 👀 file stays unstaged and open, just like wand review. **Escape** cancels and restores the starting view. One Undo restores the whole staged batch.
+While still holding Option, tap/release Shift again to switch to **💥 Stage files**. Next/Previous now moves by whole file and adjusts the same pending set. Further Shift taps alternate **Review changes ↔ Stage files**; they never return to an empty mode during a held gesture. Switch midway through a populated set without losing it or staging early. Git stays unchanged while you browse.
 
-Each physical shifted key press toggles once; holding the key cannot repeatedly start and finish review. Dvorak and both navigation-hand settings use the same behavior. Mouse F18/F19, the editor `+` button and untagged Stage + Next/Previous commands keep their immediate staging behavior.
+**Release Option and any still-held Shift/navigation keys to stage the set once.** Eyes mode excludes the current preview; Stage files includes its selected file. Shift release alone changes modes, never stages. **Escape** cancels and restores the starting view; leaving the VS Code window cancels safely. One Undo restores the entire staged batch. The next Option-held Shift tap starts a fresh gesture in eyes mode.
+
+**The existing Option + Shift + Next/Previous shortcuts still stage the current whole file and advance immediately.** Using a navigation key during the Shift chord consumes that tap, so releasing Shift does not also change modes. Held-key repeat protection remains. Dvorak and both navigation-hand settings use the same physical-key behavior. Mouse/wand controls, F18/F19, the editor `+` button and untagged commands keep their existing behavior.
+
+The modifier-only gesture uses a focused-window macOS key-state observer; it asks for no new permissions and stops when the window loses focus. Windows/Linux retain their existing stage-and-advance shortcuts. No keyboard, mouse or wand debounce is added.
 
 ### 3. Fix something without losing your place
 
@@ -139,8 +143,10 @@ All bindings ship as defaults and are fully overridable (see below).
 | **Previous change** | `Alt+,` | `Alt+,` |
 | Next changed file | `Cmd+Alt+.` | `Ctrl+Alt+.` |
 | Previous changed file | `Cmd+Alt+,` | `Ctrl+Alt+,` |
-| Toggle keyboard review, starting forward | `Shift+Alt+.` | `Shift+Alt+.` |
-| Toggle keyboard review, starting backward | `Shift+Alt+,` | `Shift+Alt+,` |
+| Stage current file + next | `Shift+Alt+.` | `Shift+Alt+.` |
+| Stage current file + previous | `Shift+Alt+,` | `Shift+Alt+,` |
+| Enter / switch review mode | Hold Option, tap/release Shift | macOS modifier gesture |
+| Stage pending keyboard batch | Release all gesture keys | — |
 | Cancel keyboard review | `Escape` | `Escape` |
 | Undo latest stage while Source Control Changes has focus | `Cmd+Z` | `Ctrl+Z` |
 | Revert selected change and save | `Alt+Q`* | `Alt+Q`* |
@@ -176,7 +182,7 @@ next change — in whatever direction you last navigated. Jump forward through c
 and the `+` advances forward; jump backward (`<` / `Alt+,`) and it advances backward. So you can run
 the whole review-and-stage flow with the mouse alone — click `+` to stage-and-jump instead of
 clicking `+` then reaching for the keyboard. It uses the immediate Stage + Next/Previous command;
-the shifted keyboard shortcuts now toggle pending review instead. A
+shifted navigation shortcuts retain immediate staging; the modifier-only gesture above collects a pending set instead. A
 fresh session with no navigation yet defaults to advancing *forward*. The plain, no-advance
 `Stage current file` command is still registered if you'd rather bind that to a key.
 
