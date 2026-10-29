@@ -124,6 +124,7 @@ suite('SCM change navigation E2E', () => {
 		getCurrentHunkOverviewMarker(): { uri: string; start: number; end: number } | undefined;
 		getMouseDebugTrace(): string[];
 		clearMouseDebugTrace(): void;
+		isKeyboardReviewActive(): boolean;
 	};
 	let baseSha: string; // the base commit every test resets to
 	let previousMouseHoldNavigateOnButtonDown: boolean | undefined;
@@ -4911,5 +4912,396 @@ suite('SCM change navigation E2E', () => {
 		// hunk starts at 0-based line 9 — a 5-line step would land on line 5
 		const after = await expectCursorAt('aa_dual.txt', 9);
 		assert.notStrictEqual(after.selection.active.line, 5, 'dual-state file got the 5-line step — the stage-then-edit hijack is back');
+	});
+
+	// ── Keyboard review: Ethan's keyboard eyes mode ──────────────────────────────────────────────
+	// The binding-neutral commands build the same pending selection as the held mouse/wand eyes wheel. Run these
+	// on the Mini with BGV_TEST_GREP='keyboard review'. They never use the old immediate Shift shortcuts' bindings.
+	const keyboardReview = {
+		begin: (direction: 'next' | 'previous') => vscode.commands.executeCommand('better-git-vscode.begin-keyboard-review', direction),
+		step: (direction: 'next' | 'previous') => vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', direction),
+		finish: () => vscode.commands.executeCommand('better-git-vscode.finish-keyboard-review'),
+		cancel: () => vscode.commands.executeCommand('better-git-vscode.cancel-keyboard-review'),
+	};
+	const badge = (rel: string) => extensionApi.getReviewDecorationBadge(wsUri(rel));
+
+	for (const direction of ['next', 'previous'] as const) {
+		test(`keyboard review shifted ${direction} shortcut starts a persistent toggle and finishes the reviewed batch`, async () => {
+			const names = ['kb_toggle_a.txt', 'kb_toggle_b.txt', 'kb_toggle_c.txt'];
+			for (const name of names) { write(name, name); }
+			await refreshUntil(() => names.every(isUntracked), 'keyboard toggle files');
+			const start = direction === 'next' ? 0 : 2;
+			await openPlainAt(names[start], 0);
+			await focusIsolatedTestWindow();
+			const command = `better-git-vscode.stage-and-${direction}-changed-file`;
+			try {
+				await vscode.commands.executeCommand(command, { source: 'keyboard', physicalKey: direction === 'next' ? 'x' : 'z' });
+				assert.strictEqual(extensionApi.isKeyboardReviewActive(), true, 'the tagged Shift shortcut starts review');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'the first toggle never stages');
+				assert.strictEqual(activeTabPath(), wsUri(names[start]).path, 'starting review does not skip the current file');
+				await (direction === 'next' ? nextChange() : previousChange());
+				assert.strictEqual(extensionApi.isKeyboardReviewActive(), true, 'ordinary navigation after Shift release keeps review active');
+				await vscode.commands.executeCommand('better-git-vscode.toggle-keyboard-review', direction);
+				assert.strictEqual(extensionApi.isKeyboardReviewActive(), false);
+				assert.strictEqual(git('diff --cached --name-only'), names[start], 'the next toggle stages only reviewed files');
+				await extensionApi.whenStageTransactionsSettled();
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the whole batch');
+			} finally { await keyboardReview.cancel(); }
+		});
+	}
+
+	for (const direction of ['next', 'previous'] as const) {
+		test(`keyboard review ${direction} marks reviewed files, stages once on finish and one Undo restores them`, async () => {
+			const names = ['kb_a.txt', 'kb_b.txt', 'kb_c.txt', 'kb_d.txt', 'kb_e.txt'];
+			for (const name of names) { write(name, name); }
+			await refreshUntil(() => names.every(isUntracked), 'keyboard review files');
+			const step = direction === 'next' ? 1 : -1;
+			const reverse = direction === 'next' ? 'previous' : 'next';
+			const start = direction === 'next' ? 1 : 3;
+			const editor = await openPlainAt(names[start], 0);
+			await focusIsolatedTestWindow();
+			const selection = editor.selection;
+			try {
+				await keyboardReview.begin(direction);
+				assert.strictEqual(activeTabPath(), wsUri(names[start]).path, 'begin reviews the current file in place');
+				assert.deepStrictEqual(editor.selection, selection, 'begin leaves the cursor still');
+				assert.strictEqual(badge(names[start]), '👀');
+				assert.strictEqual(extensionApi.isKeyboardReviewActive(), true);
+				for (const offset of [1, 2]) {
+					await keyboardReview.step(direction);
+					await expectActiveTab(names[start + offset * step]);
+					assert.strictEqual(git('diff --cached --name-only'), '', 'review steps never stage');
+				}
+				assert.strictEqual(badge(names[start]), '💥💥');
+				assert.strictEqual(badge(names[start + step]), '💥💥');
+				assert.strictEqual(badge(names[start + 2 * step]), '👀');
+				await keyboardReview.step(reverse);
+				await expectActiveTab(names[start + step]);
+				assert.notStrictEqual(badge(names[start + 2 * step]), '💥💥', 'moving back removes the file being left');
+				assert.strictEqual(badge(names[start + step]), '👀');
+				const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+				await keyboardReview.finish();
+				assert.strictEqual(git('diff --cached --name-only'), names[start], 'finish stages the reviewed file, not the viewed one');
+				assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'finish keeps the viewed file open');
+				assert.strictEqual(extensionApi.isKeyboardReviewActive(), false);
+				await keyboardReview.finish();
+				assert.strictEqual(git('diff --cached --name-only'), names[start], 'a repeated finish is inert');
+				await extensionApi.whenStageTransactionsSettled();
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the batch');
+				assert.strictEqual(activeTabPath(), wsUri(names[start]).path, 'Undo returns to the reviewed starting view');
+			} finally {
+				await keyboardReview.cancel();
+			}
+		});
+	}
+
+	test('keyboard review continues through ordinary Next/Previous instead of discarding the selection', async () => {
+		const names = ['kb_plain_a.txt', 'kb_plain_b.txt', 'kb_plain_c.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => names.every(isUntracked), 'keyboard plain-navigation files');
+		await openPlainAt(names[0], 0);
+		await focusIsolatedTestWindow();
+		try {
+			await keyboardReview.begin('next');
+			await nextChange();
+			await expectActiveTab(names[1]);
+			await nextChange();
+			await expectActiveTab(names[2]);
+			assert.strictEqual(extensionApi.isKeyboardReviewActive(), true, 'ordinary Next stays inside the review');
+			assert.strictEqual(badge(names[0]), '💥💥');
+			assert.strictEqual(badge(names[1]), '💥💥');
+			assert.strictEqual(badge(names[2]), '👀');
+			await previousChange();
+			await expectActiveTab(names[1]);
+			assert.notStrictEqual(badge(names[2]), '💥💥', 'ordinary Previous removes the file being left');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+			await keyboardReview.finish();
+			assert.strictEqual(git('diff --cached --name-only'), names[0]);
+		} finally {
+			await keyboardReview.cancel();
+		}
+	});
+
+	test('keyboard review hunk steps stay in the file and only crossing the boundary marks it', async () => {
+		const a = lines(40, 'mod_a').split('\n');
+		a[4] = 'mod_a first hunk EDITED';
+		a[24] = 'mod_a second hunk EDITED';
+		write('committed/mod_a.txt', a.join('\n') + '\n');
+		// Keep both peers in the same SCM folder/status group: root untracked files sort before this folder.
+		write('committed/mod_d.txt', lines(10, 'mod_d').replace('mod_d line 3', 'mod_d changed') + '\n');
+		await refreshUntil(() => inWorkingTree('committed/mod_a.txt', 5) && inWorkingTree('committed/mod_d.txt', 5),
+			'modified file and peer for keyboard hunk review');
+		await openWorkingDiffAt('committed/mod_a.txt', 0);
+		await focusIsolatedTestWindow();
+		try {
+			await keyboardReview.begin('next');
+			assert.strictEqual(badge('committed/mod_a.txt'), '👀');
+			await keyboardReview.step('next');
+			assert.strictEqual(activeTabPath(), wsUri('committed/mod_a.txt').path, 'the first step reviews a hunk in place');
+			assert.strictEqual(badge('committed/mod_a.txt'), '👀', 'in-file movement does not change the selection');
+			// Viewport anchoring may first select a visible hunk without scrolling; require bounded progress.
+			for (let n = 0; n < 6 && activeTabPath() === wsUri('committed/mod_a.txt').path; n++) {
+				await keyboardReview.step('next');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'hunk steps never stage');
+			}
+			await expectActiveTab('committed/mod_d.txt');
+			assert.strictEqual(badge('committed/mod_a.txt'), '💥💥', 'crossing the boundary marks the reviewed file');
+			await keyboardReview.finish();
+			assert.strictEqual(git('diff --cached --name-only'), 'committed/mod_a.txt');
+			await extensionApi.whenStageTransactionsSettled();
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+		} finally {
+			await keyboardReview.cancel();
+		}
+	});
+
+	for (const direction of ['next', 'previous'] as const) {
+		test(`keyboard review ${direction} starts on a deleted image and stages it with one exact Undo`, async () => {
+			const rel = 'committed/image.png';
+			const uri = wsUri(rel);
+			fs.rmSync(uri.fsPath);
+			const peer = direction === 'next' ? 'committed/zz_image_peer.txt' : 'committed/aaa_image_peer.txt';
+			write(peer, 'peer review');
+			await refreshUntil(() => inWorkingTree(rel, 6) && isUntracked(peer), 'deleted image keyboard fixture');
+			const indexBefore = git('write-tree');
+			try {
+				// A deleted image opens as a non-text review: the begin path resolves it from the tab, not an editor.
+				await vscode.commands.executeCommand('git.openChange', uri);
+				await poll(() => extensionApi.getCurrentReviewUri() === uri.toString(), 'image review URI');
+				await sleep(300); // Allow the native media preview to finish rendering.
+				await focusIsolatedTestWindow();
+				const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+				await keyboardReview.begin(direction);
+				assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '👀',
+					`deleted image must enter keyboard review: ${extensionApi.getMouseDebugTrace().join(' | ')}`);
+				assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'begin keeps the image preview');
+				assert.strictEqual(git('write-tree'), indexBefore, 'begin must not stage');
+				await keyboardReview.step(direction);
+				await expectActiveTab(peer);
+				assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '💥💥', 'reviewed image is marked');
+				assert.strictEqual(badge(peer), '👀', 'peer remains under review');
+				await keyboardReview.finish();
+				await extensionApi.whenStageTransactionsSettled();
+				assert.strictEqual(git(`ls-files -- ${rel}`), '', 'finish stages the deletion');
+				assert.ok(!git('diff --cached --name-only').split('\n').includes(peer), 'the viewed peer stays unstaged');
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				await extensionApi.whenStageTransactionsSettled();
+				assert.strictEqual(git('write-tree'), indexBefore, 'one Undo restores the exact pre-review index');
+				assert.ok(!fs.existsSync(uri.fsPath), 'Undo never recreates the working image');
+			} finally {
+				await keyboardReview.cancel();
+				await sleep(300); // Undo reopens the asynchronous native media preview.
+				await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			}
+		});
+	}
+
+	test('keyboard review never takes over a mouse hold, and a later mouse hold ends it unstaged', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		const names = ['kb_iso_a.txt', 'kb_iso_b.txt', 'kb_iso_c.txt', 'kb_iso_d.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => names.every(isUntracked), 'keyboard isolation files');
+		try {
+			await openPlainAt(names[1], 0);
+			await focusIsolatedTestWindow();
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+			await keyboardReview.begin('next');
+			assert.strictEqual(extensionApi.isKeyboardReviewActive(), false, 'a live mouse hold keeps review input');
+			assert.strictEqual(badge(names[1]), '💥💥', 'the mouse selection is untouched');
+			await keyboardReview.finish();
+			assert.strictEqual(git('diff --cached --name-only'), '', 'keyboard finish cannot release the mouse hold');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+			assert.strictEqual(git('diff --cached --name-only'), names[1], 'the mouse release stages its own file');
+			await extensionApi.whenStageTransactionsSettled();
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+
+			await openPlainAt(names[0], 0);
+			await keyboardReview.begin('next');
+			await keyboardReview.step('next');
+			await expectActiveTab(names[1]);
+			await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'razer', direction: 'next' });
+			assert.strictEqual(extensionApi.isKeyboardReviewActive(), false, 'a new mouse hold ends the keyboard review');
+			assert.notStrictEqual(badge(names[0]), '💥💥', 'the keyboard selection is discarded unstaged');
+			await keyboardReview.finish();
+			assert.strictEqual(git('diff --cached --name-only'), '', 'a superseded keyboard review cannot finish');
+			await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'razer');
+			await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'razer', direction: 'next' });
+			assert.strictEqual(git('diff --cached --name-only'), names[1], 'only the mouse hold file is staged');
+			await extensionApi.whenStageTransactionsSettled();
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+		} finally {
+			await keyboardReview.cancel();
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('keyboard review ignores mouse-tagged release and cancel inputs', async () => {
+		const names = ['kb_tag_a.txt', 'kb_tag_b.txt', 'kb_tag_c.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => names.every(isUntracked), 'keyboard tagged-input files');
+		await openPlainAt(names[0], 0);
+		await focusIsolatedTestWindow();
+		try {
+			await keyboardReview.begin('next');
+			await keyboardReview.step('next');
+			await expectActiveTab(names[1]);
+			for (const source of ['corsair', 'razer']) {
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction: 'next' });
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance', source);
+			}
+			assert.strictEqual(extensionApi.isKeyboardReviewActive(), true, 'mouse release/cancel inputs belong to mouse holds');
+			assert.strictEqual(badge(names[0]), '💥💥');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+			await keyboardReview.finish();
+			assert.strictEqual(git('diff --cached --name-only'), names[0]);
+		} finally {
+			await keyboardReview.cancel();
+		}
+	});
+
+	test('keyboard review cancel discards the selection, restores the starting view and keeps earlier Undo history', async () => {
+		write('kb_history.txt', 'earlier stage');
+		const names = ['kb_cancel_a.txt', 'kb_cancel_b.txt', 'kb_cancel_c.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => isUntracked('kb_history.txt') && names.every(isUntracked), 'keyboard cancel files');
+		await openPlainAt('kb_history.txt', 0);
+		await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+		await extensionApi.whenStageTransactionsSettled();
+		const editor = await openPlainAt(names[0], 0);
+		await focusIsolatedTestWindow();
+		const selection = editor.selection;
+		await keyboardReview.begin('next');
+		await keyboardReview.step('next');
+		await keyboardReview.step('next');
+		await expectActiveTab(names[2]);
+		await keyboardReview.cancel();
+		await expectActiveTab(names[0]);
+		assert.deepStrictEqual(visibleEditorFor(wsUri(names[0]))?.selection, selection, 'cancel restores the starting cursor');
+		assert.strictEqual(extensionApi.isKeyboardReviewActive(), false);
+		for (const name of names) { assert.notStrictEqual(badge(name), '💥💥', 'cancel clears the pending selection'); }
+		await keyboardReview.finish();
+		assert.strictEqual(git('diff --cached --name-only'), 'kb_history.txt', 'nothing reviewed is staged');
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		assert.strictEqual(git('diff --cached --name-only'), '', 'the earlier stage is still the latest Undo');
+	});
+
+	test('keyboard review ends unstaged when the immediate Stage + Next command runs', async () => {
+		const names = ['kb_imm_a.txt', 'kb_imm_b.txt', 'kb_imm_c.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => names.every(isUntracked), 'keyboard immediate-stage files');
+		await openPlainAt(names[0], 0);
+		await focusIsolatedTestWindow();
+		try {
+			await keyboardReview.begin('next');
+			await keyboardReview.step('next');
+			await expectActiveTab(names[1]);
+			await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+			assert.strictEqual(git('diff --cached --name-only'), names[1], 'the untagged command keeps its immediate meaning');
+			assert.strictEqual(extensionApi.isKeyboardReviewActive(), false);
+			assert.notStrictEqual(badge(names[0]), '💥💥');
+			await keyboardReview.finish();
+			assert.strictEqual(git('diff --cached --name-only'), names[1], 'the replaced review cannot stage later');
+			await extensionApi.whenStageTransactionsSettled();
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+		} finally {
+			await keyboardReview.cancel();
+		}
+	});
+
+	test('keyboard review app switch discards the selection without staging', async () => {
+		const names = ['kb_focus_a.txt', 'kb_focus_b.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => names.every(isUntracked), 'keyboard focus files');
+		await openPlainAt(names[0], 0);
+		await focusIsolatedTestWindow();
+		try {
+			await keyboardReview.begin('next');
+			await keyboardReview.step('next');
+			await expectActiveTab(names[1]);
+			await switchAwayFromIsolatedTestWindow();
+			await extensionApi.whenStageTransactionsSettled();
+			assert.strictEqual(git('diff --cached --name-only'), '', 'leaving the app is not a finish');
+			assert.strictEqual(extensionApi.isKeyboardReviewActive(), false);
+			await focusIsolatedTestWindow();
+			await keyboardReview.finish();
+			assert.strictEqual(git('diff --cached --name-only'), '', 'a later finish is inert');
+		} finally {
+			await focusIsolatedTestWindow();
+			await keyboardReview.cancel();
+		}
+	});
+
+	test('keyboard review without an unstaged file keeps every step as ordinary navigation', async () => {
+		const names = ['kb_none_a.txt', 'kb_none_b.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => names.every(isUntracked), 'keyboard no-review files');
+		await focusIsolatedTestWindow();
+		await keyboardReview.begin('next'); // No review editor is open after setup.
+		assert.strictEqual(extensionApi.isKeyboardReviewActive(), false, 'no review item means no review');
+		await keyboardReview.step('next');
+		await expectActiveTab(names[0]);
+		await keyboardReview.step('next');
+		await expectActiveTab(names[1]);
+		await keyboardReview.finish();
+		assert.strictEqual(git('diff --cached --name-only'), '', 'ordinary navigation never stages');
+	});
+
+	test('keyboard review applies rapid queued steps before a finish in input order', async () => {
+		const names = ['kb_queue_a.txt', 'kb_queue_b.txt', 'kb_queue_c.txt', 'kb_queue_d.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => names.every(isUntracked), 'keyboard queued files');
+		await openPlainAt(names[0], 0);
+		await focusIsolatedTestWindow();
+		try {
+			await keyboardReview.begin('next');
+			await Promise.all([nextChange(), keyboardReview.step('next'), keyboardReview.finish()]);
+			assert.strictEqual(git('diff --cached --name-only'), names.slice(0, 2).join('\n'),
+				'both admitted steps apply before the finish; the viewed file is excluded');
+			assert.strictEqual(activeTabPath(), wsUri(names[2]).path);
+			await extensionApi.whenStageTransactionsSettled();
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+		} finally {
+			await keyboardReview.cancel();
+		}
+	});
+
+	test('keyboard review yields to a Magic Wand begin without staging', async () => {
+		const ext = vscode.workspace.getConfiguration('extensions');
+		const previous = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+		await ext.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+		const names = ['kb_wand_a.txt', 'kb_wand_b.txt', 'kb_wand_c.txt'];
+		for (const name of names) { write(name, name); }
+		await refreshUntil(() => names.every(isUntracked), 'keyboard and wand files');
+		await openPlainAt(names[0], 0);
+		await focusIsolatedTestWindow();
+		const id = randomUUID();
+		const send = (phase: string, seq: number) => deliverMouseUri('wand-review/' + phase, 'wand',
+			new URLSearchParams({ version: '1', id, seq: String(seq), direction: 'next', mode: 'changes' }).toString());
+		try {
+			await keyboardReview.begin('next');
+			await keyboardReview.step('next');
+			await expectActiveTab(names[1]);
+			await send('begin', 1);
+			await poll(() => !extensionApi.isKeyboardReviewActive() && badge(names[0]) !== '💥💥',
+				'the wand begin to replace the keyboard review');
+			await poll(() => badge(names[1]) === '👀', 'the wand to review the current file');
+			assert.strictEqual(git('diff --cached --name-only'), '');
+			await send('cancel', 2);
+			await keyboardReview.finish();
+			assert.strictEqual(git('diff --cached --name-only'), '', 'neither the replaced review nor the cancelled wand stages');
+		} finally {
+			await keyboardReview.cancel();
+			await ext.update('confirmedUriHandlerExtensionIds', previous, vscode.ConfigurationTarget.Global);
+		}
 	});
 });

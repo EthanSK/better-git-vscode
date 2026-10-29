@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.138
+
+- Toggle pending keyboard eyes review with Shift + Next/Previous instead of immediately staging the whole file. Use ordinary Next/Previous to review hunks and collect reviewed files, then toggle again to stage the batch while leaving the current preview unstaged.
+- Cancel keyboard review with Escape. Keep exact batch Undo, held-key repeat protection and immediate mouse/button staging.
+- Build on the stable 1.2.132 review behavior, without the subsequently rolled-back wheel-idle cutoff or background mouse transport.
+
 ## 1.2.132
 
 - Warm the neighbouring small text files in the background after a review opens, without delaying staging or navigation.

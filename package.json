@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.132",
+  "version": "1.2.138",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -462,7 +462,7 @@
       "The optional left-hand pair uses the adjacent physical Z and X keys:",
       "  physical Z key : QWERTY types `z` -> alt+z | Dvorak types `;` -> alt+; => previous-scm-change",
       "  physical X key : QWERTY types `x` -> alt+x | Dvorak types `q` -> alt+q => next-scm-change",
-      "  shift + either enabled pair = stage-and-next / stage-and-previous in both layouts.",
+      "  shift + either enabled pair toggles keyboard review in both layouts; ordinary next/previous edits its pending set.",
       "  Dvorak physical X therefore collides with the established alt+q revert default. When the left",
       "  pair is active, navigation wins and the revert binding is disabled; right-only preserves revert.",
       "",
@@ -739,6 +739,12 @@
         "key": "alt+q",
         "mac": "alt+q",
         "when": "!config.better-git-vscode.dvorakMode || config.better-git-vscode.navigationHands == right"
+      },
+      {
+        "command": "better-git-vscode.cancel-keyboard-review",
+        "key": "escape",
+        "mac": "escape",
+        "when": "better-git-vscode.keyboardReviewActive && !inQuickOpen && !findWidgetVisible && !suggestWidgetVisible && !renameInputVisible && !terminalFocus"
       },
       {
         "command": "better-git-vscode.reveal-current-file-in-explorer",

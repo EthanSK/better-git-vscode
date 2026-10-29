@@ -167,15 +167,6 @@ async function key(key, code, virtualKey, modifiers = 0) {
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: virtualKey, modifiers });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: virtualKey, modifiers });
 }
-async function repeatedKeyDown(key, code, virtualKey, modifiers, repeatCount) {
-    // Send the same keyDown burst VS Code receives from OS auto-repeat. Keep the monitor cold so all repeats
-    // queue behind one first press before its asynchronous physical-release probe can settle in this synthetic
-    // test (CDP itself does not change CoreGraphics' global key state).
-    await Promise.all(Array.from({ length: repeatCount }, (_, index) => send('Input.dispatchKeyEvent', {
-        type: 'keyDown', key, code, windowsVirtualKeyCode: virtualKey, modifiers, autoRepeat: index > 0,
-    })));
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: virtualKey, modifiers });
-}
 try {
     await until(() => fs.existsSync(path.join(root, 'ready.json')), Boolean, 'extension readiness', 45_000);
     const target = await until(async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter(t =>
@@ -684,20 +675,64 @@ try {
     await capture('hold-ready');
     await key('F15', 'F15', 126, 7);
     await until(() => request('state'), state => state.badge === '🔥🔥', 'hold release clears readiness');
-    // Repeated native keyDown events model macOS auto-repeat while the physical X key remains down. The
-    // contributed Shift+Option+X binding is tagged, so one continuous hold must stage only a.txt. A release
-    // followed by a fresh physical press must immediately stage b.txt, while the untagged F18 mouse transport
-    // remains independently responsive for c.txt.
+    // Shift + navigation now toggles keyboard eyes review. Exercise real OS key-state changes so the shared
+    // release monitor sees X held during auto-repeat (CDP cannot set CoreGraphics' global key state).
     if (testKeyboardRepeat) {
-        await repeatedKeyDown('q', 'KeyQ', 81, 9, 25); // Dvorak character on physical X (key code 7).
-        await check(1, 'keyboard-held-stage-and-next-once', 'b.txt');
-        assert.match(git(roots[1], 'diff', '--cached', '--name-only'), /^a.txt$/m);
-        await pause(100);
-        await key('q', 'KeyQ', 81, 9);
-        await check(1, 'keyboard-fresh-press-after-release', 'c.txt');
-        assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['a.txt', 'b.txt', 'staged-late.txt', 'staged.txt']);
+        if (process.env.BGV_KEYBOARD_MANUAL_GATE) {
+            const gate = process.env.BGV_KEYBOARD_MANUAL_GATE;
+            fs.writeFileSync(`${gate}.ready.json`, JSON.stringify({ root, state: await request('state') }));
+            await until(() => fs.existsSync(`${gate}.continue`), Boolean, 'manual keyboard review pass', 10 * 60_000);
+        }
+        const keyScript = path.join(root, 'keyboard-review-input.swift');
+        fs.writeFileSync(keyScript, `import Cocoa
+import CoreGraphics
+let down = CGEvent(keyboardEventSource: nil, virtualKey: 7, keyDown: true)!
+down.flags = [.maskAlternate, .maskShift]
+down.post(tap: .cghidEventTap)
+Thread.sleep(forTimeInterval: 0.2)
+for _ in 0..<25 {
+    let repeated = CGEvent(keyboardEventSource: nil, virtualKey: 7, keyDown: true)!
+    repeated.flags = [.maskAlternate, .maskShift]
+    repeated.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+    repeated.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.01)
+}
+let up = CGEvent(keyboardEventSource: nil, virtualKey: 7, keyDown: false)!
+up.flags = []
+up.post(tap: .cghidEventTap)
+`);
+        const mayPostKeys = execFileSync('/usr/bin/swift', ['-e', 'import CoreGraphics; print(CGPreflightPostEventAccess())'], { encoding: 'utf8' }).trim() === 'true';
+        console.log(`KEYBOARD_INPUT_MODE=${mayPostKeys ? 'CoreGraphics, including held auto-repeat' : 'isolated renderer; OS input-posting permission unavailable, repeat safety unit-covered'}`);
+        const shiftedBurst = async () => {
+            assert.equal((await request('state')).focused, true, 'input requires the isolated Code window');
+            if (mayPostKeys) { execFileSync('/usr/bin/swift', [keyScript], { stdio: 'pipe' }); }
+            else { await key('q', 'KeyQ', 81, 9); }
+        };
+        const baselineIndex = git(roots[1], 'diff', '--cached', '--name-only');
+        await request('command', { command: 'workbench.action.focusActiveEditorGroup' });
+        await shiftedBurst();
+        await until(() => request('state'), state => state.keyboardReviewActive && state.badge === '👀', 'one keyboard toggle starts eyes review');
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), baselineIndex, 'starting and releasing the shortcut never stages');
+        await capture('keyboard-eyes-toggle-on');
+        for (let step = 0; step < 5; step++) {
+            const state = await request('command', { command: 'better-git-vscode.next-scm-change' });
+            if (state.active.endsWith('/b.txt')) { break; }
+        }
+        assert.ok((await request('state')).active.endsWith('/b.txt'), 'ordinary Next continues into the next file');
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'), baselineIndex, 'review never stages before the second toggle');
+        await capture('keyboard-eyes-pending-batch');
+        await shiftedBurst();
+        await until(() => request('state'), state => !state.keyboardReviewActive, 'a fresh shifted press finishes once');
+        await until(() => git(roots[1], 'diff', '--cached', '--name-only'), value => /^a.txt$/m.test(value), 'reviewed file to stage');
+        assert.ok((await request('state')).active.endsWith('/b.txt'), 'current eyes file stays open');
+        assert.deepEqual(git(roots[1], 'diff', '--cached', '--name-only').trim().split('\n'), ['a.txt', ...baselineIndex.trim().split('\n')].sort());
+        await capture('keyboard-eyes-toggle-finished');
+        await shiftedBurst();
+        await until(() => request('state'), state => state.keyboardReviewActive, 'start another review for Escape cancellation');
+        await key('Escape', 'Escape', 27);
+        await until(() => request('state'), state => !state.keyboardReviewActive, 'Escape cancels keyboard review');
         await key('F18', 'F18', 129);
-        await check(1, 'untagged-mouse-stage-after-keyboard', 'd.txt');
+        await check(1, 'untagged-mouse-stage-after-keyboard', 'c.txt');
     } else {
         await key('F18', 'F18', 129);
         await check(1, 'stage-and-next', 'b.txt');
@@ -757,7 +792,7 @@ try {
         assert.deepEqual(git(roots[2], 'diff', '--cached', '--name-only').trim().split('\n'), ['staged.txt']);
     }
     if (testKeyboardRepeat) {
-        console.log('BETTER_GIT_KEYBOARD_REPEAT_VERIFIED repeated-keydown=one-stage release-and-repress=next-stage untagged-F18=unchanged');
+        console.log('BETTER_GIT_KEYBOARD_REVIEW_VERIFIED toggle-on=unstaged toggle-off=reviewed-batch current-preview=retained escape=cancel untagged-F18=unchanged');
     }
     }
     if (!testNoUnstaged && !testMergeLink && !testSingleRepository) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {

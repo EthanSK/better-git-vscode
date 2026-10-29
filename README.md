@@ -28,13 +28,13 @@ One key flies to the next or previous change. At the end of a file, it continues
 
 `Option+.` next · `Option+,` previous — literally the `>` / `<` keys, pointing the way.
 
-### 2. Hold Shift to stage and continue
+### 2. Toggle keyboard review with Shift
 
-Approve as you go. Holding **Shift** on the nav key stages the file you're looking at and jumps you straight to the next *unstaged* change — so reviewing and staging become one continuous flow. No reaching for the mouse, no detour to the Source Control panel. Sweep through, approving each file with a flick of the same key.
+Press **Shift + your Next/Previous shortcut** to start eyes review. Release Shift and use normal Next/Previous to review hunks. Crossing a file boundary adds the reviewed file to the pending set; going back removes it. Git stays unchanged while you browse.
 
-`Shift+Option+.` stage & next · `Shift+Option+,` stage & previous.
+Press the shifted shortcut again to stage the batch. The current 👀 file stays unstaged and open, just like wand review. **Escape** cancels and restores the starting view. One Undo restores the whole staged batch.
 
-Each physical Stage-and-Next/Previous press stages once. Holding the navigation key down cannot auto-repeat through several files; release it and press again to stage the next file. Mouse F18/F19 staging remains independently repeatable.
+Each physical shifted key press toggles once; holding the key cannot repeatedly start and finish review. Dvorak and both navigation-hand settings use the same behavior. Mouse F18/F19, the editor `+` button and untagged Stage + Next/Previous commands keep their immediate staging behavior.
 
 ### 3. Fix something without losing your place
 
@@ -139,8 +139,9 @@ All bindings ship as defaults and are fully overridable (see below).
 | **Previous change** | `Alt+,` | `Alt+,` |
 | Next changed file | `Cmd+Alt+.` | `Ctrl+Alt+.` |
 | Previous changed file | `Cmd+Alt+,` | `Ctrl+Alt+,` |
-| Stage current file + next change | `Shift+Alt+.` | `Shift+Alt+.` |
-| Stage current file + previous change | `Shift+Alt+,` | `Shift+Alt+,` |
+| Toggle keyboard review, starting forward | `Shift+Alt+.` | `Shift+Alt+.` |
+| Toggle keyboard review, starting backward | `Shift+Alt+,` | `Shift+Alt+,` |
+| Cancel keyboard review | `Escape` | `Escape` |
 | Undo latest stage while Source Control Changes has focus | `Cmd+Z` | `Ctrl+Z` |
 | Revert selected change and save | `Alt+Q`* | `Alt+Q`* |
 | Reveal current file in Explorer | `Alt+R` | `Alt+R` |
@@ -174,8 +175,8 @@ The **`+` button in the editor title bar** now **stages the current file _and_ a
 next change — in whatever direction you last navigated. Jump forward through changes (`>` / `Alt+.`)
 and the `+` advances forward; jump backward (`<` / `Alt+,`) and it advances backward. So you can run
 the whole review-and-stage flow with the mouse alone — click `+` to stage-and-jump instead of
-clicking `+` then reaching for the keyboard. It calls the exact same logic as the `Shift+Alt+.` /
-`Shift+Alt+,` keyboard shortcuts (same staging, same advance target, same cross-file rollover). A
+clicking `+` then reaching for the keyboard. It uses the immediate Stage + Next/Previous command;
+the shifted keyboard shortcuts now toggle pending review instead. A
 fresh session with no navigation yet defaults to advancing *forward*. The plain, no-advance
 `Stage current file` command is still registered if you'd rather bind that to a key.
 
