@@ -28,17 +28,27 @@ One key flies to the next or previous change. At the end of a file, it continues
 
 `Option+.` next · `Option+,` previous — literally the `>` / `<` keys, pointing the way.
 
-### 2. Build a review batch with Option + Shift
+### 2. Review a batch of files, then stage them together
 
-On **macOS**, hold **Option**, tap **Shift**, then release **Shift while keeping Option held** to enter **👀 Review changes**. Use your normal Next/Previous shortcuts to review hunks. Only crossing into another file adds the reviewed file being left; going back removes it. The current eyes file is a preview and stays out of the staged batch.
+On **macOS** you can collect several files as you review them, then stage them all at once:
 
-While still holding Option, tap/release Shift again to switch to **💥 Stage files**. Next/Previous now moves by whole file and adjusts the same pending set. Further Shift taps alternate **Review changes ↔ Stage files**; they never return to an empty mode during a held gesture. Switch midway through a populated set without losing it or staging early. Git stays unchanged while you browse.
+1. **Hold Option** and keep holding it until you are done.
+2. **Tap Shift** (press and release it). You are now in **👀 Review changes** mode.
+3. **Move with Next / Previous as usual** (for example `.` and `,` while Option is held). You step through the changes one at a time. When you move on to another file, the file you just finished joins the batch. Go back the way you came and it leaves the batch again.
+4. **Tap Shift again** to switch to **💥 Stage files** mode. Next / Previous now jumps a whole file at a time, and each file you land on joins the batch. Going back removes the file you leave. Tap Shift again to return to Review changes. Switching modes keeps the batch and never stages anything.
+5. **Release Option, Shift and the navigation keys** to stage the batch.
 
-**Release Option and any still-held Shift/navigation keys to stage the set once.** Eyes mode excludes the current preview; Stage files includes its selected file. Shift release alone changes modes, never stages. **Escape** cancels and restores the starting view; leaving the VS Code window cancels safely. One Undo restores the entire staged batch. The next Option-held Shift tap starts a fresh gesture in eyes mode.
+In Source Control, files in the batch show 💥💥 and the file you are reviewing shows 👀. In Review changes mode, the file you are still looking at is left unstaged so you can carry on reviewing it. In Stage files mode, the file you are on is included. If the batch is empty when you let go, nothing is staged. Each new batch starts in Review changes mode.
 
-**The existing Option + Shift + Next/Previous shortcuts still stage the current whole file and advance immediately.** Using a navigation key during the Shift chord consumes that tap, so releasing Shift does not also change modes. Held-key repeat protection remains. Dvorak and both navigation-hand settings use the same physical-key behavior. Mouse/wand controls, F18/F19, the editor `+` button and untagged commands keep their existing behavior.
+To back out:
 
-The modifier-only gesture uses a focused-window macOS key-state observer; it asks for no new permissions and stops when the window loses focus. Windows/Linux retain their existing stage-and-advance shortcuts. No keyboard, mouse or wand debounce is added.
+- Press **Escape** to cancel the batch and return to where you started.
+- Leaving the VS Code window also cancels the batch, without staging anything.
+- After staging, one Undo (`Cmd+Z` in the Source Control Changes list) undoes the whole batch.
+
+**Staging one file at a time still works.** `Option+Shift+.` / `Option+Shift+,` stage the current file and jump to the next or previous one, as before. Holding them down stages only once, and releasing Shift after this shortcut does not switch modes.
+
+The batch works with either navigation-key pair and in Dvorak mode, and needs no extra macOS permissions. On Windows and Linux, `Shift+Alt+.` / `Shift+Alt+,` still stage one file at a time; the batch is macOS only. Mouse and Magic Wand review are unchanged.
 
 ### 3. Fix something without losing your place
 
@@ -145,9 +155,9 @@ All bindings ship as defaults and are fully overridable (see below).
 | Previous changed file | `Cmd+Alt+,` | `Ctrl+Alt+,` |
 | Stage current file + next | `Shift+Alt+.` | `Shift+Alt+.` |
 | Stage current file + previous | `Shift+Alt+,` | `Shift+Alt+,` |
-| Enter / switch review mode | Hold Option, tap/release Shift | macOS modifier gesture |
-| Stage pending keyboard batch | Release all gesture keys | — |
-| Cancel keyboard review | `Escape` | `Escape` |
+| Start a keyboard batch, or switch its mode | Hold `Option`, tap `Shift` | — |
+| Stage the keyboard batch | Release Option, Shift and navigation keys | — |
+| Cancel the keyboard batch | `Escape` | — |
 | Undo latest stage while Source Control Changes has focus | `Cmd+Z` | `Ctrl+Z` |
 | Revert selected change and save | `Alt+Q`* | `Alt+Q`* |
 | Reveal current file in Explorer | `Alt+R` | `Alt+R` |
@@ -181,8 +191,8 @@ The **`+` button in the editor title bar** now **stages the current file _and_ a
 next change — in whatever direction you last navigated. Jump forward through changes (`>` / `Alt+.`)
 and the `+` advances forward; jump backward (`<` / `Alt+,`) and it advances backward. So you can run
 the whole review-and-stage flow with the mouse alone — click `+` to stage-and-jump instead of
-clicking `+` then reaching for the keyboard. It uses the immediate Stage + Next/Previous command;
-shifted navigation shortcuts retain immediate staging; the modifier-only gesture above collects a pending set instead. A
+clicking `+` then reaching for the keyboard. Like `Shift+Alt+.` / `Shift+Alt+,`, it stages one file
+straight away; use the Option + Shift batch above to collect several files first. A
 fresh session with no navigation yet defaults to advancing *forward*. The plain, no-advance
 `Stage current file` command is still registered if you'd rather bind that to a key.
 
