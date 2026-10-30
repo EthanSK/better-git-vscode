@@ -8,6 +8,16 @@ Read `LEARNINGS.md` before changing behavior, packaging, or release handling. Pr
 - Keep the default test command short and non-GUI. Run focused E2Es on the Mini for the changed behavior; the exhaustive suite is opt-in, not something to rerun after every edit.
 - Do not affect app responsiveness. Better Git must support rapid repeated mouse presses without an added debounce, arbitrary input delay, or dropping valid presses; preserve navigation order and exact staging/Undo safety.
 
+## Mini readiness and setup stop rule
+
+User-requested — 2026-10-30: prevent the Mini setup mistake and repeated setup detours from happening again.
+
+- Check the access needed for the actual test before changing setup. SSH/CDP editor access, native desktop control and Code Accessibility are separate capabilities; a failure of one does not establish failure of the others. Keep using the working route for tests it supports.
+- Before asking Ethan to sign in or unlock the Mini, verify its actual console-lock state. A Screen Sharing connection login is not evidence that the Mini desktop is locked. Identify the exact missing permission or authentication boundary from current evidence instead of asking for a generic sign-in.
+- Qualify a new native controller in an isolated profile before changing the Mini's working shared OpenClaw runtime. Require a real screenshot or Accessibility result from the intended controller, then check Code permission in its responsible application context. Installed tools, an accepted setup command and a successful ordinary agent reply do not prove native control works.
+- When native control refuses a caller or times out, stop speculative setup changes. Investigate the exact error and retry only when new evidence identifies a specific supported repair; do not cycle backends, app versions or shared feature flags merely to try another route. Preserve approval, caller-authentication and cache-ownership safeguards. If a shared setup attempt fails, restore its changed settings and verify ordinary agent operation before further work.
+- Keep independent development moving and report native-dependent work as unfinished until that exact capability is verified. Do not substitute unrelated older checks or the user's own testing for the missing native test, and do not report a prototype as installed or complete.
+
 ## Marketplace release gate
 
 - Unless Ethan explicitly opts out, finish every Marketplace-bound feature, fix, or maintenance change through publication and verification.
