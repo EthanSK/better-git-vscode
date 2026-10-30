@@ -1,5 +1,15 @@
 # Learnings
 
+## 2026-10-30 — Qualify Mini native control before relying on OpenClaw setup
+
+The Mini was unlocked, and its earlier SSH/CDP editor tests remained a different route from native desktop control. Screen Sharing asks for authentication to its own connection; opening that dialog does not establish a Mini sign-in requirement. The alternate installed Peekaboo controller also reported neither Screen Recording nor Accessibility permission, so it was not a working native fallback.
+
+OpenClaw's `/codex computer-use install` is an owner/operator-admin management command. Its ordinary CLI `chat.send` requests a narrower scope by default; the legitimate configured CLI helper with explicit `operator.admin` scopes admitted the command without forging sender identity. A `started` acknowledgement or successful `agent.wait` result only proves command processing; inspect the matching fresh command response. While a command is pending, `chat.history` can still end with the previous attempt's result.
+
+The Mini had native control disabled, an explicit `features.plugins=false` startup override and a marketplace folder where the installer expected a file. Removing those conflicts exposed a reserved-marketplace refusal in the standalone backend. OpenClaw's supported managed desktop route subsequently installed native MCP tools, but its actual `mcpServer/tool/call` readiness calls timed out twice. No screenshot, AX result or Code Accessibility grant was obtained. Do not rename a reserved marketplace, spoof native caller identity or claim tool inventory establishes working control.
+
+Enabling native setup also caused ordinary Mini agent turns to fail before model start because provisioning refused an unowned bundled-marketplace cache. Preserve that ownership safeguard. After qualification failed, the four changed runtime fields were restored through the hash-guarded config API; a fresh read verified the exact runtime revision was applied, the original fields were restored and every other configuration value was unchanged. The existing Mini agent then executed a normal turn, read its session status and replied over Agent Bridge, confirming ordinary recovery only. Leave native setup and SCM lookahead unqualified until real native access works; keep the accepted Better Git installation intact.
+
 ## 2026-10-29 — Source Control lookahead needs viewport access
 
 Ethan wants the current batch-review file moved near the top of the native Changes list when too few following rows remain visible, leaving roughly ten files below it. The installed workbench's SCM Auto Reveal calls `tree.reveal(resource)` without a relative position. The extension API exposes neither that built-in tree nor its viewport. The built-in `list.scrollUp` / `list.scrollDown` commands move only ten pixels on the last-focused list; they do not accept a resource or a row-at-top position. Do not approximate this by walking selection through other files or issuing blind scroll commands against a possibly focused Graph.
