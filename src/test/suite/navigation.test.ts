@@ -1217,6 +1217,38 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	for (const view of ['single preview', 'comparison']) {
+		test(`home-labeled deleted image ${view} receives fire, stages and advances, and one Undo restores its index`, async () => {
+			const rel = 'committed/image.png';
+			const uri = wsUri(rel);
+			const peer = 'committed/zz_deleted_image_peer.txt';
+			fs.rmSync(uri.fsPath);
+			write(peer, 'still needs review');
+			await refreshUntil(() => inWorkingTree(rel, 6) && isUntracked(peer), 'home deleted-image fixture');
+			const before = git('write-tree');
+			if (view === 'comparison') {
+				// Some media comparisons expose no public Tab input. Match that deleted-image view too;
+				// a tiny valid PNG opened as a single preview already passed before the home-path fix.
+				await vscode.commands.executeCommand('vscode.diff', toGitUri(uri, '~'), toGitUri(uri, EMPTY_TREE), 'deleted image comparison');
+			} else {
+				await vscode.commands.executeCommand('git.openChange', uri);
+			}
+			await poll(() => extensionApi.getCurrentReviewUri() === uri.toString(), 'home deleted image fire target');
+			await extensionApi.whenReviewDecorationSettled();
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '🔥🔥');
+			await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+			await expectActiveTab(peer);
+			assert.strictEqual(git(`ls-files -- ${rel}`), '', 'the deletion was staged');
+			assert.strictEqual(badge(peer), '🔥🔥', 'fire advances to the next unstaged file');
+			assert.ok(!fs.existsSync(uri.fsPath), 'staging never recreates the deleted working image');
+			await extensionApi.whenStageTransactionsSettled();
+			await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+			assert.strictEqual(git('write-tree'), before, 'one Undo restores the exact index');
+			assert.ok(!fs.existsSync(uri.fsPath), 'Undo never recreates the deleted working image');
+			await sleep(300); // The restored media preview loads asynchronously before fixture teardown.
+		});
+	}
+
 	test('current-review fire badge covers every image Git state and rapid tab switches', async () => {
 		const imageB = Buffer.from(
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==',
@@ -2519,16 +2551,20 @@ suite('SCM change navigation E2E', () => {
 
 	for (const source of ['corsair', 'razer']) {
 		for (const direction of ['next', 'previous']) {
-			for (const imageState of ['deleted', 'staged-modified-deleted', 'staged-new-deleted', 'staged-new-deleted-native']) {
+			for (const imageState of ['deleted', 'staged-modified-deleted', 'staged-new-deleted', 'staged-new-deleted-native', 'staged-new-lfs-deleted-native']) {
 				test(`image hold entry ${source} ${direction} ${imageState} enters eyes and preserves batch Undo`, async () => {
 					await focusIsolatedTestWindow();
 					await vscode.workspace.getConfiguration('better-git-vscode').update(
 						'experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
-					const rel = imageState.startsWith('staged-new-deleted') ? 'committed/added-image.png' : 'committed/image.png';
+					const rel = imageState.startsWith('staged-new') ? 'committed/added-image.png' : 'committed/image.png';
 					const uri = wsUri(rel);
 					if (imageState !== 'deleted') {
-						fs.writeFileSync(uri.fsPath, Buffer.from(
-							'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+						const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
+						// The October 31 report had no HEAD blob: the staged-new image was an LFS pointer, then
+						// deleted on disk. A normal PNG-only fixture does not cover this native preview shape.
+						fs.writeFileSync(uri.fsPath, imageState.includes('-lfs-')
+							? `version https://git-lfs.github.com/spec/v1\noid sha256:${createHash('sha256').update(bytes).digest('hex')}\nsize ${bytes.length}\n`
+							: bytes);
 						git(`add ${rel}`);
 					}
 					fs.rmSync(uri.fsPath);

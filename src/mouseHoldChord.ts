@@ -8,6 +8,8 @@
 // from queued editor or Git work: before the 200 ms readiness event the chord cancels the unfinished
 // hold and performs the previous exact staging Undo; once readiness has arrived it cancels only the
 // pending stage and preserves Undo history.
+// Ethan explicitly kept both actions: quick hold+adjacent-cell means Undo; after entering stage-ready
+// mode the same chord means cancel this pending set only. Never infer that boundary from slow Git work.
 
 export interface MouseHoldChordState {
     active: boolean;

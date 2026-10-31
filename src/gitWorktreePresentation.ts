@@ -5,6 +5,8 @@ export const WORKTREE_PRESENTATION_MAX_AGE_MS = 10_000;
 // One event-driven presentation for a link opened behind another app.
 // Repository loading never waits for focus; a newer link or user navigation
 // cancels this retry before it can change the review view.
+// Ethan rejected re-running worktree selection whenever he returns to Code. This listener belongs only
+// to one recent, unfinished link; completion/disposal removes it and later app returns have no effect.
 export class DeferredWorktreePresentation implements Disposable {
     private listener?: Disposable;
     private generation = 0;

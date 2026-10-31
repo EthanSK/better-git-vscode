@@ -18,7 +18,8 @@ export const createMouseStageSelection = <T>(
     return { items, cursorIndex: anchorIndex, initialDirection, selectedIndices: [anchorIndex], rebaseDirectionAtEndpoint };
 };
 
-// Both wheel modes edit the same set. Toggling modes cannot restore an old range.
+// Ethan: reversing the direction that built a range must remove the file being left, even after switching
+// eyes <-> explosion mode. Both modes edit this one set; mode toggles never rebuild a remembered old range.
 const moveToMouseStageItem = <T>(
     selection: MouseStageSelection<T>, currentIndex: number, cursorIndex: number
 ): MouseStageSelection<T> => {
@@ -46,6 +47,9 @@ export const selectedMouseStageItems = <T>(
     selection: MouseStageSelection<T>, excludeCurrent = false
 ): readonly T[] => {
     const marked = new Set(selection.selectedIndices);
+    // Ethan's eyes mode is a preview: releasing stages the reviewed files before this one, so he can stop
+    // on a file that needs more analysis. File/explosion mode includes the endpoint. Compute this at finish
+    // without mutating the shared selection, so switching modes midway preserves every earlier decision.
     if (excludeCurrent) { marked.delete(selection.cursorIndex); }
     return selection.items.filter((_, index) => marked.has(index));
 };

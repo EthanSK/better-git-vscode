@@ -33,6 +33,8 @@ export function worktreeLinkReturnApp(
 }
 
 export function createWorktreeLink(root: string, scheme = "vscode", returnApp?: string): string {
+    // Ethan reverted the custom-HTML/auto-close and Chrome-tab-tracking experiments. Keep the ordinary
+    // Microsoft redirect -> VS Code handoff; do not close, duplicate or restore tabs in his browser here.
     // Encode parentheses too: an unmatched ')' would terminate a Markdown link.
     const encode = (value: string) => encodeURIComponent(value).replace(/[!'()*]/g,
         character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);

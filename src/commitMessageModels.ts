@@ -22,6 +22,8 @@ const versionCompare = (a: number[], b: number[]): number => {
 export const codexBaseline: CommitModel = { id: "gpt-6-luna", name: "GPT-6 Luna", effort: "low" };
 
 export function selectCodexCommitModel(values: readonly unknown[]): CommitModel {
+    // Ethan: Codex first; newest recognized small-model generation, then smallest within that generation.
+    // Do not substitute a newer flagship or equate the desktop's model picker with this CLI's availability.
     const candidates = values.flatMap(value => {
         const m = record(value);
         if (!m || m.hidden === true || typeof m.model !== "string") { return []; }
@@ -41,6 +43,8 @@ export function selectCodexCommitModel(values: readonly unknown[]): CommitModel 
 }
 
 export function selectClaudeCommitModel(values: readonly unknown[]): CommitModel | undefined {
+    // Ethan clarified "newest generation, smallest within it" (Opus 5.5 at that time), not always Haiku.
+    // Keep the generation comparison ahead of family size so future catalogues preserve that choice.
     const candidates = values.flatMap(value => {
         const m = record(value);
         if (!m || typeof m.value !== "string" || m.value === "default" || m.disabled === true) { return []; }

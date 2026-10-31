@@ -36,6 +36,8 @@ export function probeDisplays(): Promise<MacDisplay[]> {
 }
 
 export function registerDiffViewDisplay(context: vscode.ExtensionContext, log: (message: string) => void): void {
+    // Ethan re-enabled his monitor-based Inline/Automatic behavior after trying Automatic-only. It remains
+    // opt-in via a configured display target; do not make his monitor or zoom choices defaults for others.
     if (process.platform !== "darwin") { return; }
     let disposed = false;
     let running = false;

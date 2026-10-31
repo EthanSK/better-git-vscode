@@ -1,4 +1,7 @@
 // Ethan's keyboard mode cycle: hold Option, tap/release Shift, then release all gesture keys to stage.
+// Ethan: after entering, taps alternate eyes <-> explosion, never through normal with an unfinished set.
+// Shift RELEASE is the toggle, while Option stays held. Releasing all gesture keys commits; pressing a
+// navigation key with Option+Shift instead consumes the tap and preserves the old immediate-stage shortcut.
 // This only interprets physical state. Shared review selection/Git/Undo remain in extension.ts.
 export type KeyboardReviewMode = "normal" | "changes" | "files";
 export interface ReviewKeyState { option: boolean; shift: boolean; navigation: boolean; usedShift: boolean; }

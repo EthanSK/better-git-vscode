@@ -85,6 +85,8 @@ const localMediaDir = async (root: string): Promise<string | undefined> => {
 // VS Code's media preview refuses a small `git:` LFS pointer. A locally present LFS object gives the
 // exact staged bytes without changing the index, checkout, or user's working file. Only inspect image
 // sides with pointer-sized Git blobs; ordinary image navigation stays on VS Code's native path.
+// Ethan must be able to review a staged screenshot as an image. Resolve its exact local object, never
+// the possibly newer working copy, and never smudge/reset the checkout or fetch over the network here.
 export const resolveStagedLfsImage = async (gitUri: vscode.Uri, repositoryRoot: string): Promise<vscode.Uri> => {
     if (gitUri.scheme !== "git" || !imageExtensions.has(path.extname(gitUri.path).toLowerCase())) {
         return gitUri;

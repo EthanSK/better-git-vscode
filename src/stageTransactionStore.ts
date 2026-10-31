@@ -3,7 +3,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { IndexSnapshot, RestoreResult, sameHead } from "./gitStageUndo";
 
-// One global undo stack: keep only the three most recent index transitions.
+// Ethan chose THREE entries to bound Undo memory/history work. This is one chronological stack across
+// worktrees, not three per repository; a multi-file stage is one entry and one Undo restores that batch.
 export const STAGE_TRANSACTION_HISTORY_LIMIT = 3;
 // Shared observer baselines are safety metadata, not undo entries. Keep their
 // existing bound so visiting a fourth repository cannot revive a stale baseline.

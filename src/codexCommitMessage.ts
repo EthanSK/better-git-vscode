@@ -492,6 +492,8 @@ export class CommitMessageGenerator implements vscode.Disposable {
         try {
             return await this.generate(execution, context, token, report);
         } catch (error) {
+            // Ethan chose Codex first, then one Claude fallback so either subscription can work. An
+            // intentional Cancel must stop here, never spend another provider attempt behind his back.
             if (this.disposed || token.isCancellationRequested || error instanceof vscode.CancellationError) { throw new vscode.CancellationError(); }
             if (execution.provider !== "codex") { throw error; }
             const executable = await this.findExecutable("claude");

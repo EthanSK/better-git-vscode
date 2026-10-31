@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.140
+
+- Fix missing review badges and ignored stage/navigation actions when an image preview reports a home-shortened path such as `~/Projects/...`, including deleted-image comparisons.
+- Run isolated review fixtures under the test user's home directory and cover deleted image comparisons, staged-new LFS deletions, keyboard review and exact batch Undo.
+- Preserve the reasons behind the agreed review, release, Undo, worktree-link and model-selection behavior beside the owning code.
+
 ## 1.2.139
 
 - Enter keyboard Review changes by holding Option and tapping/releasing Shift. Further Shift taps alternate Review changes and Stage files while preserving the same pending batch.

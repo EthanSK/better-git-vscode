@@ -6,6 +6,8 @@ import * as vscode from "vscode";
 // host — safe to import at top level.
 import * as fs from "fs";
 import * as path from "path";
+import { homedir } from "os";
+import { resolveWorkbenchFilePath } from "./workbenchFilePath";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp } from "./gitWorktreeFocus";
@@ -933,6 +935,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // Physical holds always capture their exact origin. The default release-only path leaves the editor still
     // until button-up has already classified the duration. The former button-down navigation and exact readiness
     // restoration remain available behind an off-by-default feature flag.
+    // Ethan replaced the temporary jump/back delay with this rule: short/long is known at button-up, so
+    // navigate/stage then. Keep the experiment saved but disabled; never add its delay to normal input.
     const mouseHoldCommands = [
         vscode.commands.registerCommand("better-git-vscode.begin-mouse-navigation-hold", (args: unknown) => {
             if (!args || typeof args !== "object" || !("source" in args) || !("direction" in args)) {
@@ -1203,6 +1207,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 return;
             }
             const handoff = async () => {
+                // Ethan wants Codex next in Cmd-Tab immediately, before slow repository/tree work. The
+                // configured origin is activated first, then Code when keep-editor-front is enabled;
+                // finish that sequence here, never refocus either app after background loading settles.
                 if (!sourceLink || !isCurrent()) { return; }
                 // Read after path validation so disabling the setting during a queued open wins.
                 // Application-scoped settings cannot be enabled by the opened repository.
@@ -1623,6 +1630,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     };
     clearStageHoldFeedbackRequest = clearStageHoldFeedback;
     const stageHeldSelectionOnFocusLoss = (): Promise<void> => {
+        // Ethan's interruption rule applies only to a PHYSICAL mouse batch: app switching stages the
+        // earlier marked files, excluding the current preview even in file mode. Clicking the editor or
+        // gutter inside Code is not app switching and must neither cancel nor commit a held selection.
         // Snapshot before invalidation retires the physical gesture. Queued/in-flight
         // wheel work must not add files after the user has left this window.
         const request = latestMouseHoldRequest;
@@ -1648,6 +1658,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }), true);
     };
     prepareStageHoldReleaseRequest = (source, request) => {
+        // Ethan: if the explosion marks say a group will stage, its real release must commit that group.
+        // Retain the selection for already-admitted wheel work; no elapsed-time/scroll-idle heuristic may
+        // expire a genuine release or turn a busy queue into an implicit cancel.
         // Capture mode before feedback clears; queued ratchets still determine the final endpoint.
         // Keyboard mode captures its current eyes/file inclusion policy before the release clears feedback.
         request.excludePreviewOnRelease = request.wandReviewMode === "changes" || (source === "keyboard" && request.keyboardExcludePreview !== false)
@@ -2151,6 +2164,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // theme-aware find-match accent. The Full lane deliberately paints over the native marker for this one
     // range, leaving every other hunk's red/green marker untouched.
     const currentHunkOverviewDecoration = vscode.window.createTextEditorDecorationType({
+        // Ethan wants the CURRENT hunk visibly distinct, not a replacement color for every diff hunk.
         // Opaque high-contrast colours are much easier to find than the theme's often translucent find marker.
         overviewRulerColor: "#ffd400",
         overviewRulerLane: vscode.OverviewRulerLane.Full,
@@ -3098,6 +3112,8 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent
             await executeScmTreeCommand("manual", "workbench.view.scm");
         }
         if (!stillOwned()) { return false; }
+        // Ethan: a clean worktree must still expand normally, with Staged collapsed. Do not open a staged
+        // file just to obtain Auto Reveal: that would expand Staged again and move his review unexpectedly.
         if (!target) { return !autoReveal || nativeRevealed || nativeDeferred; }
         if (target.status === GitStatus.DELETED && nativeRevealed) {
             // Deleted-file editors have a git: URI, so SCM Auto Reveal cannot
@@ -3187,6 +3203,8 @@ const revealUndoneStageTransaction = async (transaction: StoredStageTransaction)
 };
 
 const restoreStageUndoView = async (view: StageUndoView): Promise<void> => {
+    // Ethan wants stage Undo to feel as if he never left: restore this exact text side's saved cursor AND
+    // scroll position. A media preview has no TextEditor; do not apply a stale text cursor to its next tab.
     const editor = visibleEditorForActiveTab();
     if (!editor || editor.document.uri.toString() !== view.documentUri) { return; }
     editor.selections = view.selections.map(selection => new vscode.Selection(
@@ -4946,6 +4964,8 @@ const observeReviewViewport = (editor: vscode.TextEditor): void => {
 };
 
 const anchorNavigationAtViewport = (editor: vscode.TextEditor | undefined, direction: "down" | "up"): void => {
+    // Ethan: after manually scrolling, resume from what he can see, not the old off-screen cursor.
+    // Subsequent uninterrupted presses still follow ordered hunk navigation; do not re-anchor each time.
     if (!editor) { return; }
     const viewport = readViewport(editor);
     if (!viewport) { return; }
@@ -5762,7 +5782,7 @@ const copyActiveFilePathFromWorkbench = async (): Promise<string> => {
         try {
             await vscode.commands.executeCommand("workbench.action.files.copyPathOfActiveFile");
             commandClipboardData = await vscode.env.clipboard.readText();
-            return commandClipboardData === marker ? "" : commandClipboardData;
+            return commandClipboardData === marker ? "" : resolveWorkbenchFilePath(commandClipboardData, homedir());
         } finally {
             // Restore only while the clipboard still contains our marker/the command's result. If Ethan copied
             // something during this tiny window, that newer value owns the clipboard and must survive.

@@ -52,7 +52,12 @@ async function main() {
 		const extensionTestsPath = path.resolve(__dirname, process.env.BGV_UI_SMOKE ? './suite/uiSmoke' : './suite/index');
 
 		// ── Build the fixture repo ─────────────────────────────────────────────────────────────
-		fixturePath = fs.mkdtempSync(path.join(os.tmpdir(), 'better-git-vscode-e2e-'));
+		// Ethan's repositories live under home. /tmp-only fixtures missed Copy Path abbreviating image
+		// resources as ~/..., which broke the fire badge, hold entry and staging for real deleted images.
+		// Exercise that real workbench label behavior by default; each run still owns an isolated repo.
+		const fixtureParent = path.join(os.homedir(), '.cache', 'better-git-vscode-tests.noindex');
+		fs.mkdirSync(fixtureParent, { recursive: true });
+		fixturePath = fs.mkdtempSync(path.join(fixtureParent, 'repository-'));
 		// Start the host as a real multi-root workspace so the reveal-worktree regression test can add a third
 		// folder without triggering VS Code's single-folder -> multi-root extension-host restart mid-Mocha run.
 		// The first folder remains the git fixture, preserving every existing test's workspaceFolders[0] contract.

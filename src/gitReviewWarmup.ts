@@ -1,5 +1,7 @@
 // Best-effort document warming, never a dependency of staging or navigation.
 // At most one loader runs; a newer review replaces pending work between awaits.
+// Ethan asked to prepare BOTH neighbours in the background, only after the current review is loaded.
+// These are presentation hints: never await them in an input queue, open speculative tabs, or move fire.
 export class ReviewDocumentWarmup {
     private generation = 0;
     private pending: { generation: number; tasks: (() => Promise<unknown>)[]; current: () => boolean } | undefined;
