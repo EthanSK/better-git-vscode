@@ -1,3 +1,4 @@
+// Non-GUI coverage for home-shortened paths, including nonexistent deleted files; run through npm test.
 import * as assert from "assert";
 import * as path from "path";
 import { resolveWorkbenchFilePath } from "../../workbenchFilePath";

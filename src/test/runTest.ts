@@ -1,3 +1,4 @@
+// Launch isolated real-Git/VS Code fixtures; focused Better Git E2Es run on the Mini, not Ethan's work Mac.
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';

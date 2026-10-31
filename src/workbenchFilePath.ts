@@ -1,3 +1,4 @@
+// Decode VS Code Copy Path's home label for resource-less media previews; extension.ts owns clipboard access.
 import * as path from "path";
 
 /** Convert Copy Path's home label back to a path, without rewriting real URI resources. */

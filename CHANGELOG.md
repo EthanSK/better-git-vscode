@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.141
+
+- Resume the last cursor, selection and scroll position when returning to a visited unstaged text file through Source Control or Better Git navigation.
+- Clear saved positions after successful staging, while preserving them on failure and retaining exact stage Undo and cancellation views.
+- Keep a bounded, session-only cache of coordinates; first visits, staged views and media previews retain their existing behavior.
+
 ## 1.2.140
 
 - Fix missing review badges and ignored stage/navigation actions when an image preview reports a home-shortened path such as `~/Projects/...`, including deleted-image comparisons.

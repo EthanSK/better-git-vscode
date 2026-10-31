@@ -1,3 +1,4 @@
+// Real isolated VS Code/Git review journeys. Run focused cases on the Mini through test/runTest.ts.
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -6,6 +7,7 @@ import { promisify } from 'util';
 import { createHash, randomUUID } from 'crypto';
 import * as vscode from 'vscode';
 import { resolveStagedLfsImage } from '../../stagedLfsImage';
+import type { StageUndoView } from '../../stageTransactionStore';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // E2E suite for next/previous-scm-change navigation (v1.2.1).
@@ -125,6 +127,7 @@ suite('SCM change navigation E2E', () => {
 		getMouseDebugTrace(): string[];
 		clearMouseDebugTrace(): void;
 		isKeyboardReviewActive(): boolean;
+        getRememberedReviewPosition?(uri: vscode.Uri): StageUndoView | undefined;
         sampleKeyboardReviewKeys?(state: {option:boolean;shift:boolean;navigation:boolean;usedShift:boolean}): void;
         whenKeyboardGestureSettled?(): Promise<void>;
 	};
@@ -4950,6 +4953,93 @@ suite('SCM change navigation E2E', () => {
 		// hunk starts at 0-based line 9 — a 5-line step would land on line 5
 		const after = await expectCursorAt('aa_dual.txt', 9);
 		assert.notStrictEqual(after.selection.active.line, 5, 'dual-state file got the 5-line step — the stage-then-edit hijack is back');
+	});
+
+	test('unstaged review positions survive switching plain preview files and backward navigation', async () => {
+		const a = 'position_a.txt', b = 'position_b.txt';
+		write(a, lines(400, 'remember a')); write(b, lines(400, 'remember b'));
+		await refreshUntil(() => isUntracked(a) && isUntracked(b), 'position plain files');
+		const editor = await openPlainAt(a, 0);
+		editor.selection = new vscode.Selection(160, 3, 160, 7);
+		editor.revealRange(new vscode.Range(145, 0, 145, 0), vscode.TextEditorRevealType.AtTop);
+		const saved = await poll(() => {
+			const v = extensionApi.getRememberedReviewPosition?.(wsUri(a));
+			return v && (v.topLine ?? 0) > 100 && v.selections[0].active.line === 160 ? v : undefined;
+		}, 'non-default plain review position to be captured');
+		await vscode.commands.executeCommand('better-git-vscode.next-changed-file');
+		await expectActiveTab(b);
+		await vscode.commands.executeCommand('better-git-vscode.previous-changed-file');
+		await expectActiveTab(a);
+		await poll(() => {
+			const e = visibleEditorFor(wsUri(a));
+			return e && e.selection.anchor.line === 160 && e.selection.active.character === 7
+				&& Math.abs(e.visibleRanges[0].start.line - (saved.topLine ?? 0)) <= 1;
+		}, 'revisit to restore selection and scroll instead of landing at EOF');
+	});
+
+	test('unstaged review positions restore native working-diff switches and manual scrolling with an old cursor', async () => {
+		const a = 'committed/mod_a.txt', b = 'committed/mod_d.txt';
+		write(a, lines(400, 'changed a')); write(b, lines(400, 'changed b'));
+		await refreshUntil(() => inWorkingTree(a, 5) && inWorkingTree(b, 5), 'position diff files');
+		const editor = await openWorkingDiffAt(a, 3);
+		editor.revealRange(new vscode.Range(150, 0, 150, 0), vscode.TextEditorRevealType.AtTop);
+		const saved = await poll(() => {
+			const v = extensionApi.getRememberedReviewPosition?.(wsUri(a));
+			return v && (v.topLine ?? 0) > 100 ? v : undefined;
+		}, 'scrolled diff to be remembered without moving its cursor');
+		await vscode.commands.executeCommand('git.openChange', wsUri(b));
+		await vscode.commands.executeCommand('git.openChange', wsUri(a));
+		await poll(() => {
+			const e = visibleEditorFor(wsUri(a));
+			return e && e.selection.active.line === saved.selections[0].active.line
+				&& Math.abs(e.visibleRanges[0].start.line - (saved.topLine ?? 0)) <= 1;
+		}, 'native SCM-equivalent revisit restores cursor and viewport');
+	});
+
+	test('unstaged review positions survive failed staging and clear only after successful whole-file stage', async () => {
+		const a = 'position_stage_a.txt', b = 'position_stage_b.txt';
+		write(a, lines(300, 'stage a')); write(b, lines(10, 'stage b'));
+		await refreshUntil(() => isUntracked(a) && isUntracked(b), 'position stage files');
+		const editor = await openPlainAt(a, 0);
+		editor.selection = new vscode.Selection(120, 0, 120, 0);
+		editor.revealRange(new vscode.Range(110, 0, 110, 0), vscode.TextEditorRevealType.AtTop);
+		await poll(() => (extensionApi.getRememberedReviewPosition?.(wsUri(a))?.topLine ?? 0) > 80, 'position before staging');
+		// Use the suite's existing isolated API-failure pattern: native Git retries an actual index.lock
+		// itself, so holding that lock while awaiting add would deadlock the fixture rather than test us.
+		const prototype = Object.getPrototypeOf(repo), originalAdd = prototype.add;
+		prototype.add = async () => { throw new Error('intentional isolated position-stage failure'); };
+		try { await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file'); }
+		finally { prototype.add = originalAdd; }
+		assert.ok(extensionApi.getRememberedReviewPosition?.(wsUri(a)), 'a failed stage retains the saved review');
+		await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+		await expectActiveTab(b);
+		assert.strictEqual(extensionApi.getRememberedReviewPosition?.(wsUri(a)), undefined, 'successful stage forgets only that file');
+		await extensionApi.whenStageTransactionsSettled();
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		await poll(() => visibleEditorFor(wsUri(a))?.selection.active.line === 120, 'exact Undo still restores its independent saved view');
+	});
+
+	test('unstaged review positions include deleted text and clear after native staging', async () => {
+		const a = 'position_deleted.txt', b = 'position_next.txt';
+		write(a, lines(300, 'deleted review')); git(`add ${a}`); git('commit -m "position deletion fixture"');
+		fs.unlinkSync(wsUri(a).fsPath); write(b, 'next');
+		await refreshUntil(() => inWorkingTree(a, 6) && isUntracked(b), 'deleted position file');
+		await vscode.commands.executeCommand('git.openChange', wsUri(a));
+		const editor = await poll(() => vscode.window.visibleTextEditors.find(e => e.document.uri.scheme === 'git'
+			&& uriFilePath(e.document.uri) === wsUri(a).path), 'read-only deleted text editor');
+		editor.selection = new vscode.Selection(140, 2, 140, 2);
+		editor.revealRange(new vscode.Range(130, 0, 130, 0), vscode.TextEditorRevealType.AtTop);
+		const saved = await poll(() => {
+			const v = extensionApi.getRememberedReviewPosition?.(wsUri(a));
+			return v && (v.topLine ?? 0) > 100 ? v : undefined;
+		}, 'deleted text position');
+		await vscode.commands.executeCommand('git.openChange', wsUri(b));
+		await vscode.commands.executeCommand('git.openChange', wsUri(a));
+		await poll(() => vscode.window.visibleTextEditors.some(e => e.document.uri.toString() === saved.documentUri
+			&& e.selection.active.line === 140 && Math.abs(e.visibleRanges[0].start.line - (saved.topLine ?? 0)) <= 1), 'deleted text revisit');
+		await repo.add([wsUri(a).fsPath]);
+		await repo.status();
+		await poll(() => !extensionApi.getRememberedReviewPosition?.(wsUri(a)), 'native stage clears saved position');
 	});
 
 	// ── Keyboard review: Ethan's keyboard eyes mode ──────────────────────────────────────────────

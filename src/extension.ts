@@ -1,3 +1,4 @@
+// Better Git's activation and command wiring: keyboard/mouse review share exact staging, Undo and navigation.
 import { ReviewDocumentWarmup } from "./gitReviewWarmup";
 import { parseWandReviewUri } from "./wandReviewUri";
 import * as vscode from "vscode";
@@ -8,6 +9,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { homedir } from "os";
 import { resolveWorkbenchFilePath } from "./workbenchFilePath";
+import { ReviewFilePositions } from "./reviewFilePositions";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp } from "./gitWorktreeFocus";
@@ -49,6 +51,14 @@ import { registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedL
 
 let confirmOpenedReview: (uri: vscode.Uri) => void = () => undefined;
 let pendingWorktreePresentation: DeferredWorktreePresentation | undefined;
+const reviewFilePositions = new ReviewFilePositions();
+let trackedPositionTab: vscode.Tab | undefined;
+let trackedPositionInput: unknown;
+let trackedPositionEditor: vscode.TextEditor | undefined;
+let trackedPositionUri: string | undefined;
+let restoredPositionTab: vscode.Tab | undefined;
+let applyingReviewPosition = false;
+let pendingReviewPosition: { tab: vscode.Tab; editor: vscode.TextEditor; view: StageUndoView } | undefined;
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -290,6 +300,16 @@ const startIndexTransitionObservation = async (context: vscode.ExtensionContext)
                 // changes the index. Save that view with the observed receipt.
                 const view = captureActiveStageUndoView();
                 stageTransactionObserver?.notify(repoRoot, view ? { kind: "observedIndexChange", view } : undefined);
+                // Built-in +/stage-all and terminal staging clear positions too, without new Git commands.
+                const unstaged = new Set<string>([...(repo.state.workingTreeChanges ?? []),
+                    ...(repo.state.untrackedChanges ?? []), ...(repo.state.mergeChanges ?? [])]
+                    .filter(change => change.status !== GitStatus.IGNORED).map(change => change.uri.toString()));
+                const prefix = repo.rootUri.toString().replace(/\/$/, "") + "/";
+                reviewFilePositions.retain(file => !file.startsWith(prefix) || unstaged.has(file));
+                if (trackedPositionUri?.startsWith(prefix) && !unstaged.has(trackedPositionUri)) {
+                    trackedPositionUri = undefined; pendingReviewPosition = undefined; restoredPositionTab = undefined;
+                }
+                trackUnstagedReviewPosition(); // Also arm an already-open file that just became unstaged.
             }));
         }
     };
@@ -311,6 +331,11 @@ const startIndexTransitionObservation = async (context: vscode.ExtensionContext)
     if (typeof git.onDidCloseRepository === "function") {
         context.subscriptions.push(git.onDidCloseRepository((repo: any) => {
             repositoryDiscoveryOrder.delete(repo.rootUri.toString());
+            const prefix = repo.rootUri.toString().replace(/\/$/, "") + "/";
+            reviewFilePositions.retain(file => !file.startsWith(prefix));
+            if (trackedPositionUri?.startsWith(prefix)) {
+                trackedPositionUri = undefined; pendingReviewPosition = undefined; restoredPositionTab = undefined;
+            }
         }));
     }
 };
@@ -388,13 +413,18 @@ const stageUndoViewFromMouseReview = (fileUri: vscode.Uri, view?: MouseReviewVie
     };
 };
 
-const captureActiveStageUndoView = (): StageUndoView | undefined => {
+const captureActiveStageUndoView = (includeDeletedReview = false): StageUndoView | undefined => {
     const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    const fileUri = input instanceof vscode.TabInputTextDiff ? input.modified
+    const documentUri = input instanceof vscode.TabInputTextDiff ? input.modified
         : input instanceof vscode.TabInputText ? input.uri : undefined;
-    if (fileUri?.scheme !== "file") { return undefined; }
+    // Deleted text opens as one read-only git: document. Revisit memory may track it after verifying live
+    // unstaged membership below; the default exact-Undo capture keeps its existing working-file-only rule.
+    const fileUri = documentUri?.scheme === "file" ? documentUri
+        : includeDeletedReview && input instanceof vscode.TabInputText && documentUri?.scheme === "git"
+            ? toFilePathUri(documentUri) : undefined;
+    if (!fileUri) { return undefined; }
     const editor = visibleEditorForActiveTab();
-    if (!editor || editor.document.uri.toString() !== fileUri.toString()) { return undefined; }
+    if (!editor || editor.document.uri.toString() !== documentUri?.toString()) { return undefined; }
     return {
         fileUri: fileUri.toString(), documentUri: editor.document.uri.toString(),
         selections: editor.selections.slice(0, 16).map(selection => ({
@@ -438,6 +468,12 @@ const stageBatchThroughExtension = async (
     const stage = async (): Promise<void> => {
         trace("Git add starting");
         await runWithTransientGitIndexRetry(() => repo.add(uris.map(uri => uri.fsPath)));
+        // Ethan: remember unfinished reviews, then forget ONLY after a successful whole-file stage.
+        // The exact Undo receipt above owns its own saved view; this cache must not replace Undo history.
+        for (const uri of uris) { reviewFilePositions.forget(uri.toString()); }
+        if (trackedPositionUri && selectedUris.has(trackedPositionUri)) {
+            trackedPositionUri = undefined; pendingReviewPosition = undefined; restoredPositionTab = undefined;
+        }
         trace("Git add finished");
     };
     const observer = stageTransactionObserver;
@@ -749,6 +785,7 @@ interface BetterGitExtensionApi {
     isKeyboardReviewActive(): boolean;
     // Isolated Extension Development Hosts only: feed the same physical state interpreter without OS injection.
     sampleKeyboardReviewKeys?(state: ReviewKeyState): void;
+    getRememberedReviewPosition?(uri: vscode.Uri): StageUndoView | undefined;
     whenKeyboardGestureSettled?(): Promise<void>;
 }
 
@@ -2469,15 +2506,24 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         vscode.window.registerFileDecorationProvider(reviewDecorationProvider),
         vscode.window.tabGroups.onDidChangeTabs(() => {
             observeNavigationTab();
+            trackUnstagedReviewPosition();
             void refreshReviewDecoration();
             requestCurrentHunkOverviewMarkerRefresh();
         }),
         vscode.window.tabGroups.onDidChangeTabGroups(() => {
             observeNavigationTab();
+            trackUnstagedReviewPosition();
             void refreshReviewDecoration();
             requestCurrentHunkOverviewMarkerRefresh();
         }),
         vscode.window.onDidChangeTextEditorSelection(event => {
+            const manual = event.kind === vscode.TextEditorSelectionChangeKind.Mouse
+                || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard;
+            if (manual && event.textEditor === trackedPositionEditor && !applyingReviewPosition) {
+                // A real edit/cursor move after switching files wins over a queued position restore.
+                pendingReviewPosition = undefined;
+            }
+            rememberUnstagedReviewPosition(event.textEditor);
             if (event.textEditor === visibleEditorForActiveTab() &&
                 (event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)) {
                 worktreePresentation.dispose();
@@ -2489,6 +2535,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         vscode.window.onDidChangeTextEditorVisibleRanges(event => {
             observeReviewViewport(event.textEditor);
+            rememberUnstagedReviewPosition(event.textEditor);
         }),
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
@@ -2499,6 +2546,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         vscode.window.onDidChangeActiveTextEditor(() => {
             rememberReviewViewport(visibleEditorForActiveTab());
+            trackUnstagedReviewPosition();
             // Moving the batch-selection endpoint intentionally opens a different preview editor. Keep the
             // orange range alive for both preview and manual transitions until the gesture ends.
             if (![...stageHoldSelections.values()].some(selection => selection.request?.active)
@@ -2507,6 +2555,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
             void refreshReviewDecoration();
             requestCurrentHunkOverviewMarkerRefresh();
+        }),
+        vscode.window.onDidChangeVisibleTextEditors(() => trackUnstagedReviewPosition()),
+        new vscode.Disposable(() => {
+            pendingReviewPosition = undefined; trackedPositionTab = undefined; trackedPositionInput = undefined; trackedPositionEditor = undefined;
+            trackedPositionUri = undefined; restoredPositionTab = undefined; reviewFilePositions.clear();
         }),
         vscode.window.onDidChangeActiveNotebookEditor(() => {
             if (![...stageHoldSelections.values()].some(selection => selection.request?.active)
@@ -2523,6 +2576,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     void refreshReviewDecoration();
     requestCurrentHunkOverviewMarkerRefresh();
     rememberReviewViewport(visibleEditorForActiveTab());
+    trackUnstagedReviewPosition();
 
     return {
         whenScmTreeStateSettled,
@@ -2549,6 +2603,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         isKeyboardReviewActive: () => keyboardReviewContext.active,
         ...(context.extensionMode === vscode.ExtensionMode.Development || context.extensionMode === vscode.ExtensionMode.Test
             ? { sampleKeyboardReviewKeys: (state: ReviewKeyState) => keyboardGesture.sample(state),
+                getRememberedReviewPosition: (uri: vscode.Uri) => reviewFilePositions.get(uri.toString()),
                 whenKeyboardGestureSettled: () => keyboardGestureWork } : {}),
     };
 }
@@ -3202,11 +3257,14 @@ const revealUndoneStageTransaction = async (transaction: StoredStageTransaction)
     }
 };
 
-const restoreStageUndoView = async (view: StageUndoView): Promise<void> => {
+// The remembered-review cache shares this exact coordinate/clamping rule with stage Undo. Only Undo waits
+// for viewport settling; returning to a file issues a presentation update without holding up review input.
+const restoreStageUndoView = async (view: StageUndoView, settleViewport = true): Promise<void> => {
     // Ethan wants stage Undo to feel as if he never left: restore this exact text side's saved cursor AND
     // scroll position. A media preview has no TextEditor; do not apply a stale text cursor to its next tab.
     const editor = visibleEditorForActiveTab();
     if (!editor || editor.document.uri.toString() !== view.documentUri) { return; }
+    if (settleViewport) { pendingReviewPosition = undefined; } // Exact Undo takes precedence over revisit memory.
     editor.selections = view.selections.map(selection => new vscode.Selection(
         editor.document.validatePosition(new vscode.Position(selection.anchor.line, selection.anchor.character)),
         editor.document.validatePosition(new vscode.Position(selection.active.line, selection.active.character))));
@@ -3217,7 +3275,9 @@ const restoreStageUndoView = async (view: StageUndoView): Promise<void> => {
     const padding = Math.max(config.get<number>("cursorSurroundingLines", 0),
         config.get<boolean>("stickyScroll.enabled", true) ? config.get<number>("stickyScroll.maxLineCount", 5) : 0);
     const top = editor.document.validatePosition(new vscode.Position(view.topLine + padding, 0));
-    await revealRangeAndWaitForViewport(editor, new vscode.Range(top, top), vscode.TextEditorRevealType.AtTop);
+    const range = new vscode.Range(top, top);
+    if (settleViewport) { await revealRangeAndWaitForViewport(editor, range, vscode.TextEditorRevealType.AtTop); }
+    else { editor.revealRange(range, vscode.TextEditorRevealType.AtTop); }
 };
 
 // Unstaged file uris for a repo = tracked working-tree changes PLUS untracked (new) files, deduped by path
@@ -3471,6 +3531,10 @@ const getEmptyTreeRef = async (uri: vscode.Uri): Promise<string | undefined> => 
 
 // Opens the diff for a single list entry on the correct (staged vs unstaged) side.
 const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promise<void> => {
+    rememberUnstagedReviewPosition(visibleEditorForActiveTab());
+    // Capture BEFORE opening: the native first-hunk landing can create a fresh cache entry during open.
+    // Treating that new entry as a prior visit would suppress first-visit backward EOF/last-hunk landing.
+    const savedPosition = entry.staged ? undefined : reviewFilePositions.get(entry.uri.toString());
     if (!entry.staged) {
         // git.openChange does not accept editor options and takes keyboard
         // focus. Undo must keep SCM focus so the next Cmd+Z remains a stage
@@ -3486,6 +3550,7 @@ const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promis
                 const resource = entry.status === GitStatus.DELETED ? toGitUri(entry.uri, "~") : entry.uri;
                 await vscode.commands.executeCommand("vscode.open", resource, options);
             }
+            restoreRememberedReviewPosition(entry, savedPosition);
             return;
         }
         // Working-tree (unstaged) diff — git.openChange opens this side correctly, including untracked/new
@@ -3516,6 +3581,7 @@ const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promis
                 // file unreadable (e.g. binary/permission edge) — nothing more we can do, but we tried both paths
             }
         }
+        restoreRememberedReviewPosition(entry, savedPosition);
         return;
     }
     // OPT-IN WORKAROUND (better-git-vscode.revealStagedInSourceControl): highlight the staged file in the
@@ -3668,6 +3734,7 @@ const landPlainMergeConflictTarget = async (
     direction: "down" | "up",
     check = noNavigationCheckpoint,
 ): Promise<boolean> => {
+    if (hasRestoredReviewPosition(entry)) { return true; }
     if (!isMergeConflictFileUri(entry.uri)) {
         return false;
     }
@@ -3813,6 +3880,8 @@ const landNewFileTargetAtBottom = async (entry: FileChange, check = noNavigation
 // different behaviours again.
 const landChangeForBackwardReview = async (entry: FileChange, check = noNavigationCheckpoint): Promise<void> => {
     check();
+    // Revisit resumes Ethan's last position; only a FIRST visit uses the old EOF/last-hunk landing.
+    if (hasRestoredReviewPosition(entry)) { return; }
     if (await landPlainMergeConflictTarget(entry, "up", check)) {
         return;
     }
@@ -4021,6 +4090,77 @@ const visibleEditorForActiveTab = (): vscode.TextEditor | undefined => {
     return candidates.find((e) => e.viewColumn === column)
         ?? (candidates.length === 1 && candidates[0].viewColumn === undefined ? candidates[0] : undefined);
 };
+
+// Ethan: switching away and back must resume an unfinished text review, including preview tabs that VS Code
+// replaces. This observes the same tab-owned editor as navigation; staged sides, images and clean ordinary
+// editors never enter the cache. Deleted text is allowed; image zoom/pan keeps its separate existing behavior.
+const trackUnstagedReviewPosition = (): void => {
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const editor = visibleEditorForActiveTab();
+    if (trackedPositionTab === tab && trackedPositionInput === tab?.input && trackedPositionEditor === editor && trackedPositionUri) { return; }
+    trackedPositionTab = tab; trackedPositionInput = tab?.input; trackedPositionEditor = undefined; trackedPositionUri = undefined;
+    restoredPositionTab = undefined; pendingReviewPosition = undefined;
+    if (!tab || !editor) { return; }
+    const view = captureActiveStageUndoView(true);
+    if (!view) { return; }
+    const uri = vscode.Uri.parse(view.fileUri);
+    const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+    const repo = git?.getRepository(uri);
+    const matches = (changes: readonly { uri: vscode.Uri; status: number }[] = []): boolean =>
+        changes.some(change => change.status !== GitStatus.IGNORED && change.uri.toString() === view.fileUri
+            && (editor.document.uri.scheme === "file" || change.status === GitStatus.DELETED));
+    if (!repo || !(matches(repo.state.workingTreeChanges) || matches(repo.state.untrackedChanges) || matches(repo.state.mergeChanges))) {
+        return;
+    }
+    trackedPositionEditor = editor; trackedPositionUri = view.fileUri;
+    const saved = reviewFilePositions.get(view.fileUri);
+    if (!saved) { return; }
+    const pending = { tab, editor, view: saved };
+    pendingReviewPosition = pending;
+    // Let the current editor-open event batch finish applying native defaults. This is one event-loop
+    // callback, not a timer, input delay, polling loop or Git operation. A newer tab/user cursor move wins.
+    setImmediate(() => {
+        if (pendingReviewPosition !== pending) { return; }
+        pendingReviewPosition = undefined;
+        applyRememberedReviewPosition(pending.tab, pending.editor, pending.view);
+    });
+};
+
+const rememberUnstagedReviewPosition = (editor: vscode.TextEditor | undefined): void => {
+    if (!editor || editor !== trackedPositionEditor || pendingReviewPosition || applyingReviewPosition
+        || trackedPositionTab !== vscode.window.tabGroups.activeTabGroup.activeTab || !trackedPositionUri) { return; }
+    const view = captureActiveStageUndoView(true);
+    if (view?.fileUri === trackedPositionUri) { reviewFilePositions.remember(view); }
+};
+
+const applyRememberedReviewPosition = (tab: vscode.Tab, editor: vscode.TextEditor, view: StageUndoView): boolean => {
+    if (vscode.window.tabGroups.activeTabGroup.activeTab !== tab || visibleEditorForActiveTab() !== editor
+        || trackedPositionUri !== view.fileUri || editor.document.uri.toString() !== view.documentUri) { return false; }
+    applyingReviewPosition = true;
+    try {
+        // The no-settle branch applies its setters synchronously before returning its fulfilled promise.
+        void restoreStageUndoView(view, false).catch(error => debugLog("nav", `saved review position unavailable: ${String(error)}`));
+        restoredPositionTab = tab;
+        const viewport = readViewport(editor);
+        if (viewport) { reviewViewportState.set(editor, { ...viewport, manuallyScrolled: true }); }
+        debugLog("nav", `restored unstaged review position ${view.fileUri}, top=${view.topLine ?? 0}`);
+        return true;
+    } finally { applyingReviewPosition = false; }
+};
+
+const restoreRememberedReviewPosition = (entry: FileChange, saved: StageUndoView | undefined): boolean => {
+    if (!saved || entry.staged || currentReviewFileUri()?.toString() !== entry.uri.toString()) { return false; }
+    trackUnstagedReviewPosition();
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const editor = visibleEditorForActiveTab();
+    if (!tab || !editor || trackedPositionUri !== entry.uri.toString()) { return false; }
+    pendingReviewPosition = undefined;
+    return applyRememberedReviewPosition(tab, editor, saved);
+};
+
+const hasRestoredReviewPosition = (entry: FileChange): boolean => !entry.staged
+    && restoredPositionTab === vscode.window.tabGroups.activeTabGroup.activeTab
+    && trackedPositionUri === entry.uri.toString();
 
 // THE STRUCTURAL GATE for new-file scroll mode (v1.2.1). Returns the editor to 5-line-step through, or
 // undefined meaning "use normal navigation". ALL FOUR conditions must hold:
@@ -5137,6 +5277,7 @@ const restoreMouseReviewView = async (origin: NonNullable<ReturnType<typeof mous
     const shown = await currentReviewFileUriAsync();
     check();
     if (shown?.toString() !== origin.change.uri.toString()) { invalidateChangeNavigation(); return false; }
+    pendingReviewPosition = undefined; // Explicit gesture cancellation restores its captured origin, not a later cached visit.
     for (const saved of view.editors) {
         const editor = vscode.window.visibleTextEditors.find(candidate =>
             (candidate.viewColumn === undefined || candidate.viewColumn === view.column) && candidate.document.uri.toString() === saved.uri);

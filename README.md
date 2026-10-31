@@ -28,6 +28,10 @@ One key flies to the next or previous change. At the end of a file, it continues
 
 `Option+.` next · `Option+,` previous — literally the `>` / `<` keys, pointing the way.
 
+Switch away from an unfinished text file and return to it: Better Git restores your last cursor, selection and scroll position, including when a preview tab was replaced. This works with Source Control clicks and Better Git navigation. A first visit keeps the usual starting position.
+
+Successfully staging a file clears its saved review position; failed staging keeps it. Undo still restores its own exact pre-stage view. Position memory lasts for the current extension session and keeps only coordinates for up to 512 recently visited unstaged files, without retaining their contents.
+
 ### 2. Review a batch of files, then stage them together
 
 On **macOS** you can collect several files as you review them, then stage them all at once:
