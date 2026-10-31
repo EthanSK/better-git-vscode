@@ -1,8 +1,20 @@
+// Disposable Mini workbench driver: expose only test RPC actions and optional native timing instrumentation.
 const vscode = require('vscode');
 const fs = require('node:fs');
 const path = require('node:path');
 exports.run = async () => {
  const root = process.env.BGV_SWITCH_ROOT;
+ // Native SCM group focus queues its operation but returns before that operation runs. Model a busy
+ // renderer's queue in this disposable host; all actual focus/collapse commands still run natively.
+ const groupFocusDelay = Number(process.env.BGV_TEST_GROUP_FOCUS_DELAY_MS ?? 0);
+ const originalExecuteCommand = vscode.commands.executeCommand;
+ const groupFocusTimers = new Set();
+ if (groupFocusDelay > 0) vscode.commands.executeCommand = (command, ...args) => {
+  if (command !== 'workbench.scm.action.focusNextResourceGroup') return originalExecuteCommand(command,...args);
+  const timer=setTimeout(()=>{groupFocusTimers.delete(timer);void originalExecuteCommand(command,...args);},groupFocusDelay);
+  groupFocusTimers.add(timer);
+  return Promise.resolve();
+ };
  const git = (await vscode.extensions.getExtension('vscode.git').activate()).getAPI(1);
  const roots = JSON.parse(fs.readFileSync(path.join(root,'roots.json'),'utf8'));
  if (process.env.BGV_PREORDERED_API_TEST === '1') {
@@ -57,6 +69,7 @@ exports.run = async () => {
      tabWatch=vscode.window.tabGroups.onDidChangeTabs(()=>{const input=vscode.window.tabGroups.activeTabGroup.activeTab?.input; watchedTabs.push(String(input?.modified??input?.uri));});
     }
     else if(request.action==='watched-tabs') {tabWatch?.dispose(); value=watchedTabs;}
+    else if(request.action==='settle-worktree') {await api.whenWorktreePresentationSettled();}
     else if(request.action==='review-keys') {api.sampleKeyboardReviewKeys(request.keys); await api.whenKeyboardGestureSettled();}
     else if(request.action==='badge') value=api.getReviewDecorationBadge(vscode.Uri.file(path.join(roots[request.repo],request.file)));
     else if(request.action==='open') value=await vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control',vscode.Uri.file(roots[request.repo]));
@@ -114,4 +127,6 @@ exports.run = async () => {
    finally { busy=false; }
   },30);
  });
+ vscode.commands.executeCommand = originalExecuteCommand;
+ for(const timer of groupFocusTimers) clearTimeout(timer);
 };

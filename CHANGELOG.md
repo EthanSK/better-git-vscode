@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.142
+
+- Give native Staged Changes group focus and refreshed tree expansion a bounded 500 ms settling gap during explicit Worktree-link presentation. Review navigation and staging input keep their existing timing.
+- Acknowledge Code's requested app activation before returning from the early app handoff; deliberate switches to another app still win.
+- Record why a deferred Worktree presentation ended, including expiry, cursor movement, edits and review navigation. Preserve the existing ten-second limit and one recent-link policy.
+
 ## 1.2.141
 
 - Resume the last cursor, selection and scroll position when returning to a visited unstaged text file through Source Control or Better Git navigation.

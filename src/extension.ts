@@ -13,7 +13,7 @@ import { ReviewFilePositions } from "./reviewFilePositions";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp } from "./gitWorktreeFocus";
-import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS } from "./gitWorktreePresentation";
+import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS, WORKTREE_TREE_SETTLE_MS } from "./gitWorktreePresentation";
 import { repositoriesInScmRegistrationOrder } from "./gitScmDiscoveryOrder";
 import { CommitMessageGenerator } from "./codexCommitMessage";
 import { GitStatus } from "./gitStatus";
@@ -685,6 +685,7 @@ const executeScmTreeCommand = async <T = unknown>(
         ensureScmTreeExperimentEnabled();
     }
     scmTreeCommandTrace.push(command);
+    debugLog("scm-tree", `${origin}: ${command}`); // Show the exact last presentation step if a live link aborts.
     return vscode.commands.executeCommand<T>(command, ...args);
 };
 
@@ -786,6 +787,7 @@ interface BetterGitExtensionApi {
     // Isolated Extension Development Hosts only: feed the same physical state interpreter without OS injection.
     sampleKeyboardReviewKeys?(state: ReviewKeyState): void;
     getRememberedReviewPosition?(uri: vscode.Uri): StageUndoView | undefined;
+    whenWorktreePresentationSettled?(): Promise<void>;
     whenKeyboardGestureSettled?(): Promise<void>;
 }
 
@@ -1228,11 +1230,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let worktreeLinkGeneration = 0;
     const worktreePresentation = new DeferredWorktreePresentation(
         listener => vscode.window.onDidChangeWindowState(listener),
-        () => vscode.window.state.focused);
+        () => vscode.window.state.focused, undefined,
+        reason => debugLog("worktree-link", `Deferred native presentation ended: ${reason}.`));
     context.subscriptions.push(worktreePresentation);
     pendingWorktreePresentation = worktreePresentation;
     const openWorktree = (root?: vscode.Uri, sourceLink?: vscode.Uri): Promise<void> => {
-        worktreePresentation.dispose();
+        worktreePresentation.dispose("newer-link");
+        const initialPresentationIsCurrent = worktreePresentation.checkpoint();
         const generation = ++worktreeLinkGeneration;
         const receivedAt = Date.now();
         const presentationExpiresAt = performance.now() + WORKTREE_PRESENTATION_MAX_AGE_MS;
@@ -1264,7 +1268,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 debugLog("worktree-focus", `Finished app handoff for #${generation} before repository loading.`);
             };
             let deferredRoot: vscode.Uri | undefined;
-            const revealed = await openWorktreeInSourceControl(root, isCurrent, value => { deferredRoot = value; }, handoff);
+            const revealed = await openWorktreeInSourceControl(root,
+                () => isCurrent() && initialPresentationIsCurrent(), value => { deferredRoot = value; }, handoff);
             debugLog("worktree-link", `Finished #${generation}: loaded=${revealed}, nativePending=${!!deferredRoot}, current=${isCurrent()}, elapsed=${Date.now() - receivedAt}ms.`);
             if (revealed && deferredRoot && isCurrent()) {
                 const presentationRoot = deferredRoot;
@@ -2526,7 +2531,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             rememberUnstagedReviewPosition(event.textEditor);
             if (event.textEditor === visibleEditorForActiveTab() &&
                 (event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)) {
-                worktreePresentation.dispose();
+                worktreePresentation.dispose("cursor-move");
                 invalidateChangeNavigation(true, "manual editor selection");
                 // A manual cursor move is no longer a Better Git-selected hunk. Clear immediately instead of
                 // spawning a Git diff on every arrow-key repeat; the next Better Git navigation repaints it.
@@ -2539,7 +2544,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
-                worktreePresentation.dispose();
+                worktreePresentation.dispose("document-edit");
                 invalidateChangeNavigation(true, "reviewed document changed"); // Git hunk coordinates no longer describe the displayed revision.
                 clearCurrentHunkOverviewMarker();
             }
@@ -2604,6 +2609,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         ...(context.extensionMode === vscode.ExtensionMode.Development || context.extensionMode === vscode.ExtensionMode.Test
             ? { sampleKeyboardReviewKeys: (state: ReviewKeyState) => keyboardGesture.sample(state),
                 getRememberedReviewPosition: (uri: vscode.Uri) => reviewFilePositions.get(uri.toString()),
+                whenWorktreePresentationSettled: () => worktreeLinkQueue,
                 whenKeyboardGestureSettled: () => keyboardGestureWork } : {}),
     };
 }
@@ -3021,7 +3027,10 @@ const revealCollapsedWorktree = async (
         const groupIndex = Number((repository.state.mergeChanges ?? []).length > 0);
         for (let group = Number(firstGroupFocused); group <= groupIndex; group++) {
             await executeScmTreeCommand("manual", "workbench.scm.action.focusNextResourceGroup");
-            if (!await pause()) { return false; }
+            // VS Code queues group focus without returning its promise. A 100 ms gap can collapse the
+            // header instead, or let the late group operation steal the final file selection. This is a
+            // bounded presentation settle only; it never debounces or delays mouse/keyboard review input.
+            if (!await pause(WORKTREE_TREE_SETTLE_MS)) { return false; }
         }
         await executeScmTreeCommand("manual", "list.collapseAllToFocus");
         if (!await pause()) { return false; }
@@ -3085,7 +3094,9 @@ const revealCollapsedWorktree = async (
     if (index > 0) { await executeScmTreeCommand("manual", "list.focusDown", index); }
     if (!await pause(50)) { return false; }
     await executeScmTreeCommand("manual", "list.expand");
-    if (!await pause()) { return false; }
+    // list.expand is fire-and-forget for AsyncDataTree too. Let refreshed group rows materialize before
+    // asking SCM to focus Staged; collapsed-root refreshes can discard those children until this expansion.
+    if (!await pause(WORKTREE_TREE_SETTLE_MS)) { return false; }
     return collapseStagedGroup(true);
 };
 
@@ -3160,7 +3171,15 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent
             onDeferred?.(vscode.Uri.file(canonicalRoot));
         };
         const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-        const stillOwned = () => isCurrent() && vscode.window.tabGroups.activeTabGroup.activeTab === originalTab;
+        const stillOwned = () => {
+            const current = isCurrent();
+            const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+            if (!current || tab !== originalTab) {
+                debugLog("worktree-link", `Stopped native presentation for ${name}: current=${current}, sameTab=${tab === originalTab}, before=${originalTab?.label}, now=${tab?.label}, review=${currentReviewFileUri()?.toString() ?? "none"}.`);
+                return false;
+            }
+            return true;
+        };
         if (autoReveal) {
             nativeRevealed = await revealCollapsedWorktree(repository, git.repositories, stillOwned, deferPresentation);
         } else {
@@ -3181,7 +3200,9 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent
                 if (!isCurrent()) { return false; }
                 if (!vscode.window.state.focused) { deferPresentation(); break; }
                 await executeScmTreeCommand("manual", "workbench.scm.action.focusNextResourceGroup");
-                await new Promise(resolve => setTimeout(resolve, 100));
+                // Deleted Git-side previews cannot use Auto Reveal. Their Changes-group focus has the
+                // same queued native-command contract as Staged above; keep both paths on one timing rule.
+                await new Promise(resolve => setTimeout(resolve, WORKTREE_TREE_SETTLE_MS));
             }
             if (!isCurrent()) { return false; }
             if (vscode.window.state.focused) { await executeScmTreeCommand("manual", "list.expand"); }
@@ -3215,6 +3236,7 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent
         }
         return !autoReveal || nativeRevealed || nativeDeferred;
     } catch (error) {
+        debugLog("worktree-link", `Native presentation failed for ${root?.fsPath ?? "worktree"}: ${String(error)}`);
         void vscode.window.showErrorMessage(`Better Git: Failed to open ${root?.fsPath ?? "worktree"}: ${error instanceof Error ? error.message : String(error)}`);
         return false;
     }
@@ -5209,7 +5231,7 @@ const serializeChangeNavigation = (
 ): Promise<void> => {
     const label = traceLabel ?? (commitCapturedStage ? "captured-stage" : undefined);
     const queuedAt = label ? performance.now() : 0;
-    pendingWorktreePresentation?.dispose();
+    pendingWorktreePresentation?.dispose("review-navigation");
     observeNavigationTab();
     queuedNavigationOperations++;
     const generation = changeNavigationGeneration;

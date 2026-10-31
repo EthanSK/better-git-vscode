@@ -1,7 +1,31 @@
+// Non-GUI lifetime/ownership checks for the single recent Worktree-link focus retry.
 import * as assert from 'assert';
 import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS } from '../../gitWorktreePresentation';
 
 suite('Deferred Worktree presentation', () => {
+    test('review input cancels the immediate presentation even before a retry listener exists', () => {
+        const scheduler = new DeferredWorktreePresentation(() => ({ dispose() {} }), () => true);
+        const current = scheduler.checkpoint();
+        assert.strictEqual(current(), true);
+        scheduler.dispose('review-navigation');
+        assert.strictEqual(current(), false);
+        assert.strictEqual(scheduler.checkpoint()(), true);
+    });
+    test('reports expiry and explicit cancellation once without extending the link deadline', () => {
+        let now = 0;
+        const listeners = new Set<() => void>(), reasons: string[] = [];
+        const scheduler = new DeferredWorktreePresentation(listener => {
+            listeners.add(listener); return { dispose: () => { listeners.delete(listener); } };
+        }, () => true, () => now, reason => reasons.push(reason));
+        scheduler.schedule(() => true, () => new Promise<boolean>(() => undefined));
+        now = WORKTREE_PRESENTATION_MAX_AGE_MS;
+        for (const listener of [...listeners]) { listener(); }
+        assert.deepStrictEqual(reasons, ['expired']);
+        assert.strictEqual(listeners.size, 0);
+        scheduler.schedule(() => true, () => new Promise<boolean>(() => undefined));
+        scheduler.dispose('review-navigation'); scheduler.dispose('review-navigation');
+        assert.deepStrictEqual(reasons, ['expired', 'review-navigation']);
+    });
     function fixture() {
         let focused = false;
         let now = 0;

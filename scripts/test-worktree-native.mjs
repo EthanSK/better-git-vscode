@@ -76,7 +76,7 @@ fs.writeFileSync(workspace, JSON.stringify({ folders: (testSingleRepository ? [r
     // The dedicated Mini uses Dvorak - QWERTY Cmd. Physical X is therefore the contributed Shift+Option+Q
     // binding while still reporting hardware key code 7 to the release monitor.
     'better-git-vscode.dvorakMode': testKeyboardRepeat,
-    'better-git-vscode.debugLogging': testKeyboardRepeat,
+    'better-git-vscode.debugLogging': testKeyboardRepeat || process.env.BGV_NATIVE_DEBUG === '1',
 } }));
 const profile = path.join(root, 'profile');
 fs.mkdirSync(path.join(profile, 'User'), { recursive: true });
@@ -117,9 +117,18 @@ async function capture(name) {
     fs.writeFileSync(path.join(evidence, `${name}.json`), JSON.stringify(await evaluate(rowsExpression), null, 2));
 }
 async function check(repo, name, file = 'a.txt') {
-    // Wait for the selected file only. Never retry the collapse command: a delayed
-    // recollapse would hide the exact regression this test must catch.
-    await until(() => evaluate(rowsExpression), rows => rows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ',')), name);
+    // Native focus is delivered separately from the initial background load. Wait for that event and the
+    // accepted presentation's own completion before checking its painted result; never repair the UI here.
+    await until(() => request('state'), state => state.focused, name + ': receiving window focus');
+    await request('settle-worktree');
+    // A background link opens its file before the deferred native fold. File selection alone can
+    // therefore precede that fold's intermediate collapsed-root state. Observe the complete visible
+    // result once; never retry a collapse command or repair the state from the test.
+    await until(() => evaluate(rowsExpression), rows =>
+        rows.some(r => r.selected === 'true' && r.text.includes(`repo-${repo}`) && r.aria?.startsWith(file + ','))
+        && rows.find(r => r.aria === 'Staged Changes')?.expanded === 'false'
+        && rows.find(r => r.aria === 'Changes')?.expanded === 'true'
+        && rows.some(r => r.level === '1' && r.aria === `repo-${repo} Git` && r.expanded === 'true'), name);
     await pause(350); // Observe late resource publication after the command has returned.
     let rows = await evaluate(rowsExpression);
     const selectedRows = rows;

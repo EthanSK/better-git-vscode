@@ -1,3 +1,4 @@
+// Native app handoff for explicit Worktree links; preserve the origin's app-switching order before loading.
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { normalizeReturnApp } from "./gitWorktreeLink";
@@ -40,7 +41,16 @@ if (front && allowed.includes(ObjC.unwrap(front.bundleIdentifier)) && Number(tar
         const current = $.NSWorkspace.sharedWorkspace.frontmostApplication;
         if (!current) { return; }
         if (Number(current.processIdentifier) === Number(target.processIdentifier)) {
-            editor.activateWithOptions(2);
+            if (!editor.activateWithOptions(2)) { return; }
+            // Code activation is asynchronous too. Returning at the request used to start SCM while the
+            // OS still considered Codex frontmost, needlessly sending the collapse to its expiring retry.
+            // Wait only for acknowledgement; a deliberate switch to another app always wins.
+            for (let editorAttempt = 0; editorAttempt < 50; editorAttempt++) {
+                const editorFront = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+                if (!editorFront || Number(editorFront.processIdentifier) === Number(editor.processIdentifier)) { return; }
+                if (Number(editorFront.processIdentifier) !== Number(target.processIdentifier)) { return; }
+                $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.01));
+            }
             return;
         }
         // A deliberate switch to any other process wins, even another browser.

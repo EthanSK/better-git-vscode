@@ -1,3 +1,4 @@
+// Non-GUI AppKit handoff state checks; the Mini native suite verifies the real workbench sequence.
 import * as assert from 'assert';
 import { runInNewContext } from 'vm';
 import { RETURN_TO_APP_SCRIPT, returnToApp } from '../../gitWorktreeFocus';
@@ -27,15 +28,19 @@ suite('Git worktree focus', () => {
         }
     });
     test('optional editor return waits for the origin and preserves the original editor process', () => {
-        for (const mode of ['immediate', 'delayed', 'timeout', 'user-switch', 'activation-failed', 'ambiguous-editor', 'missing-origin', 'browser-start', 'insiders']) {
+        for (const mode of ['immediate', 'delayed', 'timeout', 'user-switch', 'activation-failed', 'ambiguous-editor', 'missing-origin', 'browser-start', 'insiders', 'editor-delayed', 'editor-user-switch', 'editor-timeout']) {
             const editorId = mode === 'insiders' ? 'com.microsoft.VSCodeInsiders' : 'com.microsoft.VSCode';
             const events: string[] = [];
             let sleeps = 0;
             let current: any;
-            const editor = { bundleIdentifier: editorId, processIdentifier: 10, activateWithOptions: () => { events.push('editor'); current = editor; return true; } };
+            const editor = { bundleIdentifier: editorId, processIdentifier: 10, activateWithOptions: () => {
+                events.push('editor');
+                if (!mode.startsWith('editor-')) { current = editor; }
+                return true;
+            } };
             const origin = { bundleIdentifier: 'com.openai.codex', processIdentifier: 20, activateWithOptions: () => {
                 events.push('origin');
-                if (['immediate', 'browser-start', 'insiders'].includes(mode)) { current = origin; }
+                if (['immediate', 'browser-start', 'insiders'].includes(mode) || mode.startsWith('editor-')) { current = origin; }
                 return mode !== 'activation-failed';
             } };
             current = ['browser-start', 'ambiguous-editor'].includes(mode)
@@ -54,6 +59,8 @@ suite('Git worktree focus', () => {
                         assert.strictEqual(seconds, 0.01); sleeps++;
                         if (mode === 'delayed' && sleeps === 3) { current = origin; }
                         if (mode === 'user-switch') { current = { bundleIdentifier: 'com.google.Chrome', processIdentifier: 99 }; }
+                        if (mode === 'editor-delayed' && sleeps === 3) { current = editor; }
+                        if (mode === 'editor-user-switch') { current = { bundleIdentifier: 'com.google.Chrome', processIdentifier: 99 }; }
                     } } },
                 },
             });
@@ -62,6 +69,9 @@ suite('Git worktree focus', () => {
             if (mode === 'delayed') { assert.strictEqual(sleeps, 3); }
             if (mode === 'timeout') { assert.strictEqual(sleeps, 50); }
             if (mode === 'user-switch') { assert.strictEqual(sleeps, 1); }
+            if (mode === 'editor-delayed') { assert.strictEqual(sleeps, 3); }
+            if (mode === 'editor-timeout') { assert.strictEqual(sleeps, 50); }
+            if (mode === 'editor-user-switch') { assert.strictEqual(sleeps, 1); }
         }
     });
     test('passes only supported editor identifiers and defaults to the existing one-way return', async () => {
