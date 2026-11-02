@@ -54,6 +54,10 @@ To back out:
 
 The batch works with either navigation-key pair and in Dvorak mode, and needs no extra macOS permissions. On Windows and Linux, `Shift+Alt+.` / `Shift+Alt+,` still stage one file at a time; the batch is macOS only. Mouse and Magic Wand review are unchanged.
 
+On macOS, holding a Next / Previous key leaves at least 300 ms to look at each change after it opens. Repeats do not build up while a change is loading. Releasing and pressing again moves straight away; mouse and wand steps keep their existing timing.
+
+You can start a batch on deleted files, including deleted images with another version already staged. If VS Code hides which side an image comparison shows, Better Git first opens that same image's unstaged deletion preview, then starts review. This does not stage anything. A staged deletion with a recreated working file is never silently selected as that working file.
+
 ### 3. Fix something without losing your place
 
 When you open a *staged* file, what you see is a frozen, read-only snapshot of what's staged — you can't actually edit it there. Spot a bug mid-review and you'd normally have to go hunt down the real file. **One key does it for you:** it opens the actual, editable working file at the *exact* line and scroll position you were looking at. See it, fix it, on the spot.
@@ -104,6 +108,8 @@ Exact mixed-state restoration remains paused until VS Code provides a dependable
 ## Open a worktree from a link
 
 A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolute%2Fworktree` opens Source Control in the VS Code window receiving the link and opens one change from that exact worktree. Percent-encode the entire absolute path so spaces, plus signs, percent signs and other URL characters survive. VS Code can ask permission before handing the link to Better Git.
+
+If VS Code is behind another app, a recent link gets one focus retry. That retry must start its tree work within ten seconds of the click; once started, it can finish opening the target instead of timing out halfway through collapse. Switching review files, starting review navigation or opening a newer link still cancels the old request. Ordinary later app switches do not repeat it.
 
 Worktree links can optionally return focus to another already-running app before repository loading and Source Control expansion. This feature is **macOS only and off by default**. In your VS Code User settings:
 

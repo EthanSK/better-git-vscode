@@ -1,3 +1,4 @@
+// Modifier-mode and native physical-key protocol checks; pacing must preserve Shift-release and batch release.
 import * as assert from "assert";
 import { EventEmitter } from "events";
 import * as vm from "vm";
@@ -65,6 +66,9 @@ suite("Keyboard modifier cycle and release", () => {
     });
     test("parses only the bounded state protocol", () => {
         assert.deepStrictEqual(parseReviewKeyState("state 1 0 1 0"), keys(true, false, true));
+        assert.deepStrictEqual(parseReviewKeyState("state 1 0 1 0 2"), { ...keys(true, false, true), navigationKeys: 2 });
+        assert.strictEqual(parseReviewKeyState("state 1 0 0 0 2"), undefined);
+        assert.strictEqual(parseReviewKeyState("state 1 0 1 0 16"), undefined);
         for (const value of ["state 1 0", "state 2 0 0 0", "state 1 0 0 0 extra", "released 2", ""]) {
             assert.strictEqual(parseReviewKeyState(value), undefined);
         }
@@ -82,8 +86,8 @@ suite("Keyboard modifier cycle and release", () => {
             delay: () => { if (++frame === frames.length) { throw stop; } } };
         vm.createContext(scope); vm.runInContext(REVIEW_KEY_MONITOR_SCRIPT, scope);
         assert.throws(() => scope.run(["123"]), error => error === stop);
-        assert.ok(output.includes("state 0 0 1 1\n"));
-        assert.strictEqual(output.at(-1), "state 0 0 0 0\n");
+        assert.ok(output.includes("state 0 0 1 1 2\n"));
+        assert.strictEqual(output.at(-1), "state 0 0 0 0 0\n");
     });
     test("monitor kills only its child on blur/dispose, ignores late output and cancels on malformed output", () => {
         const children: (EventEmitter & { stdout: EventEmitter; kills: number })[] = [];

@@ -294,7 +294,13 @@ process.stdout.write(JSON.stringify({
 			fs.rmSync(workspaceFilePath, { force: true });
 		}
 		if (testUserDataPath) {
-			fs.rmSync(testUserDataPath, { recursive: true, force: true });
+			try {
+				// Electron can finish writing its disposable profile after the test host exits. Like fixture
+				// cleanup above, this must not replace the real test result; retries are cleanup-only.
+				fs.rmSync(testUserDataPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+			} catch (error) {
+				console.warn(`Temporary VS Code profile cleanup incomplete (${testUserDataPath}): ${String(error)}`);
+			}
 		}
 		if (testExtensionsPath) {
 			fs.rmSync(testExtensionsPath, { recursive: true, force: true });

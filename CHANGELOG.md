@@ -1,5 +1,12 @@
 # Change Log
 
+## 1.2.143
+
+- Start keyboard, mouse and wand review from deleted-image comparisons even when another version of the image is already staged. Resolve native media resources correctly and show the exact unstaged deletion preview when VS Code hides the comparison side.
+- Pace continuous macOS keyboard Next/Previous holds with a 300 ms glance interval after each completed step. Fresh presses remain immediate, and repeats do not queue behind loading changes. Preserve mouse/wand timing, mode toggles, release-to-stage and legacy immediate stage shortcuts.
+- Let a recent Worktree-link retry finish its native tree sequence after admission instead of timing out halfway through collapse. Waiting and loading still expire after ten seconds; newer links, review input and focus/ownership checks remain protected.
+- Document the behavior and its safety boundaries, expand deleted-image and focus-race coverage, and prevent temporary test-profile cleanup from replacing the actual test result.
+
 ## 1.2.142
 
 - Give native Staged Changes group focus and refreshed tree expansion a bounded 500 ms settling gap during explicit Worktree-link presentation. Review navigation and staging input keep their existing timing.

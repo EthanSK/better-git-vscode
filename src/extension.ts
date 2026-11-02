@@ -9,6 +9,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { homedir } from "os";
 import { resolveWorkbenchFilePath } from "./workbenchFilePath";
+import { reviewDiffIsStaged } from "./gitReviewDiff";
 import { ReviewFilePositions } from "./reviewFilePositions";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
@@ -33,6 +34,7 @@ import {
 import { MouseHoldChordState, registerMouseShortRelease, resolveAdjacentMouseChord } from "./mouseHoldChord";
 import { KeyboardStageRepeatGuard, parseKeyboardStageArgs } from "./keyboardStageRepeatGuard";
 import { KeyboardReviewGesture, KeyboardReviewMode, ReviewKeyState } from "./keyboardReviewGesture";
+import { KeyboardNavigationRepeat } from "./keyboardNavigationRepeat";
 import { MacReviewKeyMonitor } from "./macReviewKeyMonitor";
 import {
     decideKeyboardReviewBegin,
@@ -953,19 +955,34 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // This is what the editor-title "+" button reads to decide which way to advance after staging (v1.2.7).
     // During Ethan's keyboard eyes mode, untagged Next/Previous review the pending selection instead of ending it.
     // The internal "keyboard" tag is never a public navigation source.
-    let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", async (source?: unknown) => {
+    const keyboardNavigationRepeats = new KeyboardNavigationRepeat();
+    const withKeyboardRepeat = async (source: unknown, navigate: (source: unknown) => Promise<void>): Promise<void> => {
+        // Reuse the established manifest physical-key tag/allowlist used by the stage repeat guard.
+        // Only a held keyboard's OS repeats are paced. Mouse/wand calls and fresh released presses stay exact.
+        const key = parseKeyboardStageArgs(source);
+        const paced = key !== undefined && process.platform === "darwin";
+        const permit = paced ? keyboardNavigationRepeats.admit(key) : undefined;
+        if (paced && !permit) { return; }
+        try {
+            if (permit) { debugLog("keyboard-repeat", `Admitted ${key} navigation; hold=${permit.holdId ?? "unmonitored"}.`); }
+            // Keyboard review historically routes untagged navigation into the pending set. Metadata
+            // must not turn a keyboard step into mouse navigation and accidentally clear that set.
+            await navigate(key === undefined ? source : undefined);
+        } finally { if (permit) { keyboardNavigationRepeats.complete(permit); } }
+    };
+    let disposable = vscode.commands.registerCommand("better-git-vscode.next-scm-change", (source?: unknown) => withKeyboardRepeat(source, async source => {
         if (routeChangeNavigation(keyboardReviewHolds(), source) === "review") { return stepKeyboardReview("next"); }
         clearStageHoldFeedback();
         lastNavDirection = "next"; // he just jumped FORWARD through changes -> "+" should advance forward
         await navigateWithMouseOrigin("next", isMouseReviewSource(source) ? source : undefined);
-    });
+    }));
 
-    let disposable2 = vscode.commands.registerCommand("better-git-vscode.previous-scm-change", async (source?: unknown) => {
+    let disposable2 = vscode.commands.registerCommand("better-git-vscode.previous-scm-change", (source?: unknown) => withKeyboardRepeat(source, async source => {
         if (routeChangeNavigation(keyboardReviewHolds(), source) === "review") { return stepKeyboardReview("previous"); }
         clearStageHoldFeedback();
         lastNavDirection = "previous"; // he just jumped BACKWARD -> "+" should advance backward
         await navigateWithMouseOrigin("previous", isMouseReviewSource(source) ? source : undefined);
-    });
+    }));
 
     const stageBeforeMouseNavigation = vscode.commands.registerCommand(
         "better-git-vscode.stage-before-mouse-navigation", stageMouseNavigationOrigin
@@ -1281,7 +1298,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                         || vscode.window.tabGroups.activeTabGroup.activeTab === originalTab)
                     && currentReviewFileUri()?.toString() === originalReviewUri;
                 debugLog("worktree-link", `Deferred native presentation for #${generation} until window focus.`);
-                worktreePresentation.schedule(stillOwned, isScheduled => {
+                worktreePresentation.schedule(stillOwned, (isScheduled, beginPresentation) => {
                     const presentation = worktreeLinkQueue.then(async () => {
                         if (!isScheduled() || !stillOwned()) { return true; }
                         if (!vscode.window.state.focused) { return false; }
@@ -1290,7 +1307,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                         let deferredAgain = false;
                         const revealed = await openWorktreeInSourceControl(presentationRoot,
                             () => isScheduled() && isCurrent() && (originalReviewUri === undefined
-                                || currentReviewFileUri()?.toString() === originalReviewUri), () => { deferredAgain = true; });
+                                || currentReviewFileUri()?.toString() === originalReviewUri), () => { deferredAgain = true; },
+                            undefined, beginPresentation);
                         if (revealed && deferredAgain && isScheduled() && isCurrent()) {
                             debugLog("worktree-link", `Native presentation for #${generation} interrupted by focus loss; still pending.`);
                             return false;
@@ -2116,9 +2134,15 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         mode => trackKeyboardGesture(setKeyboardReviewMode(mode)),
         () => trackKeyboardGesture(finishKeyboardReview())
     );
+    const observeKeyboardState = (state: ReviewKeyState): void => {
+        if (state.navigationKeys === undefined) { keyboardNavigationRepeats.reset(); }
+        else { keyboardNavigationRepeats.sample(state.navigationKeys); }
+        keyboardGesture.sample(state);
+    };
     const keyboardKeyMonitor = new MacReviewKeyMonitor(
-        state => keyboardGesture.sample(state),
+        observeKeyboardState,
         () => {
+            keyboardNavigationRepeats.reset();
             keyboardGesture.reset();
             if (liveKeyboardReview(keyboardReviewHolds())) { void cancelKeyboardReview(); }
         },
@@ -2607,7 +2631,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         clearMouseDebugTrace: () => { mouseDebugTrace.length = 0; },
         isKeyboardReviewActive: () => keyboardReviewContext.active,
         ...(context.extensionMode === vscode.ExtensionMode.Development || context.extensionMode === vscode.ExtensionMode.Test
-            ? { sampleKeyboardReviewKeys: (state: ReviewKeyState) => keyboardGesture.sample(state),
+            ? { sampleKeyboardReviewKeys: observeKeyboardState,
                 getRememberedReviewPosition: (uri: vscode.Uri) => reviewFilePositions.get(uri.toString()),
                 whenWorktreePresentationSettled: () => worktreeLinkQueue,
                 whenKeyboardGestureSettled: () => keyboardGestureWork } : {}),
@@ -2811,9 +2835,17 @@ const isMergeEditorInput = (input: unknown): boolean => {
     return !!(m && m.result && m.input1 && m.input2);
 };
 
+// Native image comparisons can carry original/modified URIs without being a TabInputTextDiff instance.
+// Fire, keyboard eyes, mouse/wand holds and navigation must recognize that same actual resource pair.
+// Keep resource-less media on the exact-path fallback and preserve the separate three-way merge predicate.
+const isResourceDiffInput = (input: unknown): input is { original: vscode.Uri; modified: vscode.Uri } => {
+    const value = input as { original?: unknown; modified?: unknown } | undefined;
+    return !!value && value.original instanceof vscode.Uri && value.modified instanceof vscode.Uri;
+};
+
 const currentReviewFileUri = (): vscode.Uri | undefined => {
     const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (input instanceof vscode.TabInputTextDiff) {
+    if (isResourceDiffInput(input)) {
         // Resolve the file path from EITHER side of the diff. A DELETED file has no working (modified) side so
         // its path is on the original (HEAD) side; an ADDED file has no original; a MODIFIED file has both.
         // Trying modified-then-original covers modify / add / delete / rename / staged variants generally,
@@ -3101,7 +3133,8 @@ const revealCollapsedWorktree = async (
 };
 
 const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent: () => boolean = () => true,
-    onDeferred?: (root: vscode.Uri) => void, beforeLoad?: () => Promise<void>): Promise<boolean> => {
+    onDeferred?: (root: vscode.Uri) => void, beforeLoad?: () => Promise<void>,
+    beginPresentation?: () => boolean): Promise<boolean> => {
     let root = requestedRoot;
     try {
         if (!isCurrent()) { return false; }
@@ -3180,6 +3213,14 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent
             }
             return true;
         };
+        // Repository loading still counts toward the recent-link deadline. Admit only now, immediately
+        // before native tree work; once admitted, deadline expiry cannot strand the target collapsed.
+        if (beginPresentation && !beginPresentation()) {
+            // Focus may have left while repository loading was awaited. Keep the same recent retry
+            // pending, as the native pause guards do; expiry/new review input still stops it outright.
+            if (stillOwned() && !vscode.window.state.focused) { deferPresentation(); return true; }
+            return false;
+        }
         if (autoReveal) {
             nativeRevealed = await revealCollapsedWorktree(repository, git.repositories, stillOwned, deferPresentation);
         } else {
@@ -3409,8 +3450,10 @@ const getActiveChange = async (): Promise<ActiveChange | null> => {
     // index/staged diff and the plain `file` uri for the working-tree diff (see getRightResource in
     // vscode/extensions/git/src/repository.ts), so the scheme tells us the side unambiguously.
     const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-    if (input instanceof vscode.TabInputTextDiff || input instanceof vscode.TabInputNotebookDiff) {
-        return { path: input.modified.path, staged: input.modified.scheme === "git" || input.modified.scheme === "better-git-staged-image" };
+    if (isResourceDiffInput(input)) {
+        const resolved = toFilePathUri(input.modified) ?? toFilePathUri(input.original);
+        return { path: resolved?.path ?? input.modified.path,
+            staged: reviewDiffIsStaged(input.original, input.modified, [EMPTY_TREE_SHA1, EMPTY_TREE_SHA256]) };
     }
     // 3-way merge editor (conflict) — recognised via the shared isMergeEditorInput predicate. `result` is the
     // working-tree file. Treat as the unstaged side for matching (a conflict is never a "staged" view here).
@@ -5386,18 +5429,37 @@ const navigateWithMouseOrigin = (
     return serializeChangeNavigation(async (check) => {
         if (isReviewHoldSource(source)) {
             mouseNavigationOrigins.delete(source);
-            const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+            let tab = vscode.window.tabGroups.activeTabGroup.activeTab;
             // Holds need this for cancellation; the separate tagged Next/Stage
             // route also needs it when navigation crosses files before Stage.
-            const view = captureMouseReviewView();
-            const active = await getActiveChange();
+            let view = captureMouseReviewView();
+            let active = await getActiveChange();
             const uri = await getActiveFileUri();
             check();
             if (uri && active && active.staged !== true) {
                 const matches = (await getFileChanges(uri)).filter(change => change.uri.toString() === uri.toString());
                 check();
                 const change = matches.find(candidate => !candidate.staged);
-                if (change && (active.staged === false || matches.length === 1) && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {
+                if (held && change?.status === GitStatus.DELETED && active.staged === null
+                    && matches.length > 1 && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {
+                    // Ethan: Option+Shift eyes, mouse and wand entry must work on deleted images too.
+                    // VS Code can hide BOTH resources of a valid image comparison (input === undefined).
+                    // With another staged version at the same path, never guess which side was shown.
+                    // The explicit held-review intent opens the canonical UNSTAGED index (~) preview
+                    // of that exact deletion before arming it. Known staged/history inputs are excluded;
+                    // this only changes the preview, never the index or another file. Capture cancellation
+                    // from the now-unambiguous preview so every review input shares the same safety rule.
+                    navigationOwnTabChange = true;
+                    try { await openChangeEntry(change, true); }
+                    finally { observeNavigationTab(); navigationOwnTabChange = false; }
+                    check();
+                    tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+                    active = await getActiveChange();
+                    check();
+                    if (active?.path !== uri.path) { return; }
+                    view = captureMouseReviewView();
+                }
+                if (change && active && (active.staged === false || matches.length === 1) && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {
                     mouseNavigationOrigins.set(source, {
                         change, direction, requestedAt, held, holdRequest, view, navigateOnButtonDown,
                     });

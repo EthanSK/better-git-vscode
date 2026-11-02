@@ -128,7 +128,7 @@ suite('SCM change navigation E2E', () => {
 		clearMouseDebugTrace(): void;
 		isKeyboardReviewActive(): boolean;
         getRememberedReviewPosition?(uri: vscode.Uri): StageUndoView | undefined;
-        sampleKeyboardReviewKeys?(state: {option:boolean;shift:boolean;navigation:boolean;usedShift:boolean}): void;
+        sampleKeyboardReviewKeys?(state: {option:boolean;shift:boolean;navigation:boolean;usedShift:boolean;navigationKeys?:number}): void;
         whenKeyboardGestureSettled?(): Promise<void>;
 	};
 	let baseSha: string; // the base commit every test resets to
@@ -5070,6 +5070,37 @@ suite('SCM change navigation E2E', () => {
         });
     }
 
+    test('held keyboard repeat paces completed steps, preserves fresh presses and keeps review release exact', async () => {
+        const names = Array.from({length: 7}, (_, n) => `kb_repeat_${n}.txt`);
+        for (const name of names) { write(name, name); }
+        await refreshUntil(() => names.every(isUntracked), 'held keyboard repeat files');
+        await openPlainAt(names[0], 0); await focusIsolatedTestWindow();
+        const sample = (mask = 0, option = true, shift = false) => extensionApi.sampleKeyboardReviewKeys!({
+            option, shift, navigation: mask !== 0, usedShift: false, navigationKeys: mask });
+        const next = () => vscode.commands.executeCommand('better-git-vscode.next-scm-change', {source:'keyboard',physicalKey:'x'});
+        sample(0, false); sample(2);
+        await Promise.all([next(), ...Array.from({length: 30}, next)]);
+        await expectActiveTab(names[1]);
+        await Promise.all(Array.from({length: 30}, next));
+        assert.strictEqual(activeTabPath(), wsUri(names[1]).path, 'repeats leave a glance interval after the opened change');
+        await sleep(310); // Exercise the requested 300 ms hold interval; no production input timer is added.
+        await next(); await expectActiveTab(names[2]);
+        sample(0); sample(2); await next(); await expectActiveTab(names[3]);
+        assert.strictEqual(git('diff --cached --name-only'), '', 'ordinary held navigation never stages');
+        sample(0); sample(0, true, true); sample(0);
+        await extensionApi.whenKeyboardGestureSettled!();
+        assert.strictEqual(badge(names[3]), '👀');
+        sample(2); await Promise.all([next(), ...Array.from({length: 20}, next)]);
+        await expectActiveTab(names[4]);
+        assert.strictEqual(badge(names[3]), '💥💥'); assert.strictEqual(badge(names[4]), '👀');
+        sample(0, false); await extensionApi.whenKeyboardGestureSettled!();
+        await extensionApi.whenStageTransactionsSettled();
+        assert.strictEqual(git('diff --cached --name-only'), names[3], 'release stages the reviewed file once and excludes the eyes endpoint');
+        await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+        await extensionApi.whenStageTransactionsSettled();
+        assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the batch');
+    });
+
     test('keyboard review modifier cycle preserves a populated set across alternating eyes and files, then release commits once', async () => {
         const names = ['kb_cycle_a.txt', 'kb_cycle_b.txt', 'kb_cycle_c.txt', 'kb_cycle_d.txt'];
         for (const name of names) { write(name, name); }
@@ -5226,10 +5257,18 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
-	for (const direction of ['next', 'previous'] as const) {
-		test(`keyboard review ${direction} starts on a deleted image and stages it with one exact Undo`, async () => {
-			const rel = 'committed/image.png';
+	// Entry must work for the same deleted-image/Git-side shapes as fire and mouse entry, not just a tiny PNG.
+	for (const direction of ['next', 'previous'] as const) for (const imageView of ['single preview', 'comparison'] as const)
+	for (const imageState of ['deleted', 'staged-modified-deleted', 'staged-new-lfs-deleted'] as const) {
+		test(`keyboard review ${direction} ${imageView} ${imageState} starts on a deleted image and stages it with one exact Undo`, async () => {
+			const rel = imageState === 'staged-new-lfs-deleted' ? 'committed/added-image.png' : 'committed/image.png';
 			const uri = wsUri(rel);
+			if (imageState !== 'deleted') {
+				const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
+				fs.writeFileSync(uri.fsPath, imageState === 'staged-new-lfs-deleted'
+					? `version https://git-lfs.github.com/spec/v1\noid sha256:${createHash('sha256').update(bytes).digest('hex')}\nsize ${bytes.length}\n` : bytes);
+				git(`add ${rel}`);
+			}
 			fs.rmSync(uri.fsPath);
 			const peer = direction === 'next' ? 'committed/zz_image_peer.txt' : 'committed/aaa_image_peer.txt';
 			write(peer, 'peer review');
@@ -5237,16 +5276,27 @@ suite('SCM change navigation E2E', () => {
 			const indexBefore = git('write-tree');
 			try {
 				// A deleted image opens as a non-text review: the begin path resolves it from the tab, not an editor.
-				await vscode.commands.executeCommand('git.openChange', uri);
+				if (imageView === 'comparison') {
+					await vscode.commands.executeCommand('vscode.diff', toGitUri(uri, '~'), toGitUri(uri, EMPTY_TREE), 'deleted image comparison');
+				} else { await vscode.commands.executeCommand('git.openChange', uri); }
 				await poll(() => extensionApi.getCurrentReviewUri() === uri.toString(), 'image review URI');
 				await sleep(300); // Allow the native media preview to finish rendering.
 				await focusIsolatedTestWindow();
 				const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
 				await keyboardReview.begin(direction);
 				assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '👀',
-					`deleted image must enter keyboard review: ${extensionApi.getMouseDebugTrace().join(' | ')}`);
-				assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'begin keeps the image preview');
+					`deleted image must enter keyboard review (${JSON.stringify(vscode.window.tabGroups.activeTabGroup.activeTab?.input)}): ${extensionApi.getMouseDebugTrace().join(' | ')}`);
+				if (imageView === 'comparison' && imageState === 'staged-modified-deleted' && tab?.input === undefined) {
+					// Opaque dual-state comparisons cannot prove their side. Held entry first shows the exact
+					// unstaged index preview; it must never guess or stage the other version behind the view.
+					assert.strictEqual(extensionApi.getCurrentReviewUri(), uri.toString(), 'normalization keeps the same deleted image');
+				} else { assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'begin keeps the image preview'); }
 				assert.strictEqual(git('write-tree'), indexBefore, 'begin must not stage');
+				await keyboardReview.cancel();
+				assert.strictEqual(git('write-tree'), indexBefore, 'cancel keeps both versions untouched');
+				assert.strictEqual(extensionApi.getCurrentReviewUri(), uri.toString(), 'cancel stays on the deleted image');
+				await keyboardReview.begin(direction);
+				assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '👀', 'the same image can immediately re-enter review');
 				await keyboardReview.step(direction);
 				await expectActiveTab(peer);
 				assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '💥💥', 'reviewed image is marked');
@@ -5262,6 +5312,30 @@ suite('SCM change navigation E2E', () => {
 			} finally {
 				await keyboardReview.cancel();
 				await sleep(300); // Undo reopens the asynchronous native media preview.
+				await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+			}
+		});
+	}
+
+	for (const imageView of ['single preview', 'comparison'] as const) {
+		test(`keyboard review rejects staged deletion ${imageView} with a recreated working image`, async () => {
+			const rel = 'committed/image.png'; const uri = wsUri(rel);
+			fs.rmSync(uri.fsPath); git(`add ${rel}`);
+			fs.writeFileSync(uri.fsPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+			await refreshUntil(() => inIndex(rel, 2) && isUntracked(rel), 'staged deletion with recreated image');
+			const indexBefore = git('write-tree');
+			try {
+				if (imageView === 'comparison') {
+					await vscode.commands.executeCommand('vscode.diff', toGitUri(uri, 'HEAD'), toGitUri(uri, EMPTY_TREE), 'staged deleted image');
+				} else { await vscode.commands.executeCommand('vscode.open', toGitUri(uri, 'HEAD')); }
+				await poll(() => extensionApi.getCurrentReviewUri() === uri.toString(), 'staged image review URI');
+				await focusIsolatedTestWindow();
+				await keyboardReview.begin('next');
+				assert.strictEqual(extensionApi.isKeyboardReviewActive(), false, 'staged image cannot silently select the recreated working file');
+				await keyboardReview.finish();
+				assert.strictEqual(git('write-tree'), indexBefore, 'rejected staged view never stages its working copy');
+			} finally {
+				await keyboardReview.cancel();
 				await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 			}
 		});
@@ -5465,6 +5539,9 @@ suite('SCM change navigation E2E', () => {
 			await poll(() => badge(names[1]) === '👀', 'the wand to review the current file');
 			assert.strictEqual(git('diff --cached --name-only'), '');
 			await send('cancel', 2);
+			// CLI exit only acknowledges dispatch. Let the native URI reach this host before the
+			// final test shuts it down, otherwise its late launch can reopen the disposable profile.
+			await poll(() => badge(names[1]) !== '👀', 'wand cancel handled before test-host shutdown');
 			await keyboardReview.finish();
 			assert.strictEqual(git('diff --cached --name-only'), '', 'neither the replaced review nor the cancelled wand stages');
 		} finally {

@@ -26,12 +26,20 @@ export class DeferredWorktreePresentation implements Disposable {
         return () => generation === this.generation;
     }
 
-    schedule(isOwned: () => boolean, run: (isScheduled: () => boolean) => void | Promise<boolean>,
+    schedule(isOwned: () => boolean, run: (isScheduled: () => boolean, beginPresentation: () => boolean) => void | Promise<boolean>,
         expiresAt = this.now() + WORKTREE_PRESENTATION_MAX_AGE_MS): void {
         this.dispose();
         const generation = this.generation;
-        // Check at focus and inside queued/running work. No expiry polling or delayed input.
-        const isScheduled = () => generation === this.generation && this.now() < expiresAt;
+        // Ethan's opens-then-collapses report: expiry is an admission limit, not a mid-tree abort.
+        // Waiting/loading/queued work still expires. Once the actual tree sequence begins, only the
+        // existing ownership/input/focus guards may stop it; elapsed time must not leave every root shut.
+        let presenting = false;
+        const isScheduled = () => generation === this.generation && (presenting || this.now() < expiresAt);
+        const beginPresentation = () => {
+            if (!isScheduled() || !this.isFocused() || !isOwned()) { return false; }
+            presenting = true;
+            return true;
+        };
         let running = false;
         let focusRevision = 0;
         const onFocus = () => {
@@ -42,13 +50,15 @@ export class DeferredWorktreePresentation implements Disposable {
             if (!isScheduled() || !isOwned()) { this.clearListener("not-owned"); return; }
             running = true;
             const startedRevision = focusRevision;
-            const result = run(isScheduled);
+            const result = run(isScheduled, beginPresentation);
             if (!result) { this.clearListener("completed"); return; }
             void result.then(complete => {
                 if (generation !== this.generation) { return; }
-                if (!isScheduled()) { this.clearListener("expired"); return; }
+                presenting = false;
                 running = false;
-                if (complete || !isOwned()) { this.clearListener(complete ? "completed" : "not-owned"); return; }
+                if (complete) { this.clearListener("completed"); return; }
+                if (!isScheduled()) { this.clearListener("expired"); return; }
+                if (!isOwned()) { this.clearListener("not-owned"); return; }
                 // A queued/running pass can lose focus. Keep the same intent alive;
                 // do not spin or add a timer. A focus event during that pass is
                 // also admitted once after it finishes, if the window is back.

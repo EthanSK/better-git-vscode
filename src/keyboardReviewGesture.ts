@@ -4,7 +4,10 @@
 // navigation key with Option+Shift instead consumes the tap and preserves the old immediate-stage shortcut.
 // This only interprets physical state. Shared review selection/Git/Undo remain in extension.ts.
 export type KeyboardReviewMode = "normal" | "changes" | "files";
-export interface ReviewKeyState { option: boolean; shift: boolean; navigation: boolean; usedShift: boolean; }
+export interface ReviewKeyState {
+    option: boolean; shift: boolean; navigation: boolean; usedShift: boolean;
+    navigationKeys?: number; // Physical Z/X/comma/period bits for held-repeat pacing; no text/key logging.
+}
 
 export class KeyboardReviewGesture {
     mode: KeyboardReviewMode = "normal";

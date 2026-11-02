@@ -80,6 +80,54 @@ suite('Deferred Worktree presentation', () => {
         await Promise.resolve();
         assert.strictEqual(f.listeners.size, 0);
     });
+    test('a tree sequence begun before expiry finishes without leaving the target collapsed', async () => {
+        const f = fixture(); let current!: () => boolean; let begin!: () => boolean;
+        let finish!: (complete: boolean) => void;
+        f.scheduler.schedule(() => true, (scheduled, start) => {
+            current = scheduled; begin = start;
+            return new Promise<boolean>(resolve => { finish = resolve; });
+        });
+        f.advance(WORKTREE_PRESENTATION_MAX_AGE_MS - 500); f.focus();
+        assert.strictEqual(begin(), true);
+        f.advance(2000); assert.strictEqual(current(), true, 'time alone cannot abandon partially collapsed native UI');
+        f.focus(); assert.strictEqual(current(), true, 'focus notifications do not expire the active transaction');
+        finish(true); await Promise.resolve();
+        assert.strictEqual(f.listeners.size, 0); f.focus(false); f.focus();
+        assert.strictEqual(f.listeners.size, 0, 'ordinary later returns do not rerun the tree');
+    });
+    test('starting the tree after loading has expired is rejected without mutation', async () => {
+        const f = fixture(); let begin!: () => boolean; let finish!: (complete: boolean) => void;
+        f.scheduler.schedule(() => true, (_scheduled, start) => {
+            begin = start; return new Promise<boolean>(resolve => { finish = resolve; });
+        });
+        f.focus(); f.advance(); assert.strictEqual(begin(), false);
+        finish(false); await Promise.resolve(); assert.strictEqual(f.listeners.size, 0);
+    });
+    test('focus lost while loading rejects tree admission but keeps a recent retry', async () => {
+        const f = fixture(); let begin!: () => boolean; let finish!: (complete: boolean) => void;
+        let passes = 0;
+        f.scheduler.schedule(() => true, (_scheduled, start) => {
+            passes++; begin = start; return new Promise<boolean>(resolve => { finish = resolve; });
+        });
+        f.focus(); f.focus(false); assert.strictEqual(begin(), false);
+        finish(false); await Promise.resolve(); assert.strictEqual(f.listeners.size, 1);
+        f.focus(); assert.strictEqual(passes, 2); assert.strictEqual(begin(), true);
+        finish(true); await Promise.resolve(); assert.strictEqual(f.listeners.size, 0);
+    });
+    test('review input still cancels an in-progress tree after expiry, and focus interruption cannot retry it', async () => {
+        for (const cancel of [true, false]) {
+            const f = fixture(); let current!: () => boolean; let finish!: (complete: boolean) => void;
+            f.scheduler.schedule(() => true, (scheduled, begin) => {
+                current = scheduled; assert.strictEqual(begin(), true);
+                return new Promise<boolean>(resolve => { finish = resolve; });
+            });
+            f.focus(); f.advance();
+            if (cancel) { f.scheduler.dispose('review-navigation'); assert.strictEqual(current(), false); }
+            else { f.focus(false); }
+            finish(false); await Promise.resolve();
+            assert.strictEqual(f.listeners.size, 0); f.focus(); assert.strictEqual(f.listeners.size, 0);
+        }
+    });
     test('an interrupted pass cannot retry after its original deadline', async () => {
         const f = fixture();
         let count = 0;

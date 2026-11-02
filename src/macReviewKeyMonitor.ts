@@ -1,3 +1,4 @@
+// Sample modifier/review-key release state for keyboard mode gestures and continuous-hold repeat pacing.
 import { spawn } from "child_process";
 import { ReviewKeyState } from "./keyboardReviewGesture";
 import { MonitorProcess } from "./macKeyReleaseMonitor";
@@ -20,14 +21,18 @@ function run(argv) {
     while (true) {
         if (++ticks % 100 === 0 && Number($.getppid()) !== parent) { return; }
         var option = down(58) || down(61); var shift = down(56) || down(60);
-        var nav = (option || shift || priorShift || priorNav) && (down(6) || down(7) || down(43) || down(47));
+        var mask = 0;
+        if (option || shift || priorShift || priorNav) {
+            mask = Number(down(6)) + 2 * Number(down(7)) + 4 * Number(down(43)) + 8 * Number(down(47));
+        }
+        var nav = mask !== 0;
         var count = Number($.CGEventSourceCounterForEventType(0, 10));
         if (shift && !priorShift) { used = false; keydowns = count; }
         // Any other key makes this a shortcut/selection chord, not a bare Shift tap. Read only a counter,
         // never the key's identity/content. This also protects Option+Shift+arrow word selection.
         if ((shift || priorShift) && count !== keydowns) { used = true; }
         if (shift && nav) { used = true; }
-        var line = 'state ' + Number(option) + ' ' + Number(shift) + ' ' + Number(nav) + ' ' + Number(used);
+        var line = 'state ' + Number(option) + ' ' + Number(shift) + ' ' + Number(nav) + ' ' + Number(used) + ' ' + mask;
         if (line !== last) {
             out.writeData($.NSString.alloc.initWithUTF8String(line + '\\n').dataUsingEncoding(4)); last = line;
         }
@@ -38,8 +43,10 @@ function run(argv) {
 `;
 
 export const parseReviewKeyState = (line: string): ReviewKeyState | undefined => {
-    const match = /^state ([01]) ([01]) ([01]) ([01])$/.exec(line);
-    return match ? { option: match[1] === "1", shift: match[2] === "1", navigation: match[3] === "1", usedShift: match[4] === "1" } : undefined;
+    const match = /^state ([01]) ([01]) ([01]) ([01])(?: (\d|1[0-5]))?$/.exec(line);
+    if (!match || (match[5] !== undefined && (Number(match[5]) !== 0) !== (match[3] === "1"))) { return undefined; }
+    return { option: match[1] === "1", shift: match[2] === "1", navigation: match[3] === "1", usedShift: match[4] === "1",
+        ...(match[5] === undefined ? {} : { navigationKeys: Number(match[5]) }) };
 };
 
 export class MacReviewKeyMonitor {

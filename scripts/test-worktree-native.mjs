@@ -494,7 +494,9 @@ try {
     } else if (testLinkBackground) {
         const jxa = code => execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `ObjC.import('AppKit'); ${code}`], { encoding: 'utf8' });
         const focusCode = () => jxa(`$.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`);
-        for (const [repo, delay] of [[2, 2600], [3, 1200], [2, 50], [3, 0]]) {
+        // A late foreground return starts native tree work before the 10 s admission deadline, then
+        // completes after it. It must not stop between collapse-all and reopening the requested root.
+        for (const [repo, delay] of [[2, 8500], [2, 2600], [3, 1200], [2, 50], [3, 0]]) {
             await request('command', { command: 'workbench.scm.action.expandAllRepositories' });
             await request('plain', { repo: 0 });
             await request('command', { command: 'workbench.scm.history.focus' });
@@ -506,6 +508,23 @@ try {
             await opening;
             await check(repo, `background-link-${repo}-${delay}`);
         }
+        // Focus can leave again while a deferred pass awaits Git. It must not touch the tree behind
+        // another app or discard the still-recent retry before a later foreground return.
+        jxa(`$.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);`);
+        await until(() => request('state'), state => !state.focused, 'background before loading-interrupted retry');
+        await request('uri', {uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[2])}`});
+        await request('hold-status', {repo:2});
+        const traceBeforeLoading = (await request('state')).trace;
+        focusCode();
+        try {
+            await until(() => JSON.parse(fs.readFileSync(path.join(root,'handoff-events.json'),'utf8')),
+                events=>events.includes('status-start'), 'deferred retry awaits Git');
+            jxa(`$.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);`);
+            await until(() => request('state'), state=>!state.focused, 'focus leaves during Git loading');
+        } finally { fs.writeFileSync(path.join(root,'release-status'),'release'); }
+        await request('settle-worktree');
+        assert.deepEqual((await request('state')).trace,traceBeforeLoading,'no native tree commands behind another app');
+        focusCode(); await check(2,'focus-lost-during-retry-loading');
         await request('command', { command: 'workbench.scm.action.expandAllRepositories' });
         await request('uri-burst', { uris: [2, 3, 2, 3, 2].map(repo =>
             `vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}&returnTo=codex`) });
