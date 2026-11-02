@@ -3430,6 +3430,95 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('Agentic Mouse button-down owns initial eyes mode even when the mode URI overtakes it', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previousLogging = config.inspect<boolean>('debugLogging')?.globalValue;
+		const extensionConfig = vscode.workspace.getConfiguration('extensions');
+		const previousHandlers = extensionConfig.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			await extensionConfig.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+			await config.update('debugLogging', true, vscode.ConfigurationTarget.Global);
+			write('atomic_eyes.txt', 'first line\nsecond line\nthird line');
+			await refreshUntil(() => isUntracked('atomic_eyes.txt'), 'atomic eyes file');
+			const manifest = vscode.extensions.getExtension('EthanSK.better-git-vscode')!.packageJSON;
+			const bindings = manifest.contributes.keybindings as Array<{
+				command: string; args?: { source?: string; direction?: string; initialMode?: string };
+			}>;
+			for (const source of ['corsair', 'razer']) {
+				for (const direction of ['next', 'previous']) {
+					await openPlainAt('atomic_eyes.txt', 0);
+					vscode.window.activeTextEditor!.selection = new vscode.Selection(1, 0, 1, 0);
+					await focusIsolatedTestWindow();
+					const start = vscode.window.activeTextEditor!.selection;
+					const binding = bindings.find(item => item.command === 'better-git-vscode.begin-mouse-navigation-hold'
+						&& item.args?.source === source && item.args?.direction === direction && item.args?.initialMode === 'changes');
+					assert.ok(binding, 'test the shipped physical binding, not a copied test-only mode');
+					// Live failure: the URI arrived about 300 ms BEFORE button-down and was rejected.
+					// Do not wait or replay it after Begin: the same input must own both hold and default.
+					await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, true);
+					await vscode.commands.executeCommand(binding!.command, binding!.args);
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('atomic_eyes.txt')), '👀', `${source} ${direction} must start eyes`);
+					assert.deepStrictEqual(vscode.window.activeTextEditor!.selection, start, 'eyes entry stays still');
+					assert.strictEqual(git('diff --cached --name-only'), '', 'entry never stages');
+					await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, false);
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('atomic_eyes.txt')), '💥💥', 'intentional toggle still selects the full file');
+					extensionApi.clearMouseDebugTrace();
+					await deliverMouseUri('mouse-stage-preview-mode/on', source, `source=${source}&initial=1`);
+					await poll(() => extensionApi.getMouseDebugTrace().some(line => line.includes('initial preview URI ignored;')), 'late bootstrap URI delivery');
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('atomic_eyes.txt')), '💥💥', 'late bootstrap must not overwrite the explicit explosion toggle');
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(git('diff --cached --name-only'), 'atomic_eyes.txt', 'intentional file-mode release still stages the exact file');
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+					assert.strictEqual(git('diff --cached --name-only'), '', 'one exact Undo restores that release');
+					// A new hold resets the prior explosion mode even if readiness queues before capture settles.
+					const begin = vscode.commands.executeCommand(binding!.command, binding!.args);
+					const ready = vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					await Promise.all([begin, ready]);
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('atomic_eyes.txt')), '👀', 'fresh hold always resets to review');
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(git('diff --cached --name-only'), '', 'releasing a lone eyes preview never stages it');
+				}
+			}
+		} finally {
+			await config.update('debugLogging', previousLogging, vscode.ConfigurationTarget.Global);
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test('duplicate hold readiness preserves the selected batch and intentional file mode', async () => {
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+		try {
+			for (const name of ['ready_a.txt', 'ready_b.txt', 'ready_c.txt']) { write(name, name); }
+			await refreshUntil(() => isUntracked('ready_c.txt'), 'duplicate readiness files');
+			for (const source of ['corsair', 'razer']) {
+				for (const direction of ['next', 'previous']) {
+					await openPlainAt('ready_b.txt', 0);
+					await focusIsolatedTestWindow();
+					await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction, initialMode: 'changes' });
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', source, false);
+					await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', source, direction === 'next' ? 'down' : 'up');
+					const endpoint = direction === 'next' ? 'ready_c.txt' : 'ready_a.txt';
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(endpoint)), '💥💥');
+					// Repeated delivery of the same threshold is not a new gesture and must not rebuild its set.
+					await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(endpoint)), '💥💥', 'duplicate readiness must keep the marked endpoint');
+					assert.strictEqual(activeTabPath(), wsUri(endpoint).path, 'duplicate readiness must not return to the origin');
+					await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+					assert.strictEqual(git('diff --cached --name-only'), direction === 'next' ? 'ready_b.txt\nready_c.txt' : 'ready_a.txt\nready_b.txt');
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+					assert.strictEqual(git('diff --cached --name-only'), '', 'one exact Undo restores the preserved batch');
+				}
+			}
+		} finally {
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+		}
+	});
+
 	test('default eyes URI can arrive before readiness without moving or leaking to the next hold', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const previousLogging = config.inspect<boolean>('debugLogging')?.globalValue;

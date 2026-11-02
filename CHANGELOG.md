@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.146
+
+- Start Default Agentic Mouse holds in eyes review through the same button-down input, so separate mode messages cannot arrive too early.
+- Ignore a separately marked startup hint after an intentional mode toggle. Keep legacy and entered VS Code page holds on their existing bindings.
+- Preserve an existing selected group if the same hold-ready threshold is delivered again.
+
 ## [1.2.145]
 
 - Continue from the landed change after switching files with Next/Previous, including immediate direction reversal and stage-and-advance.

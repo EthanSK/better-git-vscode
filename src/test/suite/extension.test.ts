@@ -1,3 +1,4 @@
+// Isolated VS Code checks for Better Git's command registration, manifest bindings and safe transport wiring.
 import * as assert from 'assert';
 
 // You can import and use all API from the 'vscode' module
@@ -26,6 +27,18 @@ suite('Extension Test Suite', () => {
 		assert.ok(!manifest.contributes.keybindings.some((item: any) =>
 			item.args === 'razer' && /^ctrl\+alt\+cmd\+shift\+f(?:15|20)$/.test(item.key)),
 			'Razer readiness must not pass through the VoiceInk Control+Shift+Option chord');
+		// Default Agentic Mouse eyes entry is separate from the entered VS Code page's legacy hold.
+		for (const [source, modifiers] of [['corsair', 'ctrl+cmd+shift'], ['razer', 'alt+cmd+shift']]) {
+			for (const [key, direction] of [['f13', 'next'], ['f17', 'previous']]) {
+				const normalized = (binding: string) => binding.toLowerCase().split('+').sort().join('+');
+				const matches = manifest.contributes.keybindings.filter((item: { key: string; mac?: string }) =>
+					normalized(item.mac ?? item.key) === normalized(`${modifiers}+${key}`));
+				assert.strictEqual(matches.length, 1, 'initial eyes bindings must not shadow existing navigation or hold keys');
+				const binding = matches[0];
+				assert.strictEqual(binding?.command, 'better-git-vscode.begin-mouse-navigation-hold');
+				assert.deepStrictEqual(binding?.args, { source, direction, initialMode: 'changes' });
+			}
+		}
 	});
 
 	test('mouse debug notifications are explicit and off by default', () => {

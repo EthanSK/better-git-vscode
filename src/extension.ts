@@ -1007,12 +1007,24 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 mouseDebug("Button down ignored, unknown mouse or direction.");
                 return;
             }
+            const initialMode = "initialMode" in args ? args.initialMode : undefined;
+            if (initialMode !== undefined && initialMode !== "changes" && initialMode !== "files") {
+                mouseDebug("Button down ignored, invalid initial review mode.");
+                return;
+            }
             mouseDebug(`${mouseSourceLabel(source)} ${mouseDirectionLabel(direction)} button down.`);
             clearStageHoldFeedback();
             lastNavDirection = direction;
             const navigateOnButtonDown = vscode.workspace.getConfiguration("better-git-vscode")
                 .get<boolean>("experimentalMouseHoldNavigateOnButtonDown", false);
-            return navigateWithMouseOrigin(direction, source, true, navigateOnButtonDown);
+            const begun = navigateWithMouseOrigin(direction, source, true, navigateOnButtonDown);
+            // Ethan: every fresh Agentic Mouse hold starts in eyes review, never the previous hold's
+            // explosion mode. Carry that intent on the SAME button-down command: a separate mode URI
+            // can overtake the synthetic key before a hold exists. Like keyboard review below, install
+            // the mode on the synchronously-created request before queued Git/editor work settles.
+            // Direct legacy callers without initialMode retain their existing whole-file staging.
+            if (initialMode !== undefined) { setStagePreviewModeRequest(source, initialMode === "changes"); }
+            return begun;
         }),
         vscode.commands.registerCommand("better-git-vscode.finish-mouse-navigation-hold", (args: unknown) => stageMouseNavigationOrigin(args, true)),
         vscode.commands.registerCommand("better-git-vscode.cancel-mouse-navigation-hold", (source: unknown) => {
@@ -1389,8 +1401,17 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
             const modeMatch = /^\/mouse-stage-preview-mode\/(on|off)$/.exec(uri.path);
             if (modeMatch) {
-                const source = new URLSearchParams(uri.query).get("source");
+                const query = new URLSearchParams(uri.query);
+                const source = query.get("source");
                 if (isMouseReviewSource(source)) {
+                    // Agentic Mouse marks its compatibility bootstrap separately from a real toggle.
+                    // Eyes entry now belongs to button-down. A late bootstrap must never undo a later
+                    // intentional explosion-mode toggle, or arm a different hold from the same mouse.
+                    // Older Better Git versions ignore this extra query and retain their bootstrap path.
+                    if (modeMatch[1] === "on" && query.get("initial") === "1") {
+                        mouseDebug(`${mouseSourceLabel(source)} initial preview URI ignored; button down owns the initial mode.`);
+                        return;
+                    }
                     await vscode.commands.executeCommand("better-git-vscode.set-mouse-stage-preview-mode", source, modeMatch[1] === "on");
                 } else {
                     mouseDebug("Stage preview mode ignored, unknown mouse source.");
@@ -1918,6 +1939,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     // No stage-ready decoration can appear, so a later adjacent press still means Undo.
                     request.stageReadyRequested = false;
                     mouseDebug(`${mouseSourceLabel(source)} event ignored, no review item was captured.`);
+                    return;
+                }
+                // Repeated threshold delivery belongs to this same hold, not a new selection.
+                // Ethan's marked group and intentional eyes/explosion toggle must survive it, including
+                // readiness already queued before release. Preserve the request-owned release snapshot too.
+                if (activeStageSelection(source, request)?.request === request) {
+                    mouseDebug(`${mouseSourceLabel(source)} duplicate hold threshold ignored; pending selection preserved.`);
                     return;
                 }
                 if (origin.navigateOnButtonDown) {

@@ -2,7 +2,7 @@
   "name": "better-git-vscode",
   "displayName": "Better Git VS Code",
   "description": "Fast, keyboard-driven Git change review in VS Code.",
-  "version": "1.2.145",
+  "version": "1.2.146",
   "icon": "src/icon.png",
   "engines": {
     "vscode": "^1.83.0"
@@ -799,6 +799,46 @@
         "key": "ctrl+z",
         "mac": "cmd+z",
         "when": "focusedView == workbench.scm && !inputFocus"
+      },
+      {
+        "command": "better-git-vscode.begin-mouse-navigation-hold",
+        "key": "ctrl+cmd+shift+f13",
+        "mac": "ctrl+cmd+shift+f13",
+        "args": {
+          "source": "corsair",
+          "direction": "next",
+          "initialMode": "changes"
+        }
+      },
+      {
+        "command": "better-git-vscode.begin-mouse-navigation-hold",
+        "key": "ctrl+cmd+shift+f17",
+        "mac": "ctrl+cmd+shift+f17",
+        "args": {
+          "source": "corsair",
+          "direction": "previous",
+          "initialMode": "changes"
+        }
+      },
+      {
+        "command": "better-git-vscode.begin-mouse-navigation-hold",
+        "key": "alt+cmd+shift+f13",
+        "mac": "alt+cmd+shift+f13",
+        "args": {
+          "source": "razer",
+          "direction": "next",
+          "initialMode": "changes"
+        }
+      },
+      {
+        "command": "better-git-vscode.begin-mouse-navigation-hold",
+        "key": "alt+cmd+shift+f17",
+        "mac": "alt+cmd+shift+f17",
+        "args": {
+          "source": "razer",
+          "direction": "previous",
+          "initialMode": "changes"
+        }
       },
       {
         "command": "better-git-vscode.begin-mouse-navigation-hold",
