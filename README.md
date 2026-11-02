@@ -54,7 +54,7 @@ To back out:
 
 The batch works with either navigation-key pair and in Dvorak mode, and needs no extra macOS permissions. On Windows and Linux, `Shift+Alt+.` / `Shift+Alt+,` still stage one file at a time; the batch is macOS only. Mouse and Magic Wand review are unchanged.
 
-On macOS, holding a Next / Previous key leaves at least 300 ms to look at each change after it opens. Repeats do not build up while a change is loading. Releasing and pressing again moves straight away; mouse and wand steps keep their existing timing.
+On macOS, holding a Next / Previous key leaves at least 100 ms to look at each change after it opens. Repeats do not build up while a change is loading. Releasing and pressing again moves straight away; mouse and wand steps keep their existing timing.
 
 You can start a batch on deleted files, including deleted images with another version already staged. If VS Code hides which side an image comparison shows, Better Git first opens that same image's unstaged deletion preview, then starts review. This does not stage anything. A staged deletion with a recreated working file is never silently selected as that working file.
 

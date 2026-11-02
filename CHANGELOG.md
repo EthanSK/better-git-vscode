@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.144
+
+- Reduce the macOS held-key Next/Previous glance gap from 300 ms to 100 ms. Preserve immediate fresh presses, no queued repeats during loading, release-to-stage, and mouse/wand timing.
+
 ## 1.2.143
 
 - Start keyboard, mouse and wand review from deleted-image comparisons even when another version of the image is already staged. Resolve native media resources correctly and show the exact unstaged deletion preview when VS Code hides the comparison side.

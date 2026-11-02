@@ -5083,7 +5083,7 @@ suite('SCM change navigation E2E', () => {
         await expectActiveTab(names[1]);
         await Promise.all(Array.from({length: 30}, next));
         assert.strictEqual(activeTabPath(), wsUri(names[1]).path, 'repeats leave a glance interval after the opened change');
-        await sleep(310); // Exercise the requested 300 ms hold interval; no production input timer is added.
+        await sleep(110); // Exercise the requested 100 ms hold interval; no production input timer is added.
         await next(); await expectActiveTab(names[2]);
         sample(0); sample(2); await next(); await expectActiveTab(names[3]);
         assert.strictEqual(git('diff --cached --name-only'), '', 'ordinary held navigation never stages');

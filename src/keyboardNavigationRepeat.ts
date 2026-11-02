@@ -2,7 +2,8 @@
 // The existing modifier sampler supplies releases; navigation calls this before joining its work queue.
 import { PhysicalStageKey } from "./keyboardStageRepeatGuard";
 
-export const KEYBOARD_NAVIGATION_REPEAT_MS = 300;
+// Ethan chose a 100 ms glance gap (2026-11-02), measured after completion, not before the first step.
+export const KEYBOARD_NAVIGATION_REPEAT_MS = 100;
 export const NAVIGATION_KEY_BITS: Readonly<Record<PhysicalStageKey, number>> = Object.freeze({
     z: 1, x: 2, comma: 4, period: 8,
 });
