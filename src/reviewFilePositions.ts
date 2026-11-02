@@ -1,15 +1,20 @@
 // Session-only coordinate memory used by extension.ts when revisiting an unfinished Git review.
 import type { StageUndoView } from "./stageTransactionStore";
 
+// Ethan (2026-11-02): a revisit resumes exactly as he left it, including where the following Next/Previous starts.
+// false = review navigation placed the caret, so the next press continues from it; true/absent = he scrolled
+// independently (or never navigated), so the next press resumes from the restored viewport.
+export type ReviewFilePosition = StageUndoView & { resumeFromViewport?: boolean };
+
 // Ethan: returning to a visited UNSTAGED file resumes its last cursor and scroll position. Staging clears
 // that file's entry; failed staging does not. Store only coordinates, never documents or editor objects.
 // This session-only cache is separate from the three-entry exact Undo history. Bound it even in huge repos.
 export class ReviewFilePositions {
-    private readonly views = new Map<string, StageUndoView>();
+    private readonly views = new Map<string, ReviewFilePosition>();
 
     constructor(private readonly limit = 512) {}
 
-    remember(view: StageUndoView): void {
+    remember(view: ReviewFilePosition): void {
         this.views.delete(view.fileUri);
         const moved = (view.topLine ?? 0) > 0 || view.selections.some(selection =>
             selection.anchor.line !== 0 || selection.anchor.character !== 0
@@ -25,7 +30,7 @@ export class ReviewFilePositions {
         if (this.views.size > this.limit && oldest !== undefined) { this.views.delete(oldest); }
     }
 
-    get(fileUri: string): StageUndoView | undefined {
+    get(fileUri: string): ReviewFilePosition | undefined {
         const view = this.views.get(fileUri);
         if (view) { this.views.delete(fileUri); this.views.set(fileUri, view); }
         return view;

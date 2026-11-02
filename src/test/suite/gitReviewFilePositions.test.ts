@@ -27,6 +27,15 @@ suite("Unstaged review positions", () => {
         cache.remember({ ...saved, topLine: 0, selections: [{ anchor: { line: 0, character: 0 }, active: { line: 0, character: 0 } }] });
         assert.strictEqual(cache.get(saved.fileUri), undefined);
     });
+    test("keeps whether the next press resumes from the caret or the viewport", () => {
+        const cache = new ReviewFilePositions();
+        cache.remember({ ...view(), resumeFromViewport: false });
+        assert.strictEqual(cache.get(view().fileUri)?.resumeFromViewport, false, "navigation-owned caret must survive");
+        cache.remember({ ...view(), resumeFromViewport: true });
+        assert.strictEqual(cache.get(view().fileUri)?.resumeFromViewport, true, "a later independent scroll replaces it");
+        cache.remember(view("file:///repo/legacy.ts"));
+        assert.strictEqual(cache.get("file:///repo/legacy.ts")?.resumeFromViewport, undefined, "absent stays viewport-first");
+    });
     test("bounds coordinates by least recent use and prunes staged or closed repositories", () => {
         const cache = new ReviewFilePositions(2);
         for (const name of ["a", "b"]) { cache.remember(view(name)); }

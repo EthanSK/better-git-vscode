@@ -7,7 +7,7 @@ import { promisify } from 'util';
 import { createHash, randomUUID } from 'crypto';
 import * as vscode from 'vscode';
 import { resolveStagedLfsImage } from '../../stagedLfsImage';
-import type { StageUndoView } from '../../stageTransactionStore';
+import type { ReviewFilePosition } from '../../reviewFilePositions';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // E2E suite for next/previous-scm-change navigation (v1.2.1).
@@ -127,7 +127,7 @@ suite('SCM change navigation E2E', () => {
 		getMouseDebugTrace(): string[];
 		clearMouseDebugTrace(): void;
 		isKeyboardReviewActive(): boolean;
-        getRememberedReviewPosition?(uri: vscode.Uri): StageUndoView | undefined;
+        getRememberedReviewPosition?(uri: vscode.Uri): ReviewFilePosition | undefined;
         sampleKeyboardReviewKeys?(state: {option:boolean;shift:boolean;navigation:boolean;usedShift:boolean;navigationKeys?:number}): void;
         whenKeyboardGestureSettled?(): Promise<void>;
 	};
@@ -1878,6 +1878,168 @@ suite('SCM change navigation E2E', () => {
 		);
 	});
 
+	// ── Cross-file landing hands the next press a real review position (Ethan 2026-11-02) ──────────────────────
+	// Ethan: "when it jumps to a new file on the next change, and I do the next change again, it stays on the same
+	// one". Each case commits fresh file names inside the test (setup's reset removes them), so VS Code has no
+	// remembered diff view state and performs its native first-change landing exactly as on a first visit.
+	const commitLandingFixtures = (files: Record<string, number>, prefix: string) => {
+		for (const [rel, count] of Object.entries(files)) { write(rel, lines(count, rel) + '\n'); }
+		git(`add ${Object.keys(files).join(' ')}`);
+		git(`commit -m "${prefix} landing fixture"`);
+	};
+	const editLines = (rel: string, count: number, edited: number[]) => {
+		const content = lines(count, rel).split('\n');
+		for (const line of edited) { content[line] = `${rel} EDITED line ${line + 1}`; }
+		write(rel, content.join('\n') + '\n');
+	};
+
+	test('cross-file Next landing: the following Next reaches the second change and a later scroll still wins', async () => {
+		const from = 'landing_next_a.txt', to = 'landing_next_b.txt';
+		commitLandingFixtures({ [from]: 40, [to]: 260 }, 'next');
+		editLines(from, 40, [4]);
+		// The native landing must scroll to line 120, so a landing event arriving after Better Git adopted the
+		// position would surface here as a "manual" scroll. The second change is never on screen with the first.
+		editLines(to, 260, [120, 220]);
+		await refreshUntil(() => inWorkingTree(from, 5) && inWorkingTree(to, 5), 'Next landing files to appear as modified');
+
+		await openWorkingDiffAt(from, 0);
+		await nextChange();
+		await expectCursorAt(from, 4);
+		await vscode.commands.executeCommand('workbench.view.scm'); // Ethan's usual focus; navigation stays tab-owned
+		await nextChange();
+		await expectActiveTab(to);
+		const landed = await expectCursorVisibleAt(to, 120); // native first-change landing itself is unchanged
+
+		// The regression re-anchored above the viewport and native Next selected line 120 again.
+		await nextChange();
+		await expectCursorAt(to, 220);
+		assert.strictEqual(activeTabPath(), wsUri(to).path, 'the press after landing must stay in the landed file');
+
+		// An independent scroll after a landing still owns the next press: below every change, Next leaves the file.
+		const below = new vscode.Position(245, 0);
+		landed.revealRange(new vscode.Range(below, below), vscode.TextEditorRevealType.AtTop);
+		await poll(() => landed.visibleRanges[0]?.start.line > 225 && !lineIsVisible(landed, 220),
+			'manual scroll below the landed file\'s last change');
+		await nextChange();
+		await expectActiveTab(from);
+	});
+
+	test('cross-file Next landing: an immediate Previous returns to the previous file instead of moving down', async () => {
+		const from = 'landing_reverse_a.txt', to = 'landing_reverse_b.txt';
+		commitLandingFixtures({ [from]: 40, [to]: 40 }, 'reverse');
+		editLines(from, 40, [4]);
+		editLines(to, 40, [4, 12]); // both changes fit on screen after the native landing
+		await refreshUntil(() => inWorkingTree(from, 5) && inWorkingTree(to, 5), 'reversal landing files to appear as modified');
+
+		await openWorkingDiffAt(from, 0);
+		await nextChange();
+		await expectCursorAt(from, 4);
+		await nextChange();
+		await expectActiveTab(to);
+		await expectCursorVisibleAt(to, 4);
+
+		// Viewport anchoring after the landing selected the visible later change (line 12) on Previous.
+		await previousChange();
+		await expectActiveTab(from);
+		await expectCursorVisibleAt(from, 4);
+	});
+
+	test('cross-file Previous landing and its revisit continue from the landed change instead of re-selecting it', async () => {
+		const first = 'landing_prev_a.txt', second = 'landing_prev_b.txt';
+		commitLandingFixtures({ [first]: 40, [second]: 260 }, 'previous');
+		editLines(first, 40, [4, 24]);
+		editLines(second, 260, [120, 220]);
+		await refreshUntil(() => inWorkingTree(first, 5) && inWorkingTree(second, 5), 'Previous landing files to appear as modified');
+
+		await openWorkingDiffAt(second, 0);
+		await nextChange();
+		await expectCursorAt(second, 120);
+		await vscode.commands.executeCommand('workbench.view.scm');
+
+		// Native Previous wraps 120 -> 220 inside the file before Better Git sees the boundary.
+		await previousChange();
+		await expectActiveTab(first);
+		await expectCursorVisibleAt(first, 24); // unchanged backward landing at the last change
+		await previousChange();
+		await expectCursorAt(first, 4); // the regression re-selected line 24 here
+		assert.strictEqual(activeTabPath(), wsUri(first).path);
+
+		await nextChange();
+		await expectCursorAt(first, 24);
+		await nextChange();
+		await expectActiveTab(second);
+		// Revisit memory keeps where the file was left (120), not the native wrap target (220)...
+		await expectCursorVisibleAt(second, 120);
+		assert.strictEqual(extensionApi.getRememberedReviewPosition?.(wsUri(second))?.resumeFromViewport, false,
+			'the remembered position must record that review navigation owned its caret');
+		// ...and that navigation-owned caret continues instead of re-anchoring to the restored viewport.
+		await nextChange();
+		await expectCursorAt(second, 220);
+	});
+
+	test('restored review: a one-line manual scroll owns the next press after the restore settles', async () => {
+        const a = 'landing_scroll_a.txt', b = 'landing_scroll_b.txt';
+        commitLandingFixtures({ [a]: 260, [b]: 40 }, 'restored scroll');
+        editLines(a, 260, [120, 220]); editLines(b, 40, [4]);
+        await refreshUntil(() => inWorkingTree(a, 5) && inWorkingTree(b, 5), 'restored scroll fixtures');
+        await openWorkingDiffAt(a, 0); await nextChange(); await expectCursorAt(a, 120);
+        await vscode.commands.executeCommand('better-git-vscode.next-changed-file'); await expectActiveTab(b);
+        await vscode.commands.executeCommand('better-git-vscode.previous-changed-file'); await expectActiveTab(a);
+        const editor = await expectCursorVisibleAt(a, 120);
+        await poll(() => extensionApi.getRememberedReviewPosition?.(wsUri(a))?.resumeFromViewport === false,
+            'restored navigation-owned position');
+        const oldTop = editor.visibleRanges[0].start.line;
+        await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+        await vscode.commands.executeCommand('editorScroll', { to: 'down', by: 'line', value: 1, revealCursor: false });
+        await poll(() => editor.visibleRanges[0].start.line > oldTop, 'one-line independent scroll to render');
+        assert.strictEqual(editor.visibleRanges[0].start.line, oldTop + 1, 'fixture must move exactly one line');
+        assert.ok(lineIsVisible(editor, 120), 'small scroll must retain the old caret on screen');
+        // A restore exemption must end at arrival. It cannot swallow a later wheel-like one-line movement.
+        await poll(() => extensionApi.getRememberedReviewPosition?.(wsUri(a))?.resumeFromViewport === true,
+            'one-line scroll to replace the restored caret owner', 2000);
+        await nextChange(); await expectCursorAt(a, 120);
+    });
+
+    test('single-file Previous wrap presents the last tall hunk from its bottom before stepping upward', async () => {
+        const rel = 'landing_only_file.txt';
+        const config = vscode.workspace.getConfiguration('better-git-vscode');
+        const oldStep = config.inspect<number>('hunkStagingLineStep')?.globalValue;
+        const oldThreshold = config.inspect<number>('hunkStagingThreshold')?.globalValue;
+        try {
+            await config.update('hunkStagingLineStep', 10, vscode.ConfigurationTarget.Global);
+            await config.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
+            commitLandingFixtures({ [rel]: 400 }, 'single-file wrap');
+            editLines(rel, 400, [30, ...Array.from({ length: 150 }, (_, n) => n + 150)]);
+            await refreshUntil(() => inWorkingTree(rel, 5), 'single changed file with a short and tall hunk');
+            await openWorkingDiffAt(rel, 0); await nextChange(); await expectCursorAt(rel, 30);
+            await previousChange();
+            // The native Previous has already wrapped to the final hunk. Do not move Previous a second time.
+            await expectCursorVisibleAt(rel, 299);
+            await previousChange(); await expectCursorVisibleAt(rel, 289);
+        } finally {
+            await config.update('hunkStagingLineStep', oldStep, vscode.ConfigurationTarget.Global);
+            await config.update('hunkStagingThreshold', oldThreshold, vscode.ConfigurationTarget.Global);
+        }
+    });
+
+    for (const direction of ['next', 'previous'] as const) {
+        test(`one-hunk cross-file ${direction}: the next intentional press leaves the displayed change`, async () => {
+            const a = `one_hunk_${direction}_a.txt`, b = `one_hunk_${direction}_b.txt`;
+            commitLandingFixtures({ [a]: 40, [b]: 40 }, `one-hunk ${direction}`);
+            editLines(a, 40, [4]); editLines(b, 40, [3]);
+            await refreshUntil(() => inWorkingTree(a, 5) && inWorkingTree(b, 5), 'one-hunk modified files');
+            const origin = direction === 'next' ? a : b, target = direction === 'next' ? b : a;
+            await openWorkingDiffAt(origin, 0);
+            const step = direction === 'next' ? nextChange : previousChange;
+            // Establish the initial review, then require exact progress on the single press AFTER entry.
+            for (let n = 0; n < 3 && activeTabPath() !== wsUri(target).path; n++) { await step(); }
+            await expectActiveTab(target);
+            await step();
+            assert.strictEqual(activeTabPath(), wsUri(origin).path,
+                'the displayed one-hunk target must be exhausted on the next intentional press');
+        });
+    }
+
 	test('mouse spam: 120 Next presses and 80 Previous presses stay exact in one new file', async function () {
 		this.timeout(120_000);
 		write('spam_new.txt', lines(3000, 'spam'));
@@ -2473,20 +2635,19 @@ suite('SCM change navigation E2E', () => {
 		const previousThreshold = navConfig.inspect<number>('hunkStagingThreshold')?.globalValue;
 		try {
 			await navConfig.update('hunkStagingThreshold', 1, vscode.ConfigurationTarget.Global);
-			const tall = lines(260, 'tall_e').split('\n');
-			for (let i = 10; i <= 229; i++) {
-				tall[i] = `tall_e stage-previous EDITED line ${i + 1}`;
-			}
-			write('committed/tall_e.txt', tall.join('\n') + '\n');
+            // First-visit landing needs a fresh URI; reused tall_e may correctly restore an earlier test's view.
+            const rel = 'stage_previous_first_visit.txt';
+            commitLandingFixtures({ [rel]: 260 }, 'stage-previous');
+            editLines(rel, 260, Array.from({ length: 220 }, (_, n) => n + 10));
 			write('zz_current.txt', lines(20, 'current'));
 			await refreshUntil(
-				() => inWorkingTree('committed/tall_e.txt', 5) && isUntracked('zz_current.txt'),
+				() => inWorkingTree(rel, 5) && isUntracked('zz_current.txt'),
 				'stage-and-Previous files to appear'
 			);
 			await openPlainAt('zz_current.txt', 0);
 
 			await vscode.commands.executeCommand('better-git-vscode.stage-and-previous-changed-file');
-			await expectCursorVisibleAt('committed/tall_e.txt', 229);
+			await expectCursorVisibleAt(rel, 229);
 			assert.ok(inIndex('zz_current.txt', 1), 'stage-and-Previous did not stage the current file');
 		} finally {
 			await navConfig.update('hunkStagingThreshold', previousThreshold, vscode.ConfigurationTarget.Global);
@@ -4221,6 +4382,10 @@ suite('SCM change navigation E2E', () => {
 		editor.selection = new vscode.Selection(160, 2, 160, 12);
 		editor.revealRange(new vscode.Range(145, 0, 145, 0), vscode.TextEditorRevealType.AtTop);
 		await sleep(150);
+        // Review the visible hunk first. The Oct-1 manual-scroll contract makes that a real first step;
+        // this test targets the later cross-file stage/Undo view, not viewport-first selection.
+        await nextChange(); await expectCursorAt(rel, 160);
+        editor.selection = new vscode.Selection(160, 2, 160, 12);
 		const before = { selection: editor.selection, top: editor.visibleRanges[0].start.line };
 
 		await vscode.commands.executeCommand('better-git-vscode.next-scm-change', 'corsair');

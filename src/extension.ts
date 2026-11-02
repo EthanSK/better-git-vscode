@@ -10,7 +10,7 @@ import * as path from "path";
 import { homedir } from "os";
 import { resolveWorkbenchFilePath } from "./workbenchFilePath";
 import { reviewDiffIsStaged } from "./gitReviewDiff";
-import { ReviewFilePositions } from "./reviewFilePositions";
+import { ReviewFilePosition, ReviewFilePositions } from "./reviewFilePositions";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp } from "./gitWorktreeFocus";
@@ -60,7 +60,10 @@ let trackedPositionEditor: vscode.TextEditor | undefined;
 let trackedPositionUri: string | undefined;
 let restoredPositionTab: vscode.Tab | undefined;
 let applyingReviewPosition = false;
-let pendingReviewPosition: { tab: vscode.Tab; editor: vscode.TextEditor; view: StageUndoView } | undefined;
+let pendingReviewPosition: { tab: vscode.Tab; editor: vscode.TextEditor; view: ReviewFilePosition } | undefined;
+// VS Code's native next/previousChange wraps inside the file (last change -> first) before Better Git can see
+// that the press is a file boundary. While that press leaves the file, remember where Ethan actually was.
+let departingReviewPosition: ReviewFilePosition | undefined;
 
 // NOTE: the old `isNavigationPromptOpen` guard + the getNextFileName/getPreviousFileName helpers were
 // removed in v1.0.2 along with the cross-file confirmation prompt — the tool now ALWAYS jumps silently.
@@ -788,7 +791,7 @@ interface BetterGitExtensionApi {
     isKeyboardReviewActive(): boolean;
     // Isolated Extension Development Hosts only: feed the same physical state interpreter without OS injection.
     sampleKeyboardReviewKeys?(state: ReviewKeyState): void;
-    getRememberedReviewPosition?(uri: vscode.Uri): StageUndoView | undefined;
+    getRememberedReviewPosition?(uri: vscode.Uri): ReviewFilePosition | undefined;
     whenWorktreePresentationSettled?(): Promise<void>;
     whenKeyboardGestureSettled?(): Promise<void>;
 }
@@ -1790,6 +1793,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 // range before the next wheel detent arrives. Other targets supersede only queued navigation.
                 ownedMouseStagePreview = { request, uri: preview.uri.toString() };
                 await openNavigationTarget(preview, check);
+                adoptLandedReviewPosition(preview, check); // A later eyes ratchet continues from this landing.
                 requestCurrentHunkOverviewMarkerRefresh();
             }
             mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
@@ -1848,6 +1852,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     ownedMouseStagePreview = { request, uri: plan.target.uri.toString() };
                     await openNavigationTarget(plan.target, boundaryCheck);
                     if (direction === "previous") { await landChangeForBackwardReview(plan.target, boundaryCheck); }
+                    else { adoptLandedReviewPosition(plan.target, boundaryCheck); } // Next ratchet reaches change two.
                 } else {
                     // Native diff commands wrap within the same file. At the outer
                     // worktree boundary retain the review position instead.
@@ -3852,6 +3857,7 @@ const openFirstFile = async (check: NavigationCheckpoint = noNavigationCheckpoin
     );
     await openNavigationTarget(target, check);
     await landPlainMergeConflictTarget(target, "down", check);
+    adoptLandedReviewPosition(target, check);
 };
 
 const openLastFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
@@ -3946,15 +3952,14 @@ const landNewFileTargetAtBottom = async (entry: FileChange, check = noNavigation
 const landChangeForBackwardReview = async (entry: FileChange, check = noNavigationCheckpoint): Promise<void> => {
     check();
     // Revisit resumes Ethan's last position; only a FIRST visit uses the old EOF/last-hunk landing.
-    if (hasRestoredReviewPosition(entry)) { return; }
-    if (await landPlainMergeConflictTarget(entry, "up", check)) {
-        return;
+    if (!hasRestoredReviewPosition(entry)
+        && !(await landPlainMergeConflictTarget(entry, "up", check))
+        && !(await landNewFileTargetAtBottom(entry, check))) {
+        check();
+        await landPreviousDiffAtLastChange(check);
     }
-    if (await landNewFileTargetAtBottom(entry, check)) {
-        return;
-    }
-    check();
-    await landPreviousDiffAtLastChange(check);
+    // The landed last change is the review position: the following Previous must not re-select it.
+    adoptLandedReviewPosition(entry, check);
 };
 
 const openNextFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
@@ -4003,6 +4008,8 @@ const openNextFile = async (check: NavigationCheckpoint = noNavigationCheckpoint
     const target = fileChanges[nextIndex];
     await openNavigationTarget(target, check, !isPreview);
     await landPlainMergeConflictTarget(target, "down", check);
+    // Native first-change landing is the review position: the following Next must reach the second change.
+    adoptLandedReviewPosition(target, check);
 };
 
 const openPreviousFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
@@ -4044,6 +4051,18 @@ const openPreviousFile = async (check: NavigationCheckpoint = noNavigationCheckp
 
     // LOOP: wrap to the last file only when genuinely at the first file (index 0).
     const prevIndex = currentIndex === 0 ? fileChanges.length - 1 : currentIndex - 1;
+
+    // A diff boundary in the only changed file already wrapped natively to its last change. Reopening it
+    // would treat that wrap as a revisit and restore the hunk START, skipping its unread tail on Previous.
+    // Present that existing landing once; explicit Previous File commands still use the ordinary open path.
+    if (prevIndex === currentIndex && departingReviewPosition?.fileUri === fileChanges[prevIndex].uri.toString()) {
+        departingReviewPosition = undefined; // This is a loop into the same view, not a departing-file receipt.
+        const ctx = await getHunkStageContext(check);
+        check();
+        if (ctx) { await revealHunkOnLanding(ctx, ctx.editor.selection.active.line, "up"); }
+        adoptLandedReviewPosition(fileChanges[prevIndex], check);
+        return;
+    }
 
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
     await openNavigationTarget(fileChanges[prevIndex], check, !isPreview);
@@ -4191,14 +4210,22 @@ const trackUnstagedReviewPosition = (): void => {
     });
 };
 
+// Capture the live next-press owner with the coordinates, exactly as anchorNavigationAtViewport would decide it.
+const capturedReviewPosition = (editor: vscode.TextEditor): ReviewFilePosition | undefined => {
+    const view = captureActiveStageUndoView(true);
+    return view && { ...view, resumeFromViewport: reviewResumesFromViewport(editor) };
+};
+
 const rememberUnstagedReviewPosition = (editor: vscode.TextEditor | undefined): void => {
     if (!editor || editor !== trackedPositionEditor || pendingReviewPosition || applyingReviewPosition
         || trackedPositionTab !== vscode.window.tabGroups.activeTabGroup.activeTab || !trackedPositionUri) { return; }
-    const view = captureActiveStageUndoView(true);
+    // The native wrap that precedes a file boundary is not where Ethan left this file; keep the pre-wrap view.
+    const departing = departingReviewPosition?.documentUri === editor.document.uri.toString() ? departingReviewPosition : undefined;
+    const view = departing ?? capturedReviewPosition(editor);
     if (view?.fileUri === trackedPositionUri) { reviewFilePositions.remember(view); }
 };
 
-const applyRememberedReviewPosition = (tab: vscode.Tab, editor: vscode.TextEditor, view: StageUndoView): boolean => {
+const applyRememberedReviewPosition = (tab: vscode.Tab, editor: vscode.TextEditor, view: ReviewFilePosition): boolean => {
     if (vscode.window.tabGroups.activeTabGroup.activeTab !== tab || visibleEditorForActiveTab() !== editor
         || trackedPositionUri !== view.fileUri || editor.document.uri.toString() !== view.documentUri) { return false; }
     applyingReviewPosition = true;
@@ -4206,14 +4233,26 @@ const applyRememberedReviewPosition = (tab: vscode.Tab, editor: vscode.TextEdito
         // The no-settle branch applies its setters synchronously before returning its fulfilled promise.
         void restoreStageUndoView(view, false).catch(error => debugLog("nav", `saved review position unavailable: ${String(error)}`));
         restoredPositionTab = tab;
+        // Resume the next press the way Ethan left it. A caret placed by review navigation continues from that
+        // caret; otherwise (he scrolled independently, or an older entry lacks the flag) the restored viewport
+        // wins. restoredTop marks this restore's own asynchronous reveal so it is not mistaken for a manual scroll.
+        const resumeFromViewport = view.resumeFromViewport !== false;
         const viewport = readViewport(editor);
-        if (viewport) { reviewViewportState.set(editor, { ...viewport, manuallyScrolled: true }); }
-        debugLog("nav", `restored unstaged review position ${view.fileUri}, top=${view.topLine ?? 0}`);
+        if (viewport) {
+            reviewViewportState.set(editor, {
+                top: viewport.top, bottom: viewport.bottom, manuallyScrolled: resumeFromViewport,
+                // If native view memory already put us here, no later scroll belongs to this restore.
+                restoredTop: view.topLine !== undefined && Math.abs(viewport.top - view.topLine) > 1
+                    ? view.topLine : undefined,
+            });
+        }
+        if (!resumeFromViewport) { navigatedReviewEditors.add(editor); }
+        debugLog("nav", `restored unstaged review position ${view.fileUri}, top=${view.topLine ?? 0}, next press from ${resumeFromViewport ? "viewport" : "caret"}`);
         return true;
     } finally { applyingReviewPosition = false; }
 };
 
-const restoreRememberedReviewPosition = (entry: FileChange, saved: StageUndoView | undefined): boolean => {
+const restoreRememberedReviewPosition = (entry: FileChange, saved: ReviewFilePosition | undefined): boolean => {
     if (!saved || entry.staged || currentReviewFileUri()?.toString() !== entry.uri.toString()) { return false; }
     trackUnstagedReviewPosition();
     const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -5143,7 +5182,39 @@ const reviewViewportState = new WeakMap<vscode.TextEditor, {
     top: number;
     bottom: number;
     manuallyScrolled: boolean;
+    // Top requested by a remembered-position restore. Its reveal is not awaited (no input latency), so the
+    // resulting visible-range event can arrive after the navigation queue has drained.
+    restoredTop?: number;
 }>();
+
+// Mirrors anchorNavigationAtViewport: a never-navigated editor or an independent scroll resumes from the viewport.
+const reviewResumesFromViewport = (editor: vscode.TextEditor): boolean =>
+    !navigatedReviewEditors.has(editor) || reviewViewportState.get(editor)?.manuallyScrolled !== false;
+
+const caretLineIsVisible = (editor: vscode.TextEditor): boolean => {
+    const line = editor.selection.active.line;
+    return editor.visibleRanges.some(range => line >= range.start.line && line <= range.end.line);
+};
+
+// Ethan reported (2026-11-02): when Next jumps to a new file, the following Next stays on the same change before
+// progress resumes. Under the 2026-10-01 viewport-first rule the landed editor counted as never navigated, so its
+// first press re-anchored just above the viewport and native Next re-selected the change already shown (Previous likewise re-selected the landed
+// last change, or a reversal moved into a visible neighbour). A Better Git cross-file landing is a review step
+// (native first change, last change/tall-hunk bottom, conflict block): the next press continues from that caret
+// like any consecutive press, and only a later independent scroll re-anchors to the viewport. Still viewport-first:
+// brand-new files (Ethan 2026-07-10: after a backward landing pins a short file's EOF, Next steps from the visible
+// top instead of leaving), remembered revisits (they restore their own owner) and a caret VS Code left off-screen.
+const adoptLandedReviewPosition = (entry: FileChange, check: NavigationCheckpoint = noNavigationCheckpoint): void => {
+    check();
+    const editor = visibleEditorForActiveTab();
+    if (!editor || hasRestoredReviewPosition(entry) || currentReviewFileUri()?.toString() !== entry.uri.toString()
+        || newFileScrollEditor() === editor || !caretLineIsVisible(editor)) { return; }
+    const viewport = readViewport(editor);
+    if (!viewport) { return; }
+    navigatedReviewEditors.add(editor);
+    reviewViewportState.set(editor, { top: viewport.top, bottom: viewport.bottom, manuallyScrolled: false });
+    debugLog("nav", `landed review continues from caret L${editor.selection.active.line + 1} (viewport L${viewport.top + 1}-L${viewport.bottom + 1})`);
+};
 
 const rememberReviewViewport = (editor: vscode.TextEditor | undefined): void => {
     if (!editor || reviewViewportState.has(editor)) { return; }
@@ -5160,11 +5231,15 @@ const observeReviewViewport = (editor: vscode.TextEditor): void => {
     const viewport = readViewport(editor);
     if (!viewport) { return; }
     const prior = reviewViewportState.get(editor);
-    const changed = prior && (prior.top !== viewport.top || prior.bottom !== viewport.bottom);
+    const changed = !!prior && (prior.top !== viewport.top || prior.bottom !== viewport.bottom);
+    // Exempt only the pending restore arrival (±1 for sticky/surrounding context), then consume it.
+    // Ethan's later one-line scroll must resume from the viewport, even while the old caret remains visible.
+    const restoreArrival = prior?.restoredTop !== undefined && Math.abs(viewport.top - prior.restoredTop) <= 1;
     reviewViewportState.set(editor, {
         top: viewport.top,
         bottom: viewport.bottom,
-        manuallyScrolled: !!prior?.manuallyScrolled || (!!changed && queuedNavigationOperations === 0),
+        manuallyScrolled: !!prior?.manuallyScrolled || (changed && !restoreArrival && queuedNavigationOperations === 0),
+        restoredTop: changed || restoreArrival ? undefined : prior?.restoredTop,
     });
 };
 
@@ -5175,9 +5250,11 @@ const anchorNavigationAtViewport = (editor: vscode.TextEditor | undefined, direc
     const viewport = readViewport(editor);
     if (!viewport) { return; }
     const prior = reviewViewportState.get(editor);
-    // On the first press, the already-rendered viewport is the only trustworthy starting point: opening a
-    // diff can scroll to its first change while leaving the editor selection at an unrelated old line.
-    // Later presses keep exact caret-owned progression until a separate viewport change resumes review.
+    // On the first press in an editor Better Git did not land (SCM click, manual open), the already-rendered
+    // viewport is the only trustworthy starting point: opening a diff can scroll to its first change while leaving
+    // the editor selection at an unrelated old line. Better Git's own cross-file landings and caret-owned revisits
+    // are registered as navigated (adoptLandedReviewPosition / applyRememberedReviewPosition). Later presses keep
+    // exact caret-owned progression until a separate viewport change resumes review.
     const firstPressInEditor = !navigatedReviewEditors.has(editor);
     navigatedReviewEditors.add(editor);
     if (!firstPressInEditor && !prior?.manuallyScrolled) { return; }
@@ -5238,6 +5315,9 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
     if (check === noNavigationCheckpoint) {
         invalidateChangeNavigation(true);
     }
+    // Looping back into the same file (its only changed file) keeps the native wrap to its first change; the
+    // pre-wrap view would otherwise be restored as a "revisit" and pin every later press at the old last change.
+    if (departingReviewPosition?.fileUri === entry.uri.toString()) { departingReviewPosition = undefined; }
     const previousTab = closeCurrent ? vscode.window.tabGroups.activeTabGroup.activeTab : undefined;
     navigationOwnTabChange = true;
     try {
@@ -5265,6 +5345,27 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
         else { confirmOpenedReview(entry.uri); }
     }
     check();
+};
+
+// The native change command has already wrapped (and recentered) the departing diff when Better Git learns that a
+// press is a file boundary. Hold the pre-press view (captured before viewport anchoring) only while that boundary
+// runs, so the revisit memory written by openChangeEntry (and any late wrap events) records where Ethan left the
+// file and who owned its next press: e.g. its last change after Next. Without this, returning with Previous to a
+// file left by Next restored its FIRST change, which also suppressed the last-change landing.
+const captureDepartingReviewPosition = (editor: vscode.TextEditor | undefined): ReviewFilePosition | undefined =>
+    editor && editor === trackedPositionEditor && trackedPositionUri ? capturedReviewPosition(editor) : undefined;
+
+const leaveReviewFile = async (
+    departing: ReviewFilePosition | undefined,
+    check: NavigationCheckpoint,
+    onFileBoundary: (check: NavigationCheckpoint) => Promise<void>,
+): Promise<void> => {
+    departingReviewPosition = departing?.fileUri === trackedPositionUri ? departing : undefined;
+    try {
+        await onFileBoundary(check);
+    } finally {
+        departingReviewPosition = undefined;
+    }
 };
 
 const serializeChangeNavigation = (
@@ -5569,6 +5670,8 @@ const goToNextDiffOnce = async (
         return;
     }
 
+    // Captured before anchoring: if this press leaves a diff, revisit memory keeps Ethan's real view and owner.
+    const departing = captureDepartingReviewPosition(visibleEditorForActiveTab());
     anchorNavigationAtViewport(visibleEditorForActiveTab() ?? activeEditor, "down");
 
     // PLAIN MERGE-CONFLICT MODE: the ordinary Source Control view is a single working-file editor, not a
@@ -5643,7 +5746,7 @@ const goToNextDiffOnce = async (
         // "Jump to next file: ...?" modal would defeat that. (The old promptBeforeNextFile setting +
         // its modal confirmation path were removed entirely — see CHANGELOG v1.0.2.)
         debugLog("nav", `next: no forward change in file (before=L${(lineBefore ?? -1) + 1} after=L${(lineAfter ?? -1) + 1}) -> openNextFile()`);
-        await onFileBoundary(check);
+        await leaveReviewFile(departing, check, onFileBoundary);
         return;
     }
 
@@ -5668,6 +5771,7 @@ const goToPreviousDiffOnce = async (
         return;
     }
 
+    const departing = captureDepartingReviewPosition(visibleEditorForActiveTab()); // See goToNextDiffOnce.
     anchorNavigationAtViewport(visibleEditorForActiveTab() ?? activeEditor, "up");
 
     // PLAIN MERGE-CONFLICT MODE, mirrored for upward review. A block is one change; exhausting the first block
@@ -5730,7 +5834,7 @@ const goToPreviousDiffOnce = async (
         }
         // Out of changes in the current file -> jump straight to the previous changed file, NO prompt.
         // Same rationale as goToNextDiff: the confirmation modal was removed entirely (see CHANGELOG v1.0.2).
-        await onFileBoundary(check);
+        await leaveReviewFile(departing, check, onFileBoundary);
         return;
     }
 
@@ -5856,7 +5960,7 @@ const stageSelectedFilesAndAdvance = async (
     }
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
     await openNavigationTarget(target, check, activeWasSelected && !isPreview);
-    if (direction === "previous") { await landChangeForBackwardReview(target, check); }
+    if (direction === "previous") { await landChangeForBackwardReview(target, check); } else { adoptLandedReviewPosition(target, check); }
     return true;
 };
 
@@ -5980,6 +6084,8 @@ const stageCurrentFileAndAdvance = async (
         // Stage-and-Previous is a cross-file backward transition too: land new files at EOF and tall diff hunks
         // at their last line, exactly like openPreviousFile/openLastFile.
         await landChangeForBackwardReview(targetUnstagedChange, check);
+    } else {
+        adoptLandedReviewPosition(targetUnstagedChange, check); // Same next-press rule as openNextFile.
     }
 };
 

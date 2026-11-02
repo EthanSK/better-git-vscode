@@ -4,7 +4,9 @@ Better Git VS Code treats change review as one continuous, reversible sequence. 
 
 ## The navigation contract
 
-The visible viewport starts review when an editor first opens or after the user scrolls it independently. Next begins just above the visible top; Previous begins just below the visible bottom, so the first on-screen change remains reachable even if the caret is elsewhere. Consecutive presses then use the exact caret reached by the previous review step until the viewport moves independently again. Better Git VS Code does not keep a separate forward/backward state machine that can drift away from what the user is reading.
+The visible viewport starts review when an editor opens on its own (for example from a Source Control click) or after the user scrolls it independently. Next begins just above the visible top; Previous begins just below the visible bottom, so the first on-screen change remains reachable even if the caret is elsewhere. Consecutive presses then use the exact caret reached by the previous review step until the viewport moves independently again. Better Git VS Code does not keep a separate forward/backward state machine that can drift away from what the user is reading.
+
+A cross-file landing made by Better Git is itself a review step. After Next lands on a diff's first change, or Previous on its last change, tall-hunk bottom or conflict block, the following press continues from that landed caret, so it never re-selects the change already on screen; reversing direction leaves the file just like any other reversal at its edge. A later independent scroll still re-anchors to the viewport, and a caret left off-screen never owns the next press. Brand-new files keep viewport-first entry, so after Previous lands at a short file's EOF, Next still steps from its visible top. Returning to a visited unstaged file restores its cursor, scroll and whether its next press continues from the caret or the viewport. VS Code's native last-to-first wrap immediately before a file boundary is not recorded as where the file was left.
 
 An unresolved file opened from Source Control as a plain editor follows that same sequence. Better Git VS Code parses complete standard conflict-marker groups and treats each `<<<<<<<` / `=======` / `>>>>>>>` group as one change. Next selects the following block; Previous selects the preceding block. The blocks do not wrap inside the file: exhausting an edge rolls into the adjacent changed file, with forward navigation landing on its first block and backward navigation landing on its last. Git's live `mergeChanges` state and the active tab's exact visible editor form the gate, so marker-like text in an ordinary file and a stale focused editor cannot enter this mode.
 
@@ -45,6 +47,7 @@ The isolated real VS Code Extension Development Host suite covers navigation sce
 - partial final steps at the top and bottom before cross-file rollover;
 - direction reversal from the current caret;
 - viewport-first review and resumption after scrolling, including a small scroll that leaves the old caret visible;
+- the press after a forward or backward cross-file landing reaching the next change, a later scroll still winning, and a revisit restoring the pre-wrap position with its caret ownership;
 - rapid queued input while Source Control retains focus;
 - a viewport-fit hunk stranded below a preceding hunk;
 - the exact copied `profile-pic.service.ts` replacement where native Next jumps from line 53 to line 149, proving default +10, custom +7, mirrored -7, and same-file retention;

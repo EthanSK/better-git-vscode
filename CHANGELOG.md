@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.2.145]
+
+- Continue from the landed change after switching files with Next/Previous, including immediate direction reversal and stage-and-advance.
+- Restore the real position left before a native diff wrap, while preserving independent scrolling and exact Undo.
+- Present the last tall change from its bottom when Previous loops inside the only changed file.
+
 ## 1.2.144
 
 - Reduce the macOS held-key Next/Previous glance gap from 300 ms to 100 ms. Preserve immediate fresh presses, no queued repeats during loading, release-to-stage, and mouse/wand timing.
