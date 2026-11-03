@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.151
+
+- Start the next file from its beginning when Next crosses a file boundary, including Stage + Next and held review. A text diff starts at its first change; a plain new file starts at line 1, even on a revisit.
+- Keep saved cursor and scroll positions for ordinary Source Control switches, Previous and Undo. Suppress the destination's saved position through the complete forward open and landing without a timed delay.
+
 ## 1.2.150
 
 - Start VS Code's Git extension before Better Git. A command arriving immediately after an extension restart can no longer abort activation while the current changed-file editor is being observed.

@@ -5396,6 +5396,52 @@ suite('SCM change navigation E2E', () => {
 		assert.notStrictEqual(after.selection.active.line, 5, 'dual-state file got the 5-line step — the stage-then-edit hijack is back');
 	});
 
+	// Ethan (2026-11-03): Next at a file's end deliberately restarts the next file, even on a revisit.
+	// Native/SCM switches and Previous retain resume behavior; a delayed restore must not undo this landing.
+	for (const targetKind of ['plain', 'diff'] as const) {
+		for (const entry of ['next', 'stage-next', 'eyes'] as const) {
+			test(`forward boundary restarts remembered ${targetKind} through ${entry}`, async () => {
+				const from = `forward_${targetKind}_${entry}_a.txt`, to = `forward_${targetKind}_${entry}_b.txt`;
+				if (targetKind === 'diff') {
+					commitLandingFixtures({ [from]: 1, [to]: 300 }, 'remembered forward');
+					editLines(from, 1, [0]); editLines(to, 300, [8, 170]);
+					await refreshUntil(() => inWorkingTree(from, 5) && inWorkingTree(to, 5), 'forward diff fixtures');
+				} else {
+					write(from, 'origin'); write(to, lines(300, 'remembered target'));
+					await refreshUntil(() => isUntracked(from) && isUntracked(to), 'forward plain fixtures');
+				}
+				const old = targetKind === 'diff' ? await openWorkingDiffAt(to, 170) : await openPlainAt(to, 170);
+				old.revealRange(new vscode.Range(155, 0, 155, 0), vscode.TextEditorRevealType.AtTop);
+				await poll(() => {
+					const saved = extensionApi.getRememberedReviewPosition?.(wsUri(to));
+					return saved && saved.selections[0].active.line === 170 && (saved.topLine ?? 0) > 100;
+				}, 'destination remembered below its first change');
+				if (targetKind === 'diff') { await openWorkingDiffAt(from, 0); }
+				else { await openPlainAt(from, 0); }
+				if (entry === 'eyes') { await keyboardReview.begin('next'); }
+				if (entry === 'stage-next') {
+					await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+				} else { await nextChange(); }
+				await expectActiveTab(to);
+				await expectCursorVisibleAt(to, targetKind === 'diff' ? 8 : 0);
+				// A following real press must continue from the new start, never the old cached midpoint.
+				await nextChange();
+				const continued = visibleEditorFor(wsUri(to))!;
+				assert.strictEqual(activeTabPath(), wsUri(to).path);
+				if (targetKind === 'diff') { assert.strictEqual(continued.selection.active.line, 170); }
+				else { assert.ok(continued.selection.active.line > 0 && continued.selection.active.line < 30); }
+				if (entry === 'eyes') { await keyboardReview.cancel(); }
+				if (entry === 'stage-next') {
+					assert.strictEqual(git('diff --cached --name-only'), from);
+					await extensionApi.whenStageTransactionsSettled();
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+					await expectActiveTab(from);
+					assert.strictEqual(git('diff --cached --name-only'), '');
+				}
+			});
+		}
+	}
+
 	test('unstaged review positions survive switching plain preview files and backward navigation', async () => {
 		const a = 'position_a.txt', b = 'position_b.txt';
 		write(a, lines(400, 'remember a')); write(b, lines(400, 'remember b'));
@@ -5416,6 +5462,18 @@ suite('SCM change navigation E2E', () => {
 			return e && e.selection.anchor.line === 160 && e.selection.active.character === 7
 				&& Math.abs(e.visibleRanges[0].start.line - (saved.topLine ?? 0)) <= 1;
 		}, 'revisit to restore selection and scroll instead of landing at EOF');
+	});
+
+	test('explicit next-file browsing still restores a remembered position', async () => {
+		const a = 'browse_position_a.txt', b = 'browse_position_b.txt';
+		write(a, lines(300, 'browse a')); write(b, lines(300, 'browse b'));
+		await refreshUntil(() => isUntracked(a) && isUntracked(b), 'explicit file browsing fixtures');
+		const editor = await openPlainAt(b, 170);
+		editor.revealRange(new vscode.Range(155, 0, 155, 0), vscode.TextEditorRevealType.AtTop);
+		await poll(() => (extensionApi.getRememberedReviewPosition?.(wsUri(b))?.topLine ?? 0) > 100, 'remembered browse position');
+		await openPlainAt(a, 0);
+		await vscode.commands.executeCommand('better-git-vscode.next-changed-file');
+		await expectCursorVisibleAt(b, 170);
 	});
 
 	test('unstaged review positions restore native working-diff switches and manual scrolling with an old cursor', async () => {
