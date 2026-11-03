@@ -11,6 +11,7 @@ import { homedir } from "os";
 import { resolveWorkbenchFilePath } from "./workbenchFilePath";
 import { reviewDiffIsStaged } from "./gitReviewDiff";
 import { ReviewFilePosition, ReviewFilePositions } from "./reviewFilePositions";
+import { createReviewHostCapability } from "./reviewHostCapability";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp } from "./gitWorktreeFocus";
@@ -2639,6 +2640,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     requestCurrentHunkOverviewMarkerRefresh();
     rememberReviewViewport(visibleEditorForActiveTab());
     trackUnstagedReviewPosition();
+
+    // Ethan wants fresh Default mouse holds to stay in eyes after restarts, without manual re-enablement.
+    // Publish only after this real host registered its commands. Agentic Mouse verifies EVERY live host
+    // against these process-bound receipts; installed extension files alone cannot prove readiness.
+    // Test/Development hosts never advertise into the normal profile. This background write never gates input.
+    if (process.platform === "darwin" && context.extensionMode === vscode.ExtensionMode.Production) {
+        const capability = createReviewHostCapability({
+            directory: path.join(homedir(), "Library", "Application Support", "BetterGit", "active-hosts"),
+            extensionVersion: context.extension.packageJSON.version, codePid: process.env.VSCODE_PID,
+            log: message => debugLog("review-host", message),
+        });
+        context.subscriptions.push({ dispose: () => { void capability.dispose(); } });
+    }
 
     return {
         whenScmTreeStateSettled,

@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.147
+
+- Let the matching Agentic Mouse update automatically verify running Better Git commands after app and extension restarts, so Default holds can keep starting in eyes review.
+- Publish one small private process-bound receipt per production activation. Keep this work off the mouse/navigation path and clean up closed-host leftovers without a polling loop.
+
 ## 1.2.146
 
 - Start Default Agentic Mouse holds in eyes review through the same button-down input, so separate mode messages cannot arrive too early.

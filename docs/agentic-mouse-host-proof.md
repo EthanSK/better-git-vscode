@@ -1,0 +1,13 @@
+# Running-host proof for Default eyes entry
+
+The Agentic Mouse Default page must start fresh holds in eyes review without relying on a startup mode URL arriving after button-down. The new begin bindings are available from Better Git 1.2.146. Better Git 1.2.147 adds automatic running-host proof for the matching companion, replacing the first batch's one-session qualification.
+
+The canonical producer and schema are in [reviewHostCapability.ts](../src/reviewHostCapability.ts). On macOS, a Production activation publishes only after registering its commands. Development/Test hosts never advertise into the normal integration. The private directory is `~/Library/Application Support/BetterGit/active-hosts`; each activation owns `<hostPid>-<activationId>.json`. Writes use an atomic rename and mode 0600 in a newly created mode-0700 directory. Receipts contain the extension version, the `atomic-default-eyes-begin-v1` capability, activation identity, and Code/extension-host PIDs and start times. They contain no workspace, file or window-title data.
+
+Both sides normalize `/bin/ps -o lstart=` under `LC_ALL=C,TZ=UTC` by trimming and collapsing whitespace. The companion validates bounded schema/size, filename PID/UUID, actual process paths/start identities and the complete current normal extension-host PID set from `code --status`. Installed files are not proof of a running host. Missing, stale or mismatched proof cannot enable unknown commands.
+
+The companion refreshes from directory, process and session events, coalescing work already in progress; it uses its existing short Karabiner lease. No polling service or input wait is added. Unrelated process forks trigger revalidation, and the supported path can return automatically when the same qualified host set remains. A hold retains the branch selected on button-down even if proof expires or changes during it, preserving its release, cancellation and compatibility-startup identity.
+
+Each producer removes only its unique receipt on disposal. A new activation also prunes up to 128 recognized receipts whose host PIDs have exited, after publishing its own readiness. It preserves live hosts, malformed/unrelated files, other owners and unknown process errors. This bounds crash cleanup work without periodic jobs; receivers never rewrite producer receipts.
+
+Legacy bindings, the entered VS Code page and wand remain separate. For a hold that selected the new begin binding, the companion's startup hint carries `initial=1` and is ignored by Better Git. A legacy hold keeps its unmarked startup hint. Explicit in-hold toggles retain their existing transport; this contract does not claim broader stale-toggle or pre-readiness-toggle behavior has changed.
