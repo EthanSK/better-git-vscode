@@ -16,7 +16,8 @@ import { ReviewFilePosition, ReviewFilePositions } from "./reviewFilePositions";
 import { createReviewHostCapability } from "./reviewHostCapability";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
-import { returnToApp } from "./gitWorktreeFocus";
+import { returnToApp, frontmostAppBundleId } from "./gitWorktreeFocus";
+import { WorktreeUsage } from "./gitWorktreeUsage";
 import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS, WORKTREE_TREE_SETTLE_MS } from "./gitWorktreePresentation";
 import { repositoriesInScmRegistrationOrder } from "./gitScmDiscoveryOrder";
 import { CommitMessageGenerator } from "./codexCommitMessage";
@@ -57,6 +58,7 @@ import { registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedL
 
 let confirmOpenedReview: (uri: vscode.Uri) => void = () => undefined;
 let pendingWorktreePresentation: DeferredWorktreePresentation | undefined;
+let worktreeUsage: WorktreeUsage | undefined;
 const reviewFilePositions = new ReviewFilePositions();
 let trackedPositionTab: vscode.Tab | undefined;
 let trackedPositionInput: unknown;
@@ -1279,7 +1281,15 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         reason => debugLog("worktree-link", `Deferred native presentation ended: ${reason}.`));
     context.subscriptions.push(worktreePresentation);
     pendingWorktreePresentation = worktreePresentation;
+    context.subscriptions.push(vscode.window.onDidChangeWindowState(state => worktreeUsage?.focusChanged(state.focused)),
+        { dispose: () => { worktreeUsage?.dispose(); worktreeUsage = undefined; } });
     const openWorktree = (root?: vscode.Uri, sourceLink?: vscode.Uri): Promise<void> => {
+        worktreeUsage?.finish("newer-link");
+        // Env Worktree clicks only; palette opens and automatic diff reveals are not human review evidence.
+        worktreeUsage = sourceLink && root?.scheme === "file" && debugLoggingEnabled()
+            ? new WorktreeUsage(root.fsPath, event => debugLog("worktree-usage", JSON.stringify(event)),
+                frontmostAppBundleId, () => vscode.window.state.focused) : undefined;
+        const usage = worktreeUsage;
         worktreePresentation.dispose("newer-link");
         const initialPresentationIsCurrent = worktreePresentation.checkpoint();
         const generation = ++worktreeLinkGeneration;
@@ -1297,25 +1307,33 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 // configured origin is activated first, then Code when keep-editor-front is enabled;
                 // finish that sequence here, never refocus either app after background loading settles.
                 if (!sourceLink || !isCurrent()) { return; }
-                // Read after path validation so disabling the setting during a queued open wins.
-                // Application-scoped settings cannot be enabled by the opened repository.
-                const config = vscode.workspace.getConfiguration("better-git-vscode");
-                const destination = worktreeLinkReturnApp(sourceLink,
-                    config.get<boolean>("worktreeLinkReturnFocus", false),
-                    config.get<string>("worktreeLinkReturnApp", ""));
-                if (!destination) { return; }
-                const editorBundleId = config.get<boolean>("worktreeLinkKeepEditorFront", false)
-                    ? ({ vscode: "com.microsoft.VSCode", "vscode-insiders": "com.microsoft.VSCodeInsiders" } as Record<string, string>)[vscode.env.uriScheme]
-                    : undefined;
-                debugLog("worktree-focus", `Starting app handoff for #${generation} before repository loading.`);
-                try { await returnToApp(destination, process.platform, undefined, editorBundleId); }
-                catch (error) { debugLog("worktree-focus", String(error)); }
-                debugLog("worktree-focus", `Finished app handoff for #${generation} before repository loading.`);
+                let automaticOriginReturn = false;
+                try {
+                    // Read after path validation so disabling the setting during a queued open wins.
+                    // Application-scoped settings cannot be enabled by the opened repository.
+                    const config = vscode.workspace.getConfiguration("better-git-vscode");
+                    const destination = worktreeLinkReturnApp(sourceLink,
+                        config.get<boolean>("worktreeLinkReturnFocus", false),
+                        config.get<string>("worktreeLinkReturnApp", ""));
+                    if (!destination) { return; }
+                    const editorBundleId = config.get<boolean>("worktreeLinkKeepEditorFront", false)
+                        ? ({ vscode: "com.microsoft.VSCode", "vscode-insiders": "com.microsoft.VSCodeInsiders" } as Record<string, string>)[vscode.env.uriScheme]
+                        : undefined;
+                    automaticOriginReturn = destination === "com.openai.codex" && !editorBundleId;
+                    debugLog("worktree-focus", `Starting app handoff for #${generation} before repository loading.`);
+                    try { await returnToApp(destination, process.platform, undefined, editorBundleId); }
+                    catch (error) { debugLog("worktree-focus", String(error)); }
+                    debugLog("worktree-focus", `Finished app handoff for #${generation} before repository loading.`);
+                } finally {
+                    if (automaticOriginReturn) { usage?.automaticReturnConfigured(); }
+                    else { usage?.arm(); }
+                }
             };
             let deferredRoot: vscode.Uri | undefined;
             const revealed = await openWorktreeInSourceControl(root,
                 () => isCurrent() && initialPresentationIsCurrent(), value => { deferredRoot = value; }, handoff);
             debugLog("worktree-link", `Finished #${generation}: loaded=${revealed}, nativePending=${!!deferredRoot}, current=${isCurrent()}, elapsed=${Date.now() - receivedAt}ms.`);
+            if (!revealed) { usage?.finish("open-incomplete"); }
             if (revealed && deferredRoot && isCurrent()) {
                 const presentationRoot = deferredRoot;
                 const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -2609,6 +2627,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             rememberUnstagedReviewPosition(event.textEditor);
             if (event.textEditor === visibleEditorForActiveTab() &&
                 (event.kind === vscode.TextEditorSelectionChangeKind.Mouse || event.kind === vscode.TextEditorSelectionChangeKind.Keyboard)) {
+                worktreeUsage?.reviewInput("cursor-move", currentReviewFileUri()?.fsPath);
                 worktreePresentation.dispose("cursor-move");
                 invalidateChangeNavigation(true, "manual editor selection");
                 // A manual cursor move is no longer a Better Git-selected hunk. Clear immediately instead of
@@ -2622,6 +2641,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
+                worktreeUsage?.reviewInput("document-edit", currentReviewFileUri()?.fsPath);
                 worktreePresentation.dispose("document-edit");
                 invalidateChangeNavigation(true, "reviewed document changed"); // Git hunk coordinates no longer describe the displayed revision.
                 clearCurrentHunkOverviewMarker();
@@ -5538,6 +5558,7 @@ const serializeChangeNavigation = (
     const label = traceLabel ?? (commitCapturedStage ? "captured-stage" : undefined);
     const queuedAt = label ? performance.now() : 0;
     pendingWorktreePresentation?.dispose("review-navigation");
+    worktreeUsage?.reviewInput("review-navigation", currentReviewFileUri()?.fsPath);
     observeNavigationTab();
     queuedNavigationOperations++;
     const generation = changeNavigationGeneration;

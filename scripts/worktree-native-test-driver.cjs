@@ -4,6 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 exports.run = async () => {
  const root = process.env.BGV_SWITCH_ROOT;
+ const usageEvents = [];
+ const createOutputChannel = vscode.window.createOutputChannel;
+ if (process.env.BGV_WORKTREE_USAGE_TEST === '1') vscode.window.createOutputChannel = (...args) => {
+  const channel = createOutputChannel(...args);
+  if (args[0] === 'Better Git') {
+   const info = channel.info.bind(channel);
+   channel.info = (message, ...rest) => {
+    if (message.startsWith('[worktree-usage] ')) usageEvents.push(JSON.parse(message.slice('[worktree-usage] '.length)));
+    info(message, ...rest);
+   };
+  }
+  return channel;
+ };
  // Native SCM group focus queues its operation but returns before that operation runs. Model a busy
  // renderer's queue in this disposable host; all actual focus/collapse commands still run natively.
  const groupFocusDelay = Number(process.env.BGV_TEST_GROUP_FOCUS_DELAY_MS ?? 0);
@@ -120,6 +133,7 @@ exports.run = async () => {
      try { await vscode.commands.executeCommand('better-git-vscode.copy-worktree-link',{rootUri:vscode.Uri.file(roots[request.repo])}); copied=await vscode.env.clipboard.readText(); value=copied; }
      finally { if(copied!==undefined && await vscode.env.clipboard.readText()===copied) await vscode.env.clipboard.writeText(before); }
     }
+    else if(request.action==='usage-log') value=usageEvents;
     else if(request.action==='command') value=await vscode.commands.executeCommand(request.command,...(request.args??[]));
     else if(request.action==='stop') { clearInterval(timer); resolve(); }
     fs.writeFileSync(output,JSON.stringify({id:request.id,ok:true,value,...state()}));
@@ -128,5 +142,6 @@ exports.run = async () => {
   },30);
  });
  vscode.commands.executeCommand = originalExecuteCommand;
+ vscode.window.createOutputChannel = createOutputChannel;
  for(const timer of groupFocusTimers) clearTimeout(timer);
 };

@@ -1,9 +1,13 @@
 # Change Log
 
-## 1.2.151
+## 1.2.152
 
 - Start the next file from its beginning when Next crosses a file boundary, including Stage + Next and held review. A text diff starts at its first change; a plain new file starts at line 1, even on a revisit.
 - Keep saved cursor and scroll positions for ordinary Source Control switches, Previous and Undo. Suppress the destination's saved position through the complete forward open and landing without a timed delay.
+
+## 1.2.151
+
+- Add local worktree-link usage diagnostics when debug logging is enabled. Distinguish observable review input, Codex returns, configured automatic returns and unknown outcomes without counting the automatic handoff as user input or changing app focus, navigation or staging.
 
 ## 1.2.150
 

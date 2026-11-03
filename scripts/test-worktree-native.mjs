@@ -28,6 +28,7 @@ const testNoUnstaged = process.argv.includes('--no-unstaged');
 const testStageReveal = process.argv.includes('--stage-reveal');
 const testDeletedLink = process.argv.includes('--deleted-link');
 const testLinkOnly = process.argv.includes('--link-only');
+const testUsage = process.argv.includes('--usage-tracking');
 const testSingleRepository = process.argv.includes('--single-repository');
 const testPreorderedApi = process.argv.includes('--preordered-api');
 async function until(read, accept, description, timeout = 15_000) {
@@ -76,7 +77,7 @@ fs.writeFileSync(workspace, JSON.stringify({ folders: (testSingleRepository ? [r
     // The dedicated Mini uses Dvorak - QWERTY Cmd. Physical X is therefore the contributed Shift+Option+Q
     // binding while still reporting hardware key code 7 to the release monitor.
     'better-git-vscode.dvorakMode': testKeyboardRepeat,
-    'better-git-vscode.debugLogging': testKeyboardRepeat || process.env.BGV_NATIVE_DEBUG === '1',
+    'better-git-vscode.debugLogging': testUsage || testKeyboardRepeat || process.env.BGV_NATIVE_DEBUG === '1',
 } }));
 const profile = path.join(root, 'profile');
 fs.mkdirSync(path.join(profile, 'User'), { recursive: true });
@@ -94,7 +95,7 @@ const log = fs.openSync(path.join(evidence, 'native-worktree.log'), 'w');
 const child = spawn(executable, [workspace, `--user-data-dir=${profile}`, `--extensions-dir=${path.join(root, 'extensions')}`,
     `--extensionDevelopmentPath=${extensionRoot}`, `--extensionTestsPath=${path.join(extensionRoot, 'scripts/worktree-native-test-driver.cjs')}`,
     `--remote-debugging-port=${port}`, '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-telemetry'],
-{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '', BGV_PREORDERED_API_TEST: testPreorderedApi ? '1' : '' }, stdio: ['ignore', log, log] });
+{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_WORKTREE_USAGE_TEST: testUsage ? '1' : '', BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '', BGV_PREORDERED_API_TEST: testPreorderedApi ? '1' : '' }, stdio: ['ignore', log, log] });
 let socket;
 let activationMonitor;
 let nextRequest = 0;
@@ -224,7 +225,34 @@ try {
     }
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.aria === 'Staged Changes'  && r.expanded === 'true'), 'initial staged group');
     await capture('before-first-open');
-    if (testEarlyHandoff) {
+    if (testUsage) {
+        const baseline = roots.map(repo => git(repo, 'status', '--porcelain=v1'));
+        const events = async () => (await request('usage-log')).value;
+        const open = repo => request('uri', {uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}`});
+        await request('config', {settings:{worktreeLinkReturnFocus:false}});
+        await open(1);
+        assert.deepEqual((await events()).map(event=>event.event), ['click','observing'], 'automatic open is not review input');
+        await request('command', {command:'better-git-vscode.next-scm-change'});
+        assert.equal((await events()).at(-1).outcome, 'review-input-first', 'actual navigation hook');
+        await open(2);
+        execFileSync('/usr/bin/osascript', ['-l','JavaScript','-e',
+            "ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);"]);
+        await until(events, events=>events.at(-1)?.reason==='other-app-frontmost', 'actual focus-loss app probe');
+        assert.equal((await events()).at(-1).outcome, 'unknown', 'Finder is not a Codex return');
+        execFileSync('/usr/bin/osascript', ['-l','JavaScript','-e',
+            `ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`]);
+        await until(()=>request('state'), state=>state.focused, 'owned host focus restored');
+        await request('settle-worktree');
+        const count = (await events()).length;
+        await request('config', {settings:{debugLogging:false}});
+        await open(3);
+        assert.equal((await events()).length, count, 'logging disabled creates no observation');
+        assert.deepEqual(roots.map(repo=>git(repo,'status','--porcelain=v1')), baseline, 'logging never changes Git');
+        fs.writeFileSync(path.join(evidence,'worktree-usage-events.json'),JSON.stringify(await events(),null,2));
+        await capture('usage-tracking-finished');
+        console.log('BETTER_GIT_WORKTREE_USAGE_VERIFIED checks=5 review-input,focus-probe,automatic-open,disabled,git-unchanged');
+        console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);
+    } else if (testEarlyHandoff) {
         await request('config', { settings: {worktreeLinkReturnFocus:true,worktreeLinkReturnApp:'com.openai.codex',worktreeLinkKeepEditorFront:true} });
         const baseline = roots.map(repo => git(repo, 'status', '--porcelain=v1'));
         const readEvents = () => JSON.parse(fs.readFileSync(path.join(root, 'handoff-events.json'), 'utf8'));
