@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.154
+
+- Keep roughly ten files visible below the current file while building a review batch on macOS. Scroll the Source Control pane without changing its selection, moving the pointer or waiting in the staging queue.
+- Match the complete file path even when review decorations append tooltip text. Restore borrowed native accessibility state when the held review ends.
+
 ## 1.2.153
 
 - Start the next file from its beginning when Next crosses a file boundary, including Stage + Next and held review. A text diff starts at its first change; a plain new file starts at line 1, even on a revisit.

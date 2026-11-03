@@ -19,3 +19,4 @@ CONTRIBUTING.md
 LEARNINGS.md
 twoday-juletre.webp
 dist/*.map
+src/native/**

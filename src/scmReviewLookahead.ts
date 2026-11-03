@@ -1,7 +1,4 @@
-// PROTOTYPE ONLY: this pure planner/queue is not wired into extension.ts or a production native adapter.
-// Ethan's repeated "still doesn't scroll" reports must not be closed because these unit tests pass.
-// Integration needs real SCM geometry/scroll evidence on the Mini; never substitute row navigation,
-// move the staging endpoint, or block the review input queue merely to bring later rows into view.
+// Viewport planning and a replaceable presentation queue for macScmReviewLookahead.ts.
 // Ethan's "ten or so underneath": move the current Source Control review row near the top only
 // when upcoming files would otherwise be below the viewport. This is presentation, never navigation,
 // selection or staging. The native adapter supplies the visible file area below any sticky headers.
@@ -14,8 +11,8 @@ export interface ScmReviewViewport {
     lookahead: number;
 }
 
-// Keep this function self-contained so the native worker can use its compiled source verbatim.
-// One calculation owns both unit coverage and native decisions; no separately maintained JXA copy.
+// The TypeScript coordinator owns this calculation for every native measurement. Keep it pure
+// and standalone for direct and serialized tests; the native worker never duplicates these rules.
 export function scmReviewScrollDistance(view: ScmReviewViewport): number {
     const values = [view.top, view.bottom, view.rowTop, view.rowHeight, view.remainingFiles, view.lookahead];
     if (!values.every(Number.isFinite) || view.rowHeight <= 0 || view.bottom <= view.top

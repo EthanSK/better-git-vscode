@@ -1,6 +1,7 @@
 // Better Git's activation and command wiring: keyboard/mouse review share exact staging, Undo and navigation.
 // Preserve the owning decision comments; docs/regression-contracts.md maps Ethan's historical bug reports
 // and later corrections to these code paths and their focused tests.
+import { MacScmReviewLookahead } from "./macScmReviewLookahead";
 import { ReviewDocumentWarmup } from "./gitReviewWarmup";
 import { parseWandReviewUri } from "./wandReviewUri";
 import * as vscode from "vscode";
@@ -1720,13 +1721,41 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const setActiveStageSelection = (source: MouseReviewSource, request: MouseHoldRequest, selection: ActiveMouseStageSelection): void => {
         if (request.releaseQueued) { releasedStageSelections.set(request, selection); }
         else { stageHoldSelections.set(source, selection); }
+        requestScmLookahead();
     };
+    const scmLookahead = new MacScmReviewLookahead(context.asAbsolutePath("dist/scm-review-scroll"),
+        Number(process.env.VSCODE_PID), message => debugLog("scm-lookahead", message));
+    let lookaheadRequest: MouseHoldRequest | undefined;
+    let lookaheadPath: string | undefined;
+    const requestScmLookahead = (): void => {
+        // Ethan's "ten or so underneath": scroll the real Changes pane, never walk its selection.
+        // Both eyes review and explosion/file mode share this presentation-only path. It must not
+        // join the navigation or staging queues, and a released/cancelled hold cannot scroll later.
+        const request = latestMouseHoldRequest;
+        if (vscode.env.remoteName || !vscode.window.state.focused || !request?.active || request.releaseQueued) { return; }
+        const entry = [...stageHoldSelections.entries()].find(([, selection]) => selection.request === request);
+        const selection = entry?.[1], target = selection?.items[selection.cursorIndex]?.uri;
+        if (!entry || !selection || !target || target.scheme !== "file" || target.toString() !== currentReviewUri?.toString()
+            || (lookaheadRequest === request && lookaheadPath === target.toString())) { return; }
+        lookaheadRequest = request; lookaheadPath = target.toString();
+        scmLookahead.request({ path: target.fsPath, remainingFiles: selection.items.length - selection.cursorIndex - 1,
+            sensitivity: vscode.workspace.getConfiguration("workbench.list").get<number>("mouseWheelScrollSensitivity", 1),
+            current: () => {
+                const live = stageHoldSelections.get(entry[0]);
+                return vscode.window.state.focused && request === latestMouseHoldRequest && request.active
+                    && !request.releaseQueued && currentReviewUri?.toString() === target.toString()
+                    && live?.items[live.cursorIndex]?.uri.toString() === target.toString();
+            } });
+    };
+    context.subscriptions.push(new vscode.Disposable(() => scmLookahead.dispose()),
+        vscode.window.onDidChangeWindowState(state => { if (!state.focused) { scmLookahead.cancel(); lookaheadRequest = undefined; } }));
     const repaintStagePreviewMode = (selection?: ActiveMouseStageSelection): void => {
         const uri = selection?.items[selection.cursorIndex]?.uri;
         const affected = [uri, currentReviewUri].filter((candidate): candidate is vscode.Uri => candidate !== undefined);
         if (affected.length) { reviewDecoEmitter.fire(affected); }
     };
     const clearStageHoldFeedback = (source?: MouseReviewSource) => {
+        scmLookahead.cancel(); lookaheadRequest = undefined; lookaheadPath = undefined;
         // Another gesture, immediate staging or ordinary navigation ends an unreleased keyboard review unstaged,
         // so a later keyboard finish can never fall back to staging its starting file.
         if (keyboardReviewEndsWithFeedbackClear(keyboardReviewHolds(), source)) {
@@ -2460,6 +2489,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
         currentReviewUri = next;
         currentReviewTab = nextTab;
+        requestScmLookahead();
         warmAdjacentReviewDocuments(next);
         const changed: vscode.Uri[] = [];
         if (prev) {

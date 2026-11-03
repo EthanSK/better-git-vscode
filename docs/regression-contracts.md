@@ -66,7 +66,7 @@ Before changing an owner, read its comments and the linked neighboring cases. Pr
 
 ## Boundaries that must not be reported as completed fixes
 
-- **SCM lookahead scrolling:** `scmReviewLookahead.ts` remains a planner/queue prototype without a production adapter. Its passing pure tests do not make the “ten or so underneath” behavior installed. OI-97 retains the integration work.
+- **SCM lookahead scrolling:** `scmReviewLookahead.ts` supplies the viewport planner and presentation-only queue; `macScmReviewLookahead.ts` and the bundled native worker connect it to the real Changes pane. Never substitute row walking or physical mouse movement. Native tests must prove scrolling, unchanged selection/index/editor, and restoration of borrowed accessibility state. Pure planner checks alone are insufficient.
 - **Collapse unchanged lines:** VS Code's `diffEditor.hideUnchangedRegions.enabled` setting and its per-editor Show/Collapse commands have different scopes. This chat's suggested new mouse toggle was not silently implemented by the navigation changes above.
 - **Personal setup:** monitor-based Inline/Automatic and zoom settings in `diffViewDisplay.ts` remain opt-in; the later re-enable decision supersedes the temporary Automatic-only request. Commit-model selection in `commitMessageModels.ts` remains Codex first, Claude fallback, newest recognized generation then smallest within it.
 - **Other projects / operations:** Nest file icons belong to VSCode Icons++; the Angular package messages were explicitly redirected. Mini permissions/connectivity, Marketplace verification and normal-host activation belong to their operating instructions and release evidence, not guessed editor bug fixes.

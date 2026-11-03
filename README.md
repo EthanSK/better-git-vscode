@@ -58,6 +58,10 @@ On macOS, holding a Next / Previous key leaves at least 50 ms to look at each ch
 
 You can start a batch on deleted files, including deleted images with another version already staged. If VS Code hides which side an image comparison shows, Better Git first opens that same image's unstaged deletion preview, then starts review. This does not stage anything. A staged deletion with a recreated working file is never silently selected as that working file.
 
+During a held review on macOS, Source Control keeps room below the file you are looking at. When fewer than roughly ten following files fit, Better Git scrolls the current row near the top. This changes only the pane's scroll position: it does not change the selected file, add files to the batch, or wait before accepting another navigation or release. It works in both Review changes and Stage files mode.
+
+This scrolling uses macOS Accessibility access for VS Code. Better Git requests the native row information only during the held review, then restores any accessibility switch it enabled. If access is unavailable, review and staging continue normally without the pane adjustment. Windows, Linux and remote extension hosts keep their existing scrolling behavior.
+
 ### 3. Fix something without losing your place
 
 When you open a *staged* file, what you see is a frozen, read-only snapshot of what's staged — you can't actually edit it there. Spot a bug mid-review and you'd normally have to go hunt down the real file. **One key does it for you:** it opens the actual, editable working file at the *exact* line and scroll position you were looking at. See it, fix it, on the spot.

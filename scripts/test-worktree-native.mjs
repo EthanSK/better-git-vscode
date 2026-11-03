@@ -28,6 +28,7 @@ const testNoUnstaged = process.argv.includes('--no-unstaged');
 const testStageReveal = process.argv.includes('--stage-reveal');
 const testDeletedLink = process.argv.includes('--deleted-link');
 const testLinkOnly = process.argv.includes('--link-only');
+const testLookahead = process.argv.includes('--scm-lookahead');
 const testUsage = process.argv.includes('--usage-tracking');
 const testSingleRepository = process.argv.includes('--single-repository');
 const testPreorderedApi = process.argv.includes('--preordered-api');
@@ -77,7 +78,7 @@ fs.writeFileSync(workspace, JSON.stringify({ folders: (testSingleRepository ? [r
     // The dedicated Mini uses Dvorak - QWERTY Cmd. Physical X is therefore the contributed Shift+Option+Q
     // binding while still reporting hardware key code 7 to the release monitor.
     'better-git-vscode.dvorakMode': testKeyboardRepeat,
-    'better-git-vscode.debugLogging': testUsage || testKeyboardRepeat || process.env.BGV_NATIVE_DEBUG === '1',
+    'better-git-vscode.debugLogging': testLookahead || testUsage || testKeyboardRepeat || process.env.BGV_NATIVE_DEBUG === '1',
 } }));
 const profile = path.join(root, 'profile');
 fs.mkdirSync(path.join(profile, 'User'), { recursive: true });
@@ -87,6 +88,7 @@ fs.writeFileSync(path.join(profile, 'User', 'keybindings.json'), JSON.stringify(
     { key: 'cmd+shift+f20', command: 'better-git-vscode.stage-hold-ready', args: 'razer' },
     { key: 'cmd+shift+f15', command: 'better-git-vscode.stage-hold-clear', args: 'razer' },
 ]));
+if (testLookahead) { for (let i = 0; i < 70; i++) { fs.writeFileSync(path.join(roots[1], `review-${String(i).padStart(3, '0')}.txt`), 'review\n'); } fs.writeFileSync(path.join(roots[1], 'review-050 • test.txt'), 'review\n'); }
 const server = net.createServer();
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
@@ -223,6 +225,50 @@ try {
         await send('Page.bringToFront');
         await until(() => request('state'), state => state.focused, 'native window focus');
     }
+    if (testLookahead) {
+        await request('open', {repo:1});
+        let file = 'review-025.txt';
+        await request('working', {repo:1,file});
+        const geometry = () => evaluate(`(() => {
+            const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');
+            const row=[...tree.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')?.startsWith('${file},'));
+            const box=tree.getBoundingClientRect(), current=row?.getBoundingClientRect();
+            return {top:box.top,bottom:box.bottom,rowTop:current?.top,rowBottom:current?.bottom,
+                selected:[...tree.querySelectorAll('[aria-selected="true"]')].map(r=>r.getAttribute('aria-label'))};
+        })()`);
+        const initialAccessibility = (await request('native-accessibility')).value;
+        const before = await geometry();
+        const indexBefore = git(roots[1], 'diff', '--cached', '--name-only');
+        await capture('lookahead-before');
+        await request('command', {command:'better-git-vscode.begin-keyboard-review',args:['next']});
+        const after = await until(geometry, g=>g.rowTop>=g.top && g.rowTop<g.top+65 && g.bottom-g.rowBottom>220, 'native row near top with ten below');
+        assert.deepEqual(after.selected,before.selected,'presentation cannot change SCM selection');
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'),indexBefore,'presentation cannot stage');
+        assert.ok((await request('state')).active.endsWith('/'+file),'presentation cannot navigate');
+        await capture('lookahead-after');
+        const pointerAfter = (await request('native-accessibility')).value;
+        assert.equal(pointerAfter.pointerX,initialAccessibility.pointerX,'physical pointer X unchanged');
+        assert.equal(pointerAfter.pointerY,initialAccessibility.pointerY,'physical pointer Y unchanged');
+        await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
+        for (let i=0;i<12;i++) { await request('command',{command:'better-git-vscode.step-keyboard-review',args:['next']}); }
+        file = 'review-037.txt';
+        await until(geometry,g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220,'repeated file-mode lookahead');
+        await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
+        await request('command',{command:'better-git-vscode.finish-keyboard-review'});
+        for (let i=25;i<37;i++) { assert.ok(git(roots[1],'diff','--cached','--name-only').includes(`review-${String(i).padStart(3,'0')}.txt`)); }
+        assert.ok(!git(roots[1],'diff','--cached','--name-only').includes(file),'current eyes preview excluded');
+        await request('command',{command:'better-git-vscode.undo-last-stage-and-advance'});
+        assert.equal(git(roots[1],'diff','--cached','--name-only'),indexBefore,'one Undo restores the exact batch');
+        file = 'review-050 • test.txt';
+        await request('working',{repo:1,file});
+        await request('command',{command:'better-git-vscode.begin-keyboard-review',args:['next']});
+        await until(geometry,g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220,'decorated path containing separator');
+        await request('command',{command:'better-git-vscode.cancel-keyboard-review'});
+        await until(async ()=>(await request('native-accessibility')).value, value=>value.manual===initialAccessibility.manual && value.enhanced===initialAccessibility.enhanced, 'borrowed accessibility state restored');
+        assert.equal(git(roots[1], 'diff', '--cached', '--name-only'),indexBefore,'cancel cannot stage');
+        fs.writeFileSync(path.join(evidence,'lookahead-result.json'),JSON.stringify({before,after},null,2));
+        console.log('BETTER_GIT_SCM_LOOKAHEAD_VERIFIED checks=9 geometry,selection,editor,index,pointer,repeated-navigation,staging,undo,accessibility-restored');
+    } else {
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.aria === 'Staged Changes'  && r.expanded === 'true'), 'initial staged group');
     await capture('before-first-open');
     if (testUsage) {
@@ -842,6 +888,7 @@ try {
         assert.equal(fs.readFileSync(path.join(repo, file), 'utf8'), 'modified\n');
     }
     console.log(`BETTER_GIT_NATIVE_WORKTREE_VERIFIED evidence=${evidence}`);
+    }
     }
 } finally {
     if (fs.existsSync(path.join(root, 'ready.json'))) { await request('stop').catch(() => {}); }
