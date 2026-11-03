@@ -101,6 +101,9 @@ async function main() {
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'mod_d.txt'), lines(10, 'mod_d')); // second modified file (fall-through target)
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'tall_e.txt'), lines(260, 'tall_e')); // tall contiguous-hunk viewport stepping
 		fs.copyFileSync(profilePicFixtureBeforePath, path.join(fixturePath, 'committed', 'profile-pic.service.ts')); // exact live large-replacement regression
+        // Sanitized word/line shape of the unread replacement that Monaco merged differently from Git.
+        fs.copyFileSync(path.join(extensionDevelopmentPath, 'src/test/fixtures/outer-wrap.before.txt'),
+            path.join(fixturePath, 'committed', 'outer-wrap.ts'));
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'del_b.txt'), lines(20, 'del_b')); // deleted-file tests
 		fs.writeFileSync(path.join(fixturePath, 'committed', 'ren_c.txt'), lines(20, 'ren_c')); // rename test
 		fs.writeFileSync(
@@ -156,6 +159,7 @@ async function main() {
 		process.env.BGV_HEADER_WORKTREE_PATH = headerWorktreePath;
 		process.env.BGV_LAST_STAGED_WORKTREE_PATH = lastStagedWorktreePath;
 		process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH = profilePicFixtureAfterPath;
+        process.env.BGV_OUTER_WRAP_AFTER_FIXTURE_PATH = path.join(extensionDevelopmentPath, 'src/test/fixtures/outer-wrap.after.txt');
 
 		fakeCodexDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'better-git-vscode-fake-codex-'));
 		fakeCodexPath = path.join(fakeCodexDirectory, 'codex');
@@ -250,6 +254,7 @@ process.stdout.write(JSON.stringify({
 		delete process.env.BGV_HEADER_WORKTREE_PATH;
 		delete process.env.BGV_LAST_STAGED_WORKTREE_PATH;
 		delete process.env.BGV_PROFILE_PIC_AFTER_FIXTURE_PATH;
+        delete process.env.BGV_OUTER_WRAP_AFTER_FIXTURE_PATH;
 		delete process.env.BGV_FAKE_CODEX_PATH;
 		delete process.env.BGV_FAKE_CODEX_CAPTURE_PATH;
 		delete process.env.BGV_FAKE_CLAUDE_PATH;

@@ -3,8 +3,8 @@ import * as assert from "assert";
 import { KeyboardNavigationRepeat, KEYBOARD_NAVIGATION_REPEAT_MS, NAVIGATION_KEY_BITS } from "../../keyboardNavigationRepeat";
 
 suite("Held keyboard navigation repeats", () => {
-    test("first press is immediate, then completed repeats are spaced by 100 ms", () => {
-        assert.strictEqual(KEYBOARD_NAVIGATION_REPEAT_MS, 100, "preserve Ethan's chosen glance interval");
+    test("first press is immediate, then completed repeats are spaced by 50 ms", () => {
+        assert.strictEqual(KEYBOARD_NAVIGATION_REPEAT_MS, 50, "preserve Ethan's chosen glance interval");
         let now = 0; const repeat = new KeyboardNavigationRepeat(() => now);
         repeat.sample(NAVIGATION_KEY_BITS.x);
         const first = repeat.admit("x"); assert.ok(first); repeat.complete(first);

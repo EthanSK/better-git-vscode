@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.149
+
+- Keep paging through unread large replacements when VS Code merges a predicted inner change and wraps or jumps past it. Retain the pre-press target so the rescue cannot restart from the wrapped cursor.
+- Start first forward visits to new files at line 1, including keyboard review and stage-and-next. Preserve remembered review positions and backward EOF entry.
+- Reduce held keyboard Next/Previous pacing from 100 to 50 ms after completion. Fresh presses remain immediate and slow operations do not accumulate repeats.
+
 ## 1.2.148
 
 - In eyes review, an extra Next past the final change now marks the final file for staging on release. Previous mirrors this at the first file; the file stays open and the pending batch never crosses worktrees.

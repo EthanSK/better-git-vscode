@@ -1816,7 +1816,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 // range before the next wheel detent arrives. Other targets supersede only queued navigation.
                 ownedMouseStagePreview = { request, uri: preview.uri.toString() };
                 await openNavigationTarget(preview, check);
-                adoptLandedReviewPosition(preview, check); // A later eyes ratchet continues from this landing.
+                if (direction === "down") { await landChangeForForwardReview(preview, check); }
+                else { adoptLandedReviewPosition(preview, check); } // Preserve file-mode reverse preview behavior.
                 requestCurrentHunkOverviewMarkerRefresh();
             }
             mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
@@ -1875,7 +1876,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     ownedMouseStagePreview = { request, uri: plan.target.uri.toString() };
                     await openNavigationTarget(plan.target, boundaryCheck);
                     if (direction === "previous") { await landChangeForBackwardReview(plan.target, boundaryCheck); }
-                    else { adoptLandedReviewPosition(plan.target, boundaryCheck); } // Next ratchet reaches change two.
+                    else { await landChangeForForwardReview(plan.target, boundaryCheck); }
                 } else {
                     // Native diff commands wrap within the same file. At the outer
                     // worktree boundary retain the review position instead.
@@ -3902,8 +3903,7 @@ const openFirstFile = async (check: NavigationCheckpoint = noNavigationCheckpoin
             : "next: no active file context -> no unstaged changes; picking first staged file",
     );
     await openNavigationTarget(target, check);
-    await landPlainMergeConflictTarget(target, "down", check);
-    adoptLandedReviewPosition(target, check);
+    await landChangeForForwardReview(target, check);
 };
 
 const openLastFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
@@ -3943,10 +3943,10 @@ const openLastFile = async (check: NavigationCheckpoint = noNavigationCheckpoint
     await landChangeForBackwardReview(target, check);
 };
 
-// Shared backward-rollover landing (v1.2.15): when a BACKWARD navigation opens a genuinely-new, UNSTAGED,
-// plain-editor file, scroll it to show its BOTTOM (and pin the caret at the last line) so the subsequent
-// 'previous' press steps UP through it. Factored out of openPreviousFile so openLastFile can reuse the exact
-// same retry+landing logic (Codex xhigh: "factor the retry/landing block into one small helper").
+// Refactor of the existing landNewFileTargetAtBottom gate/readiness checks, now shared by both directions.
+// Ethan (2026-11-03): a first forward visit must start at line 1, even if VS Code remembers a caret from before
+// Better Git reviewed this file. A real revisit still restores its remembered review view before this helper.
+// Backward entry retains its existing EOF landing so the following Previous pages upward.
 //
 // WHY the bottom landing (BUG 5, v1.2.9): a MODIFIED file lands at its LAST hunk on backward rollover (via
 // compareEditor.previousChange), so subsequent 'previous' presses step UP through it. But that command is a
@@ -3962,11 +3962,20 @@ const openLastFile = async (check: NavigationCheckpoint = noNavigationCheckpoint
 // compareEditor.previousChange landing. Gating on !staged keeps this to the plain-editor (untracked/unstaged-new)
 // case; a staged-new target returns false so the caller falls through to its diff landing.
 //
-// Returns true if the target was recognised as a new-file (plain-editor) target — the caller must then NOT run
+// Returns true if the target was recognised as a new-file (plain-editor) target — the backward caller must NOT run
 // compareEditor.previousChange. Returns false for a non-new / staged target so the caller handles it normally.
-const landNewFileTargetAtBottom = async (entry: FileChange, check = noNavigationCheckpoint): Promise<boolean> => {
+const landNewFileTargetAtEdge = async (
+    entry: FileChange, direction: "down" | "up", check = noNavigationCheckpoint,
+): Promise<boolean> => {
     if (entry.staged || !isFullyAddedFile(entry.uri)) {
         return false; // modified / deleted / staged-new target -> caller takes the normal diff path
+    }
+    const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    if (!(input instanceof vscode.TabInputText) || input.uri.scheme !== "file"
+        || input.uri.toString() !== entry.uri.toString()) {
+        // Reuse the newFileScrollEditor plain-text gate before waiting for layout. New images/notebooks
+        // and empty-original diff views have no plain text caret to normalize and must not pay this wait.
+        return false;
     }
     // The plain editor may not register in visibleTextEditors synchronously after openChangeEntry, so retry the
     // gate for a few short ticks. Reuses newFileScrollEditor() (plain file: tab + genuinely-new status + visible
@@ -3981,14 +3990,26 @@ const landNewFileTargetAtBottom = async (entry: FileChange, check = noNavigation
         }
     }
     if (newFileEditor) {
-        // revealBottomAndPinCursor uses RevealType.Default, which brings an off-screen-below line into view at
-        // the BOTTOM and is NEVER EOF-clamped (unlike InCenter on the last line), so the bottom shows reliably.
-        const lastLine = Math.max(0, newFileEditor.document.lineCount - 1);
-        await revealBottomAndPinCursor(newFileEditor, lastLine, check);
+        if (direction === "down") {
+            await revealTopAndPinCursor(newFileEditor, 0, { forceWhenVisible: false });
+        } else {
+            // Default brings the final line into view at the BOTTOM without an impossible EOF AtTop target.
+            await revealBottomAndPinCursor(newFileEditor, Math.max(0, newFileEditor.document.lineCount - 1), check);
+        }
+        debugLog("new-file", `${direction}: first review entry pinned to ${direction === "down" ? "L1" : "EOF"}`);
     }
-    // If the editor never resolved (rare race) we still return true (it IS a new-file target) — the view stays
-    // at the top, the same no-op the old unconditional compareEditor.previousChange produced on a plain new file.
+    // If the editor never resolved, retain the native view. Do not substitute another editor or another file.
     return true;
+};
+
+// The forward counterpart of landChangeForBackwardReview: all first-visit plain new-file entry points share
+// the explicit top landing. Native editor history alone is not a visited Better Git review position.
+const landChangeForForwardReview = async (entry: FileChange, check = noNavigationCheckpoint): Promise<void> => {
+    check();
+    if (!hasRestoredReviewPosition(entry) && !(await landPlainMergeConflictTarget(entry, "down", check))) {
+        await landNewFileTargetAtEdge(entry, "down", check);
+    }
+    adoptLandedReviewPosition(entry, check);
 };
 
 // One shared landing contract for EVERY cross-file backward transition. A plain unstaged new file has no diff
@@ -4000,7 +4021,7 @@ const landChangeForBackwardReview = async (entry: FileChange, check = noNavigati
     // Revisit resumes Ethan's last position; only a FIRST visit uses the old EOF/last-hunk landing.
     if (!hasRestoredReviewPosition(entry)
         && !(await landPlainMergeConflictTarget(entry, "up", check))
-        && !(await landNewFileTargetAtBottom(entry, check))) {
+        && !(await landNewFileTargetAtEdge(entry, "up", check))) {
         check();
         await landPreviousDiffAtLastChange(check);
     }
@@ -4053,9 +4074,7 @@ const openNextFile = async (check: NavigationCheckpoint = noNavigationCheckpoint
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
     const target = fileChanges[nextIndex];
     await openNavigationTarget(target, check, !isPreview);
-    await landPlainMergeConflictTarget(target, "down", check);
-    // Native first-change landing is the review position: the following Next must reach the second change.
-    adoptLandedReviewPosition(target, check);
+    await landChangeForForwardReview(target, check);
 };
 
 const openPreviousFile = async (check: NavigationCheckpoint = noNavigationCheckpoint) => {
@@ -4126,7 +4145,7 @@ const openPreviousFile = async (check: NavigationCheckpoint = noNavigationCheckp
     // new file; a modified/deleted target takes the immediate compareEditor.previousChange path with NO delay
     // (the retry loop must never add latency to the common backward-diff rollover).
     // v1.2.15: the retry + bottom-landing logic (and the !staged gate rationale) now lives in the shared
-    // landNewFileTargetAtBottom helper so openLastFile can reuse it. If the target was a genuinely-new
+    // landNewFileTargetAtEdge helper so openLastFile can reuse it. If the target was a genuinely-new
     // plain-editor file, the helper landed it at the bottom and we're done — do NOT run compareEditor.previousChange.
     await landChangeForBackwardReview(fileChanges[prevIndex], check);
 };
@@ -5076,17 +5095,29 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
 // A very nearby next/previous inner '+' run still belongs to VS Code: if the caret is exactly at an inner-run start
 // and the next run begins no more than five lines away (and within this press's configured step), defer once and let
 // the built-in land there. Otherwise the
-// outer group owns the press and uses the same exact caret-owned step contract. After a built-in no-op we disable the
-// nearby-stop deferral because VS Code has proved that predicted Git run is not a real editor navigation stop.
-const stepOuterHunk = async (
+// outer group owns the press and uses the same exact caret-owned step contract. If native navigation misses that
+// predicted stop (no-op, wrap or overshoot), use the retained pre-press target instead of skipping unread content.
+interface OuterHunkStep {
+    readonly hunk: ModifiedHunk;
+    readonly caret: number;
+    readonly target: number;
+    readonly preferNative: boolean;
+}
+
+// Refactor of stepOuterHunk's existing geometry checks. Keep the proposed step BEFORE native navigation:
+// Ethan's 2026-11-03 report showed a predicted nearby Git stop that Monaco had merged into the current change.
+// Native Next wrapped L374 -> L12 despite an unread outer tail. A fallback computed AFTER that wrap uses the
+// wrong caret and can loop forever; retain the original caret/target, including the mirrored Previous case.
+const planOuterHunkStep = (
     ctx: HunkStageContext,
     direction: "down" | "up",
-    preserveNearbyInnerStop: boolean,
-): Promise<boolean> => {
+): OuterHunkStep | undefined => {
+    const vp = readViewport(ctx.editor);
+    if (!vp) { return undefined; }
     const caret = ctx.editor.selection.active.line;
     const outerHunk = hunkContainingLine(ctx.outerHunks, caret);
     if (!outerHunk) {
-        return false;
+        return undefined;
     }
     const innerHunks = ctx.hunks.filter(
         (hunk) => hunk.start >= outerHunk.start && hunk.end <= outerHunk.end,
@@ -5096,39 +5127,45 @@ const stepOuterHunk = async (
         (innerHunks.length === 1 &&
             (innerHunks[0].start !== outerHunk.start || innerHunks[0].end !== outerHunk.end));
     if (!isBroaderThanInnerGeometry) {
-        return false;
+        return undefined;
     }
     const farEdgePosition = direction === "down"
         ? bottomPresentationPosition(ctx.editor, outerHunk.end)
         : new vscode.Position(outerHunk.start, 0);
     if (positionIsVisible(ctx.editor, farEdgePosition)) {
-        return false;
+        return undefined;
     }
-    if (preserveNearbyInnerStop) {
-        const vp = readViewport(ctx.editor);
-        const currentInnerHunk = ctx.hunks.find(
-            (hunk) => caret >= hunk.start && caret <= hunk.end,
-        );
-        if (vp && currentInnerHunk && caret === currentInnerHunk.start) {
-            const { step } = hunkStagingConfig(vp.visLines);
-            const nearbyLimit = Math.min(step, 5);
-            const nearbyInnerHunk = direction === "down"
-                ? innerHunks.find((hunk) => hunk.start > caret && hunk.start - caret <= nearbyLimit)
-                : [...innerHunks].reverse().find((hunk) => hunk.start < caret && caret - hunk.start <= nearbyLimit);
-            if (nearbyInnerHunk) {
-                debugLog(
-                    "tall-hunk",
-                    `${direction}: outer @@ group has a nearby inner stop at L${nearbyInnerHunk.start + 1} within nearbyLimit=${nearbyLimit} step=${step} -> preserve built-in navigation`,
-                );
-                return false;
-            }
+    const { threshold, thresholdOverride, step } = hunkStagingConfig(vp.visLines);
+    if (thresholdOverride !== undefined && outerHunk.end - outerHunk.start + 1 <= threshold) {
+        return undefined;
+    }
+    let preferNative = false;
+    const currentInnerHunk = ctx.hunks.find(hunk => caret >= hunk.start && caret <= hunk.end);
+    if (currentInnerHunk && caret === currentInnerHunk.start) {
+        const nearbyLimit = Math.min(step, 5);
+        const nearbyInnerHunk = direction === "down"
+            ? innerHunks.find(hunk => hunk.start > caret && hunk.start - caret <= nearbyLimit)
+            : [...innerHunks].reverse().find(hunk => hunk.start < caret && caret - hunk.start <= nearbyLimit);
+        if (nearbyInnerHunk) {
+            preferNative = true;
+            debugLog("tall-hunk", `${direction}: outer @@ group has a nearby inner stop at L${nearbyInnerHunk.start + 1} within nearbyLimit=${nearbyLimit} step=${step} -> try native, retain pre-press step`);
         }
     }
-    debugLog(
-        "tall-hunk",
-        `${direction}: outer @@ group L${outerHunk.start + 1}-L${outerHunk.end + 1} has unread content beyond the next configured step -> step before built-in jump/file rollover`,
-    );
-    return stepTallHunk({ ...ctx, hunks: [outerHunk] }, direction);
+    return { hunk: outerHunk, caret, preferNative, target: direction === "down"
+        ? Math.min(caret + step, outerHunk.end) : Math.max(caret - step, outerHunk.start) };
+};
+
+// Existing tall-hunk reveal operations, applied to the original planned target even if Monaco has since wrapped.
+const applyOuterHunkStep = async (
+    ctx: HunkStageContext, direction: "down" | "up", plan: OuterHunkStep,
+): Promise<void> => {
+    ctx.check();
+    if (direction === "down" && plan.target === plan.hunk.end) {
+        await revealBottomAndPinCursor(ctx.editor, plan.target, ctx.check);
+    } else {
+        await revealTopAndPinCursor(ctx.editor, plan.target, { forceWhenVisible: direction === "down" });
+    }
+    debugLog("tall-hunk", `${direction}: outer @@ group L${plan.hunk.start + 1}-L${plan.hunk.end + 1}, captured caret L${plan.caret + 1}->L${plan.target + 1}`);
 };
 
 // After the built-in navigation ADVANCES to a new hunk within the same file, reposition the viewport so a
@@ -5765,7 +5802,9 @@ const goToNextDiffOnce = async (
     if (stageCtx && (await stepTallHunk(stageCtx, "down"))) {
         return; // press was a within-hunk scroll step
     }
-    if (stageCtx && (await stepOuterHunk(stageCtx, "down", true))) {
+    const outerStep = stageCtx ? planOuterHunkStep(stageCtx, "down") : undefined;
+    if (stageCtx && outerStep && !outerStep.preferNative) {
+        await applyOuterHunkStep(stageCtx, "down", outerStep);
         return; // press was a broader within-@@ step; avoid an oversized built-in jump
     }
     if (stageCtx && selectVisibleHunkWithoutScrolling(stageCtx, "down")) {
@@ -5786,15 +5825,15 @@ const goToNextDiffOnce = async (
     check();
     const lineAfter = navEditor?.selection.active.line; // TextEditor.selection is live — same object, post-command state
 
+    // A nearby Git '+' run is only a prediction of Monaco's next stop. Rescue a no-op, wrap OR oversized
+    // jump while the pre-press outer tail was unread. A genuinely completed edge has no plan and still exits.
+    if (stageCtx && outerStep && lineAfter !== undefined &&
+        (lineAfter <= outerStep.caret || lineAfter > outerStep.target)) {
+        debugLog("tall-hunk", `down: native L${outerStep.caret + 1}->L${lineAfter + 1} missed the pending outer step; retain this file`);
+        await applyOuterHunkStep(stageCtx, "down", outerStep);
+        return;
+    }
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter > lineBefore)) {
-        // The outer-@@ fallback is only for a genuine built-in NO-OP. VS Code can wrap Next from the
-        // last change to an earlier change in this same file; consuming that backward move as an outer
-        // step traps navigation in the file instead of advancing to the next one.
-        if (stageCtx && lineBefore !== undefined && lineAfter === lineBefore) {
-            if (await stepOuterHunk(stageCtx, "down", false)) {
-                return;
-            }
-        }
         // We've run out of changes in the current file. Jump straight to the next changed file —
         // NO confirmation prompt, ever. The whole point of this tool is keyboard-fast review; a
         // "Jump to next file: ...?" modal would defeat that. (The old promptBeforeNextFile setting +
@@ -5860,7 +5899,9 @@ const goToPreviousDiffOnce = async (
     if (stageCtx && (await stepTallHunk(stageCtx, "up"))) {
         return; // press was a within-hunk upward scroll step
     }
-    if (stageCtx && (await stepOuterHunk(stageCtx, "up", true))) {
+    const outerStep = stageCtx ? planOuterHunkStep(stageCtx, "up") : undefined;
+    if (stageCtx && outerStep && !outerStep.preferNative) {
+        await applyOuterHunkStep(stageCtx, "up", outerStep);
         return; // press was a broader within-@@ upward step
     }
     if (stageCtx && selectVisibleHunkWithoutScrolling(stageCtx, "up")) {
@@ -5878,14 +5919,13 @@ const goToPreviousDiffOnce = async (
     check();
     const lineAfter = navEditor?.selection.active.line; // live selection — post-command state
 
+    if (stageCtx && outerStep && lineAfter !== undefined &&
+        (lineAfter >= outerStep.caret || lineAfter < outerStep.target)) {
+        debugLog("tall-hunk", `up: native L${outerStep.caret + 1}->L${lineAfter + 1} missed the pending outer step; retain this file`);
+        await applyOuterHunkStep(stageCtx, "up", outerStep);
+        return;
+    }
     if (lineBefore === undefined || lineAfter === undefined || !(lineAfter < lineBefore)) {
-        // Mirror Next: only rescue a genuine built-in NO-OP. A larger lineAfter means Previous wrapped
-        // from the first change to a later change in this file and must fall through to openPreviousFile.
-        if (stageCtx && lineBefore !== undefined && lineAfter === lineBefore) {
-            if (await stepOuterHunk(stageCtx, "up", false)) {
-                return;
-            }
-        }
         // Out of changes in the current file -> jump straight to the previous changed file, NO prompt.
         // Same rationale as goToNextDiff: the confirmation modal was removed entirely (see CHANGELOG v1.0.2).
         await leaveReviewFile(departing, check, onFileBoundary);
@@ -6014,7 +6054,7 @@ const stageSelectedFilesAndAdvance = async (
     }
     const isPreview = vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview;
     await openNavigationTarget(target, check, activeWasSelected && !isPreview);
-    if (direction === "previous") { await landChangeForBackwardReview(target, check); } else { adoptLandedReviewPosition(target, check); }
+    if (direction === "previous") { await landChangeForBackwardReview(target, check); } else { await landChangeForForwardReview(target, check); }
     return true;
 };
 
@@ -6139,7 +6179,7 @@ const stageCurrentFileAndAdvance = async (
         // at their last line, exactly like openPreviousFile/openLastFile.
         await landChangeForBackwardReview(targetUnstagedChange, check);
     } else {
-        adoptLandedReviewPosition(targetUnstagedChange, check); // Same next-press rule as openNextFile.
+        await landChangeForForwardReview(targetUnstagedChange, check);
     }
 };
 

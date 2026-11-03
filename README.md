@@ -28,7 +28,7 @@ One key flies to the next or previous change. At the end of a file, it continues
 
 `Option+.` next · `Option+,` previous — literally the `>` / `<` keys, pointing the way.
 
-Switch away from an unfinished text file and return to it: Better Git restores your last cursor, selection and scroll position, including when a preview tab was replaced. This works with Source Control clicks and Better Git navigation. A first visit keeps the usual starting position.
+Switch away from an unfinished text file and return to it: Better Git restores your last cursor, selection and scroll position, including when a preview tab was replaced. This works with Source Control clicks and Better Git navigation. A first forward visit to a new file starts at line 1, even if VS Code remembers an older cursor position; returning to a file you already reviewed still restores your place.
 
 Successfully staging a file clears its saved review position; failed staging keeps it. Undo still restores its own exact pre-stage view. Position memory lasts for the current extension session and keeps only coordinates for up to 512 recently visited unstaged files, without retaining their contents.
 
@@ -54,7 +54,7 @@ To back out:
 
 The batch works with either navigation-key pair and in Dvorak mode, and needs no extra macOS permissions. On Windows and Linux, `Shift+Alt+.` / `Shift+Alt+,` still stage one file at a time; the batch is macOS only. Mouse and Magic Wand review are unchanged.
 
-On macOS, holding a Next / Previous key leaves at least 100 ms to look at each change after it opens. Repeats do not build up while a change is loading. Releasing and pressing again moves straight away; mouse and wand steps keep their existing timing.
+On macOS, holding a Next / Previous key leaves at least 50 ms to look at each change after it opens. Repeats do not build up while a change is loading. Releasing and pressing again moves straight away; mouse and wand steps keep their existing timing.
 
 You can start a batch on deleted files, including deleted images with another version already staged. If VS Code hides which side an image comparison shows, Better Git first opens that same image's unstaged deletion preview, then starts review. This does not stage anything. A staged deletion with a recreated working file is never silently selected as that working file.
 

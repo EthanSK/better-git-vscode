@@ -12,6 +12,8 @@ An unresolved file opened from Source Control as a plain editor follows that sam
 
 For a brand-new file, Next and Previous move by the configured logical-line step (five lines by default):
 
+A first cross-file forward entry explicitly pins line 1; native editor history must not silently start review halfway through a file Better Git has not visited. A first backward entry retains its EOF landing. Both directions preserve Better Git's remembered cursor and scroll position on genuine revisits. Ordinary navigation, stage-and-advance and held preview boundaries share these landing helpers.
+
 1. Compute `caret ± step`.
 2. Clamp the target to line 1 or the final line.
 3. Move the caret once and reveal that exact target in the same editor.
@@ -20,7 +22,7 @@ For a brand-new file, Next and Previous move by the configured logical-line step
 
 Tall diff hunks follow the same rule at hunk boundaries, with an exact ten-line step by default. Any positive custom value is also exact; setting the step to zero selects viewport-minus-overlap auto mode. Engagement tests the exact first and final rendered positions rather than comparing logical line counts: a hunk stranded near the bottom is lifted into view even when its total line count is smaller than the viewport's, while a hunk whose complete rendered range is already visible remains normal hunk-to-hunk navigation. Its exact first or last line is presented before the following press can leave it.
 
-Git's unified diff and VS Code's editor diff can divide one large replacement differently. Better Git retains both the inner added-line runs and the broader `@@` group. An inner stop no more than five lines away and within the configured step remains change-to-change navigation; otherwise the broader group owns the press so VS Code cannot jump dozens of lines or roll into another file while that replacement still has an unread edge.
+Git's unified diff and VS Code's editor diff can divide one large replacement differently. Better Git retains both the inner added-line runs and the broader `@@` group. An inner stop no more than five lines away and within the configured step is tried as change-to-change navigation; otherwise the broader group owns the press. Before trying the native command, Better Git retains the original caret and proposed step. If that predicted stop is absent and native navigation stalls, wraps or overshoots, the retained step presents the unread content in this file. A fully presented outer edge has no pending step, so normal file rollover remains possible instead of looping from the wrapped caret.
 
 When the next or previous added/replaced run is already fully visible, Better Git selects its start without scrolling. VS Code's native command always centres its range, which can scroll backwards after a tall-hunk page step and then forwards on the following press. The visible-run hand-off avoids that round trip before it occurs. Deleted-only stops in between remain native, trim-whitespace-only replacements are excluded when the editor hides them, and unsaved documents defer to native navigation because Git's on-disk geometry is stale. Turning off tall-hunk staging also disables this hand-off.
 

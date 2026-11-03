@@ -2397,6 +2397,80 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+    test('outer replacement wrap: retain the pre-wrap step when a nearby Git stop is merged by Monaco', async () => {
+        const rel = 'committed/outer-wrap.ts';
+        const config = vscode.workspace.getConfiguration('better-git-vscode');
+        const previousStep = config.inspect<number>('hunkStagingLineStep')?.globalValue;
+        try {
+            await config.update('hunkStagingLineStep', 10, vscode.ConfigurationTarget.Global);
+            const fixture = process.env.BGV_OUTER_WRAP_AFTER_FIXTURE_PATH;
+            assert.ok(fixture);
+            write(rel, fs.readFileSync(fixture, 'utf8'));
+            write('zz_after_outer_wrap.txt', 'a following file that must stay unopened');
+            await refreshUntil(() => inWorkingTree(rel, 5) && isUntracked('zz_after_outer_wrap.txt'), 'outer-wrap fixture');
+            const editor = await openWorkingDiffAt(rel, 373);
+            await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
+            await poll(() => editor.selection.active.line !== 373, 'native movement at merged stop');
+            assert.ok(editor.selection.active.line < 373, 'fixture must reproduce native Next wrapping past unread content');
+            const start = new vscode.Position(0, 0);
+            editor.selection = new vscode.Selection(start, start);
+            editor.revealRange(new vscode.Range(start, start), vscode.TextEditorRevealType.AtTop);
+            await poll(() => lineIsVisible(editor, 0), 'initial fixture position');
+            // Reach this through real review commands: a manually opened viewport owns its first press.
+            for (let i = 0; i < 25 && editor.selection.active.line !== 373; i++) {
+                await nextChange();
+                assert.strictEqual(activeTabPath(), wsUri(rel).path);
+            }
+            assert.strictEqual(editor.selection.active.line, 373);
+            await nextChange();
+            await expectCursorVisibleAt(rel, 383);
+            assert.strictEqual(git('diff --cached --name-only'), '', 'a rescued review step must not stage');
+            await config.update('hunkStagingLineStep', 7, vscode.ConfigurationTarget.Global);
+            await nextChange();
+            assert.strictEqual(activeTabPath(), wsUri(rel).path);
+            assert.ok(editor.selection.active.line > 383, 'review must continue rather than loop at the rescued stop');
+        } finally { await config.update('hunkStagingLineStep', previousStep, vscode.ConfigurationTarget.Global); }
+    });
+
+    for (const mode of ['next', 'stage-next', 'eyes'] as const) {
+        test('fresh new-file landing: ' + mode + ' ignores native history, then pages from line1', async () => {
+            const rel = 'zz_fresh_' + mode + '.ts';
+            const current = 'committed/fresh_origin_' + mode + '.txt';
+            write(current, lines(20, 'origin'));
+            git('add -- "' + current + '"'); git('commit -m "fresh landing origin"');
+            const exclude = path.join(ws, '.git/info/exclude');
+            const previousExclude = fs.readFileSync(exclude);
+            fs.appendFileSync(exclude, '\n' + rel + '\n');
+            try {
+                write(rel, lines(160, 'fresh'));
+                await repo.status();
+                const editor = await openPlainAt(rel, 98);
+                editor.revealRange(new vscode.Range(98, 0, 98, 0), vscode.TextEditorRevealType.AtTop);
+                await poll(() => lineIsVisible(editor, 98), 'ignored file native cached caret');
+                await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+            } finally { fs.writeFileSync(exclude, previousExclude); }
+            write(current, lines(20, 'origin').replace('origin line 5', 'edited origin five'));
+            await refreshUntil(() => isUntracked(rel) && inWorkingTree(current, 5), 'fresh next target');
+            await openWorkingDiffAt(current, 4);
+            try {
+                if (mode === 'stage-next') {
+                    await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
+                } else if (mode === 'eyes') {
+                    await vscode.commands.executeCommand('better-git-vscode.begin-keyboard-review', 'next');
+                    await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next');
+                    await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next');
+                } else { await nextChange(); await nextChange(); }
+                await expectCursorVisibleAt(rel, 0);
+                if (mode === 'eyes') { await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next'); }
+                else { await nextChange(); }
+                await expectCursorVisibleAt(rel, 5);
+                assert.strictEqual(inIndex(rel), false, 'previewing the next file must not stage it');
+            } finally {
+                if (mode === 'eyes') { await vscode.commands.executeCommand('better-git-vscode.cancel-keyboard-review'); }
+            }
+        });
+    }
+
 	test('copied profile-pic replacement: oversized built-in navigation steps the outer hunk by default 10 and custom 7', async () => {
 		const navConfig = vscode.workspace.getConfiguration('better-git-vscode');
 		const diffConfig = vscode.workspace.getConfiguration('diffEditor');
@@ -5431,7 +5505,7 @@ suite('SCM change navigation E2E', () => {
         await expectActiveTab(names[1]);
         await Promise.all(Array.from({length: 30}, next));
         assert.strictEqual(activeTabPath(), wsUri(names[1]).path, 'repeats leave a glance interval after the opened change');
-        await sleep(110); // Exercise the requested 100 ms hold interval; no production input timer is added.
+        await sleep(60); // Exercise the requested 50 ms hold interval; no production input timer is added.
         await next(); await expectActiveTab(names[2]);
         sample(0); sample(2); await next(); await expectActiveTab(names[3]);
         assert.strictEqual(git('diff --cached --name-only'), '', 'ordinary held navigation never stages');
