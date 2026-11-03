@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.151
+
+- Add local worktree-link usage diagnostics when debug logging is enabled. Distinguish observable review input, Codex returns, configured automatic returns and unknown outcomes without counting the automatic handoff as user input or changing app focus, navigation or staging.
+
 ## 1.2.150
 
 - Start VS Code's Git extension before Better Git. A command arriving immediately after an extension restart can no longer abort activation while the current changed-file editor is being observed.

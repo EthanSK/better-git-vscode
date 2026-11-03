@@ -5,6 +5,15 @@ import { normalizeReturnApp } from "./gitWorktreeLink";
 
 const runFile = promisify(execFile);
 
+// Read only the active app identity on a focus-loss event. No Accessibility, activation or polling.
+export async function frontmostAppBundleId(): Promise<string | undefined> {
+    if (process.platform !== "darwin") { return undefined; }
+    const { stdout } = await runFile("/usr/bin/osascript", ["-l", "JavaScript", "-e",
+        "ObjC.import('AppKit'); const app = $.NSWorkspace.sharedWorkspace.frontmostApplication; app ? ObjC.unwrap(app.bundleIdentifier) : '';"],
+    { timeout: 1500 });
+    return stdout.trim() || undefined;
+}
+
 // AppKit activation needs no Accessibility/Automation grant. Only activate an
 // already-running app; never launch it or interpret URL metadata as code.
 // Check focus at completion so a switch to another app wins over this handoff.
