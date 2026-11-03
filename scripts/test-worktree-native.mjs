@@ -28,7 +28,8 @@ const testNoUnstaged = process.argv.includes('--no-unstaged');
 const testStageReveal = process.argv.includes('--stage-reveal');
 const testDeletedLink = process.argv.includes('--deleted-link');
 const testLinkOnly = process.argv.includes('--link-only');
-const testLookahead = process.argv.includes('--scm-lookahead');
+const testLookaheadNormal = process.argv.includes('--scm-lookahead-normal');
+const testLookahead = testLookaheadNormal || process.argv.includes('--scm-lookahead');
 const testUsage = process.argv.includes('--usage-tracking');
 const testSingleRepository = process.argv.includes('--single-repository');
 const testPreorderedApi = process.argv.includes('--preordered-api');
@@ -227,7 +228,7 @@ try {
     }
     if (testLookahead) {
         await request('open', {repo:1});
-        let file = 'review-025.txt';
+        let file = testLookaheadNormal ? 'review-024.txt' : 'review-025.txt';
         await request('working', {repo:1,file});
         const geometry = () => evaluate(`(() => {
             const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');
@@ -240,6 +241,38 @@ try {
         const before = await geometry();
         const indexBefore = git(roots[1], 'diff', '--cached', '--name-only');
         await capture('lookahead-before');
+        if (testLookaheadNormal) {
+            assert.ok(before.bottom-before.rowBottom<220,'fixture starts with fewer than ten file rows below');
+            await request('command',{command:'better-git-vscode.next-scm-change'});
+            file = path.basename(new URL((await request('state')).active).pathname);
+            const after = await until(geometry,g=>g.rowTop>=g.top && g.rowTop<g.top+65 && g.bottom-g.rowBottom>=220,'ordinary Next scrolls current row near top');
+            const normal = await request('state');
+            assert.deepEqual(after.selected,before.selected,'ordinary presentation cannot change SCM selection');
+            assert.equal(normal.keyboardReviewActive,false,'ordinary Next must not enter a batch');
+            assert.equal(normal.badge,'🔥🔥','ordinary Next retains its fire badge');
+            assert.ok(normal.active.endsWith('/'+file),'presentation cannot change the navigation destination');
+            assert.equal(git(roots[1],'diff','--cached','--name-only'),indexBefore,'ordinary navigation cannot stage');
+            await capture('lookahead-normal-after');
+            await until(async ()=>(await request('native-accessibility')).value,value=>value.manual===initialAccessibility.manual && value.enhanced===initialAccessibility.enhanced,'ordinary navigation restores borrowed accessibility without a release');
+            const firstPointer=(await request('native-accessibility')).value;
+            assert.equal(firstPointer.pointerX,initialAccessibility.pointerX,'first ordinary scroll preserves pointer X');
+            assert.equal(firstPointer.pointerY,initialAccessibility.pointerY,'first ordinary scroll preserves pointer Y');
+            for(let i=0;i<13;i++) { await request('command',{command:'better-git-vscode.next-scm-change'}); }
+            file=path.basename(new URL((await request('state')).active).pathname);
+            assert.notEqual(file,'review-024.txt','repeated Next reaches another file');
+            await until(geometry,g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220,'ordinary repeated navigation retains ten rows');
+            await request('command',{command:'better-git-vscode.previous-scm-change'});
+            file=path.basename(new URL((await request('state')).active).pathname);
+            const stagedFile=file;
+            await request('command',{command:'better-git-vscode.stage-and-next-changed-file'});
+            file=path.basename(new URL((await request('state')).active).pathname);
+            assert.notEqual(file,stagedFile,'Stage + Next still advances');
+            assert.deepEqual(git(roots[1],'diff','--cached','--name-only').trim().split('\n').sort(),[...indexBefore.trim().split('\n'),stagedFile].sort(),'Stage + Next stages only its explicit file');
+            const pointer=await until(async ()=>(await request('native-accessibility')).value,value=>value.manual===initialAccessibility.manual && value.enhanced===initialAccessibility.enhanced,'repeated ordinary navigation restores borrowed accessibility');
+            assert.equal(pointer.pointerX,initialAccessibility.pointerX); assert.equal(pointer.pointerY,initialAccessibility.pointerY);
+            fs.writeFileSync(path.join(evidence,'lookahead-normal-result.json'),JSON.stringify({before,after},null,2));
+            console.log('BETTER_GIT_SCM_NORMAL_LOOKAHEAD_VERIFIED ordinary-next,fire-badge,no-batch,no-stage,repeated-navigation,previous,stage-next,pointer,accessibility-restored');
+        } else {
         await request('command', {command:'better-git-vscode.begin-keyboard-review',args:['next']});
         const after = await until(geometry, g=>g.rowTop>=g.top && g.rowTop<g.top+65 && g.bottom-g.rowBottom>220, 'native row near top with ten below');
         assert.deepEqual(after.selected,before.selected,'presentation cannot change SCM selection');
@@ -265,9 +298,13 @@ try {
         await until(geometry,g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220,'decorated path containing separator');
         await request('command',{command:'better-git-vscode.cancel-keyboard-review'});
         await until(async ()=>(await request('native-accessibility')).value, value=>value.manual===initialAccessibility.manual && value.enhanced===initialAccessibility.enhanced, 'borrowed accessibility state restored');
+        const finalPointer=(await request('native-accessibility')).value;
+        assert.equal(finalPointer.pointerX,initialAccessibility.pointerX,'held review preserves pointer X after all events');
+        assert.equal(finalPointer.pointerY,initialAccessibility.pointerY,'held review preserves pointer Y after all events');
         assert.equal(git(roots[1], 'diff', '--cached', '--name-only'),indexBefore,'cancel cannot stage');
         fs.writeFileSync(path.join(evidence,'lookahead-result.json'),JSON.stringify({before,after},null,2));
         console.log('BETTER_GIT_SCM_LOOKAHEAD_VERIFIED checks=9 geometry,selection,editor,index,pointer,repeated-navigation,staging,undo,accessibility-restored');
+        }
     } else {
     await until(() => evaluate(rowsExpression), rows => rows.some(r => r.aria === 'Staged Changes'  && r.expanded === 'true'), 'initial staged group');
     await capture('before-first-open');

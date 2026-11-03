@@ -58,6 +58,7 @@ import { registerDiffViewDisplay } from "./diffViewDisplay";
 import { registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedLfsImage";
 
 let confirmOpenedReview: (uri: vscode.Uri) => void = () => undefined;
+let requestNavigationScmLookahead: () => void = () => undefined;
 let pendingWorktreePresentation: DeferredWorktreePresentation | undefined;
 let worktreeUsage: WorktreeUsage | undefined;
 const reviewFilePositions = new ReviewFilePositions();
@@ -1727,6 +1728,30 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         Number(process.env.VSCODE_PID), message => debugLog("scm-lookahead", message));
     let lookaheadRequest: MouseHoldRequest | undefined;
     let lookaheadPath: string | undefined;
+    let ordinaryLookaheadPath: string | undefined;
+    const requestOrdinaryScmLookahead = (): void => {
+        // Ethan's ten-row rule also applies to normal Next/Previous and Stage + Next, not only
+        // eyes/explosion batches (1.2.154 missed that scope). Read the existing Git API snapshot
+        // in the background; never add a Git status process or wait in the navigation queue.
+        const target = currentReviewUri;
+        const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        const current = () => vscode.window.state.focused && !latestMouseHoldRequest?.active
+            && currentReviewUri?.toString() === target?.toString()
+            && vscode.window.tabGroups.activeTabGroup.activeTab === tab;
+        if (vscode.env.remoteName || !target || target.scheme !== "file" || !current()
+            || ordinaryLookaheadPath === target.toString()) { return; }
+        ordinaryLookaheadPath = target.toString();
+        void getFileChanges(target).then(changes => {
+            if (!current()) { return; }
+            const entries = distinctUnstagedChanges(changes);
+            const index = entries.findIndex(entry => entry.uri.toString() === target.toString());
+            if (index < 0) { return; }
+            scmLookahead.request({ path: target.fsPath, remainingFiles: entries.length - index - 1,
+                sensitivity: vscode.workspace.getConfiguration("workbench.list").get<number>("mouseWheelScrollSensitivity", 1),
+                current, restoreAfter: true });
+        }).catch(error => debugLog("scm-lookahead", `Navigation presentation skipped: ${String(error)}`));
+    };
+    requestNavigationScmLookahead = requestOrdinaryScmLookahead;
     const requestScmLookahead = (): void => {
         // Ethan's "ten or so underneath": scroll the real Changes pane, never walk its selection.
         // Both eyes review and explosion/file mode share this presentation-only path. It must not
@@ -1738,6 +1763,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         if (!entry || !selection || !target || target.scheme !== "file" || target.toString() !== currentReviewUri?.toString()
             || (lookaheadRequest === request && lookaheadPath === target.toString())) { return; }
         lookaheadRequest = request; lookaheadPath = target.toString();
+        ordinaryLookaheadPath = undefined;
         scmLookahead.request({ path: target.fsPath, remainingFiles: selection.items.length - selection.cursorIndex - 1,
             sensitivity: vscode.workspace.getConfiguration("workbench.list").get<number>("mouseWheelScrollSensitivity", 1),
             current: () => {
@@ -1747,15 +1773,22 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     && live?.items[live.cursorIndex]?.uri.toString() === target.toString();
             } });
     };
-    context.subscriptions.push(new vscode.Disposable(() => scmLookahead.dispose()),
-        vscode.window.onDidChangeWindowState(state => { if (!state.focused) { scmLookahead.cancel(); lookaheadRequest = undefined; } }));
+    context.subscriptions.push(new vscode.Disposable(() => {
+        if (requestNavigationScmLookahead === requestOrdinaryScmLookahead) { requestNavigationScmLookahead = () => undefined; }
+        scmLookahead.dispose();
+    }), vscode.window.onDidChangeWindowState(state => {
+        if (!state.focused) { scmLookahead.cancel(); lookaheadRequest = undefined; ordinaryLookaheadPath = undefined; }
+    }));
     const repaintStagePreviewMode = (selection?: ActiveMouseStageSelection): void => {
         const uri = selection?.items[selection.cursorIndex]?.uri;
         const affected = [uri, currentReviewUri].filter((candidate): candidate is vscode.Uri => candidate !== undefined);
         if (affected.length) { reviewDecoEmitter.fire(affected); }
     };
     const clearStageHoldFeedback = (source?: MouseReviewSource) => {
-        scmLookahead.cancel(); lookaheadRequest = undefined; lookaheadPath = undefined;
+        // Ordinary navigation clears hold feedback too. Do not cancel its still-loading presentation
+        // on each hunk press; only an actual held batch owns this cancellation.
+        if (lookaheadRequest) { scmLookahead.cancel(); }
+        lookaheadRequest = undefined; lookaheadPath = undefined;
         // Another gesture, immediate staging or ordinary navigation ends an unreleased keyboard review unstaged,
         // so a later keyboard finish can never fall back to staging its starting file.
         if (keyboardReviewEndsWithFeedbackClear(keyboardReviewHolds(), source)) {
@@ -5605,6 +5638,7 @@ const serializeChangeNavigation = (
             // cancel its later navigation, but must not silently discard the transaction.
             if (!commitCapturedStage) { check(); }
             await operation(check);
+            requestNavigationScmLookahead();
         } catch (error) {
             if (!(error instanceof NavigationSuperseded)) { throw error; }
             debugLog("stage-flow", `${label ?? "navigation"} cancelled: ${error.message}`);

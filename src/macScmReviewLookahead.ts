@@ -1,10 +1,10 @@
-// Asynchronous native presentation for held review. Only the latest visible preview can scroll;
+// Asynchronous native presentation for normal navigation and held review. Only the latest visible preview can scroll;
 // physical input, selection, release and Git operations never wait for this worker.
 import { spawn } from 'child_process';
 import { MonitorProcess } from './macKeyReleaseMonitor';
 import { ScmReviewLookahead, scmReviewScrollDistance } from './scmReviewLookahead';
 
-interface Target { path: string; remainingFiles: number; sensitivity: number; current: () => boolean; }
+interface Target { path: string; remainingFiles: number; sensitivity: number; current: () => boolean; restoreAfter?: boolean; }
 type Reply = { id: number; ok: boolean; reason?: string; top?: number; bottom?: number; rowTop?: number; rowHeight?: number };
 export class MacScmReviewLookahead {
     private child: MonitorProcess | undefined;
@@ -24,13 +24,19 @@ export class MacScmReviewLookahead {
         if (!current() || this.failed || (this.options.platform ?? process.platform) !== 'darwin'
             || !Number.isSafeInteger(this.codePid) || this.codePid <= 0) { return; }
         const id = ++this.nextId;
-        const reply = await this.send({ id, action: 'measure', path: target.path });
-        if (!current() || !reply?.ok) { if (reply?.reason) { this.log(`SCM lookahead skipped: ${reply.reason}.`); } return; }
-        const distance = scmReviewScrollDistance({ top: reply.top ?? NaN, bottom: reply.bottom ?? NaN, rowTop: reply.rowTop ?? NaN,
-            rowHeight: reply.rowHeight ?? NaN, remainingFiles: target.remainingFiles, lookahead: 10 });
-        if (distance > 0 && Number.isFinite(target.sensitivity) && target.sensitivity > 0) {
-            const applied = await this.send({ id, action: 'apply', distance, sensitivity: target.sensitivity });
-            if (applied?.ok) { this.log(`SCM lookahead moved the current row by ${Math.round(distance)} points.`); }
+        try {
+            const reply = await this.send({ id, action: 'measure', path: target.path });
+            if (!current() || !reply?.ok) { if (reply?.reason) { this.log(`SCM lookahead skipped: ${reply.reason}.`); } return; }
+            const distance = scmReviewScrollDistance({ top: reply.top ?? NaN, bottom: reply.bottom ?? NaN, rowTop: reply.rowTop ?? NaN,
+                rowHeight: reply.rowHeight ?? NaN, remainingFiles: target.remainingFiles, lookahead: 10 });
+            if (distance > 0 && Number.isFinite(target.sensitivity) && target.sensitivity > 0) {
+                const applied = await this.send({ id, action: 'apply', distance, sensitivity: target.sensitivity });
+                if (applied?.ok) { this.log(`SCM lookahead moved the current row by ${Math.round(distance)} points.`); }
+            }
+        } finally {
+            // A normal Next press has no later hold release to restore accessibility. Restore even
+            // when superseded: the presentation queue starts its newer measurement only after this.
+            if (target.restoreAfter) { await this.sendReset(); }
         }
     }
     private send(message: { id: number; action: string; path?: string; distance?: number; sensitivity?: number }): Promise<Reply | undefined> {

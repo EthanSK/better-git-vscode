@@ -1,6 +1,6 @@
 // Native, per-review-session worker for Source Control lookahead. The extension sends a measured
 // request followed by an explicit apply only while that same preview is still current. Never click,
-// focus a list, select rows, move the pointer, or read editor text to provide presentation scrolling.
+// focus a list, select rows, leave the pointer moved, or read editor text to provide presentation scrolling.
 import AppKit
 import ApplicationServices
 import Foundation
@@ -138,7 +138,11 @@ while let line = readLine() {
            let current = measure(saved.measurement.path), CFEqual(current.window, saved.measurement.window),
            current.pane == saved.measurement.pane, current.rowFrame == saved.measurement.rowFrame,
            current.top == saved.measurement.top,
-           let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+           let pointerState = CGEvent(source: nil),
+           let source = CGEventSource(stateID: .privateState),
+           let restorePointer = CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
+                                        mouseCursorPosition: pointerState.location, mouseButton: .left),
+           let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1,
                                wheel1: -Int32(pixelDelta.rounded(.down)), wheel2: 0, wheel3: 0) {
             event.location = CGPoint(x: current.pane.midX, y: current.rowFrame.midY)
             let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
@@ -159,13 +163,18 @@ while let line = readLine() {
                 event.setIntegerValueField(.scrollWheelEventScrollPhase, value: 1)
                 event.setIntegerValueField(.eventSourceUserData, value: 0x42475653434D)
                 event.post(tap: .cgSessionEventTap)
-                if let end = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 0, wheel2: 0, wheel3: 0) {
+                if let end = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1, wheel1: 0, wheel2: 0, wheel3: 0) {
                     end.location = event.location; end.flags = []
                     end.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
                     end.setIntegerValueField(.scrollWheelEventScrollPhase, value: 4)
                     end.setIntegerValueField(.eventSourceUserData, value: 0x42475653434D)
                     end.post(tap: .cgSessionEventTap)
                 }
+                // Session wheel events update the global pointer location even with a private source;
+                // a zero-delta end at the old location is ignored. Restore it in the SAME event sequence
+                // (no waiting/warp) so the user's next click remains at their original location.
+                restorePointer.flags = pointerState.flags
+                restorePointer.post(tap: .cgSessionEventTap)
             } else { emit(["id": id, "ok": false]); continue }
             emit(["id": id, "ok": true, "applied": true])
         } else { emit(["id": id, "ok": false]) }

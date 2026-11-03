@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.155
+
+- Apply Source Control lookahead scrolling to ordinary Next Change, Previous Change and Stage + Next as well as held batches. Keep roughly ten following rows visible without blocking navigation.
+- Restore native accessibility after an ordinary navigation scroll, which has no hold release. Preserve the original pointer location after the synthetic pane scroll.
+
 ## 1.2.154
 
 - Keep roughly ten files visible below the current file while building a review batch on macOS. Scroll the Source Control pane without changing its selection, moving the pointer or waiting in the staging queue.

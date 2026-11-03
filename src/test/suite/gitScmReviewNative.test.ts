@@ -53,6 +53,25 @@ suite('SCM native lookahead boundary', () => {
         assert.equal(worker.kills, 0, 'do not bypass native restoration with an immediate signal');
         worker.emit('exit');
     });
+    test('ordinary navigation restores borrowed accessibility without needing a hold release', async () => {
+        const worker = new Worker();
+        const presenter = new MacScmReviewLookahead('/worker', 123, () => {}, { platform: 'darwin', spawn: () => worker });
+        presenter.request({ path: '/normal', remainingFiles: 20, sensitivity: 1, current: () => true, restoreAfter: true });
+        worker.reply(geometry(1)); await tick();
+        assert.equal(worker.messages[1].action, 'apply');
+        worker.reply({ id: 1, ok: true }); await tick();
+        assert.equal(worker.messages[2].action, 'reset');
+        presenter.dispose();
+    });
+    test('superseded ordinary presentation restores accessibility before a stale queued target is skipped', async () => {
+        const worker = new Worker();
+        const presenter = new MacScmReviewLookahead('/worker', 123, () => {}, { platform: 'darwin', spawn: () => worker });
+        presenter.request({ path: '/normal', remainingFiles: 20, sensitivity: 1, current: () => true, restoreAfter: true });
+        presenter.request({ path: '/left', remainingFiles: 20, sensitivity: 1, current: () => false, restoreAfter: true });
+        worker.reply(geometry(1)); await tick();
+        assert.deepEqual(worker.messages.map(message => message.action), ['measure', 'reset']);
+        presenter.dispose();
+    });
     test('non-macOS and stale held requests never start a native worker', async () => {
         let starts = 0;
         for (const [platform, current] of [['linux', true], ['darwin', false]] as const) {
