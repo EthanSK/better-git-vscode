@@ -14,7 +14,7 @@ An unresolved file opened from Source Control as a plain editor follows that sam
 
 For a brand-new file, Next and Previous move by the configured logical-line step (five lines by default):
 
-A first cross-file forward entry explicitly pins line 1; native editor history must not silently start review halfway through a file Better Git has not visited. A first backward entry retains its EOF landing. Both directions preserve Better Git's remembered cursor and scroll position on genuine revisits. Ordinary navigation, stage-and-advance and held preview boundaries share these landing helpers.
+A cross-file Next explicitly starts the destination at line 1 for plain new text, or its first change for a diff, even if Better Git or VS Code remembers a later position. This is Ethan's November 3 exception to position memory: forward review starts the next file again. Source Control/manual switches and backward revisits still restore the remembered view; a first backward entry retains its EOF/last-change landing. Ordinary navigation, stage-and-advance and held preview boundaries share these landing helpers.
 
 1. Compute `caret ± step`.
 2. Clamp the target to line 1 or the final line.
@@ -28,7 +28,7 @@ Git's unified diff and VS Code's editor diff can divide one large replacement di
 
 When the next or previous added/replaced run is already fully visible, Better Git selects its start without scrolling. VS Code's native command always centres its range, which can scroll backwards after a tall-hunk page step and then forwards on the following press. The visible-run hand-off avoids that round trip before it occurs. Deleted-only stops in between remain native, trim-whitespace-only replacements are excluded when the editor hides them, and unsaved documents defer to native navigation because Git's on-disk geometry is stale. Turning off tall-hunk staging also disables this hand-off.
 
-Reversing direction without a separate scroll continues from the current caret. Previous does not reset to the bottom of the file, and Next does not restart from the top. When Previous enters a different file, Better Git VS Code deliberately lands at that file's last reviewable position so upward review begins in the right place.
+Within a file, reversing direction without a separate scroll continues from the current caret: Previous does not reset to the bottom, and Next does not restart from the top. On forward file rollover, Next starts at the destination's first reviewable position. Previous into another file restores a remembered position, or uses the last reviewable position on a first visit.
 
 ## Late mouse staging
 

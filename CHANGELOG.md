@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.153
+
+- Start the next file from its beginning when Next crosses a file boundary, including Stage + Next and held review. A text diff starts at its first change; a plain new file starts at line 1, even on a revisit.
+- Keep saved cursor and scroll positions for ordinary Source Control switches, Previous and Undo. Suppress the destination's saved position through the complete forward open and landing without a timed delay.
+
 ## 1.2.152
 
 - Keep an unfocused window at the automatic handoff boundary unknown. Failed or late editor activation must not be counted as a user choosing to return to Codex.
