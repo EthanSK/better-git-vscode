@@ -920,6 +920,11 @@ const findWorktreeRootUri = (targets: readonly unknown[]): vscode.Uri | undefine
 };
 
 export function activate(context: vscode.ExtensionContext): BetterGitExtensionApi {
+    // Startup regression (2026-11-03): a mouse command can activate Better Git before vscode.git.
+    // Reading Extension.exports then throws even with optional chaining and aborts this activation.
+    // package.json declares vscode.git as an extensionDependency so VS Code starts Git before any of
+    // these synchronous editor observers. Keep that dependency; awaiting Git only in the background
+    // index observer does not protect trackUnstagedReviewPosition or publish the ready-host receipt.
     debugLog("activation", `Better Git ${context.extension.packageJSON.version} activated.`);
     registerStagedLfsImageProvider(context);
     registerAgentFlowSelectionBridge(context);

@@ -72,6 +72,8 @@ suite('Extension Test Suite', () => {
 		const manifest = extension.packageJSON;
 
 		assert.strictEqual(manifest.name, 'better-git-vscode');
+		// Cold command activation must wait for Git before synchronous changed-file observers read exports.
+		assert.ok(manifest.extensionDependencies?.includes('vscode.git'), 'Git must activate before Better Git');
 		assert.strictEqual(manifest.displayName, 'Better Git VS Code');
 		assert.strictEqual(manifest.description, 'Fast, keyboard-driven Git change review in VS Code.');
 		assert.ok(!manifest.keywords.includes('agentic'), 'current Better Git VS Code branding must not use the retired agentic label');

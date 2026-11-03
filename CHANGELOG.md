@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.150
+
+- Start VS Code's Git extension before Better Git. A command arriving immediately after an extension restart can no longer abort activation while the current changed-file editor is being observed.
+
 ## 1.2.149
 
 - Keep paging through unread large replacements when VS Code merges a predicted inner change and wraps or jumps past it. Retain the pre-press target so the rescue cannot restart from the wrapped cursor.
