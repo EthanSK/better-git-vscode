@@ -5410,7 +5410,10 @@ suite('SCM change navigation E2E', () => {
 					write(from, 'origin'); write(to, lines(300, 'remembered target'));
 					await refreshUntil(() => isUntracked(from) && isUntracked(to), 'forward plain fixtures');
 				}
-				const old = targetKind === 'diff' ? await openWorkingDiffAt(to, 170) : await openPlainAt(to, 170);
+				// openPlainAt requires an exact viewport top, which sticky context need not give at
+				// arbitrary lines. Establish the real saved cursor/view directly, as the revisit tests do.
+				const old = targetKind === 'diff' ? await openWorkingDiffAt(to, 170) : await openPlainAt(to, 0);
+				old.selection = new vscode.Selection(170, 0, 170, 0);
 				old.revealRange(new vscode.Range(155, 0, 155, 0), vscode.TextEditorRevealType.AtTop);
 				await poll(() => {
 					const saved = extensionApi.getRememberedReviewPosition?.(wsUri(to));
@@ -5468,7 +5471,8 @@ suite('SCM change navigation E2E', () => {
 		const a = 'browse_position_a.txt', b = 'browse_position_b.txt';
 		write(a, lines(300, 'browse a')); write(b, lines(300, 'browse b'));
 		await refreshUntil(() => isUntracked(a) && isUntracked(b), 'explicit file browsing fixtures');
-		const editor = await openPlainAt(b, 170);
+		const editor = await openPlainAt(b, 0);
+		editor.selection = new vscode.Selection(170, 0, 170, 0);
 		editor.revealRange(new vscode.Range(155, 0, 155, 0), vscode.TextEditorRevealType.AtTop);
 		await poll(() => (extensionApi.getRememberedReviewPosition?.(wsUri(b))?.topLine ?? 0) > 100, 'remembered browse position');
 		await openPlainAt(a, 0);
