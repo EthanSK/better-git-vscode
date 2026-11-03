@@ -78,9 +78,15 @@ suite('Worktree click usage', () => {
             assert.strictEqual(f.outcome()?.reason, 'focus-sample-raced-review');
         } finally { f.usage.dispose(); }
     });
-    test('already unfocused after handoff is sampled and a superseded click ignores late results', async () => {
+    test('unfocused at the handoff boundary is unknown, not a user-chosen Codex return', () => {
         const f = fixture();
-        f.focus(false); f.usage.arm(); f.usage.finish('newer-link');
+        f.focus(false); f.usage.arm(); f.usage.dispose();
+        assert.strictEqual(f.outcome()?.outcome, 'unknown');
+        assert.strictEqual(f.outcome()?.reason, 'handoff-ended-unfocused');
+    });
+    test('a superseded click ignores late native app samples', async () => {
+        const f = fixture();
+        f.usage.arm(); f.focus(false); f.usage.finish('newer-link');
         await f.app('com.openai.codex');
         assert.strictEqual(f.outcome()?.outcome, 'unknown');
         assert.strictEqual(f.outcome()?.reason, 'newer-link');

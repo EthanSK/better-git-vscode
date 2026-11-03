@@ -41,8 +41,9 @@ export class WorktreeUsage {
         if (this.finished || this.observing) { return; }
         this.observing = true;
         this.write("observing");
-        // The user can already have returned during loading. Sample after the scripted handoff ends.
-        if (!this.focused()) { this.focusChanged(false); }
+        // A failed/late editor activation and a very fast user return look identical here. Require
+        // observed editor focus after the handoff rather than attributing its Codex bounce to the user.
+        if (!this.focused()) { this.complete("unknown", "handoff-ended-unfocused"); }
     }
 
     reviewInput(input: ReviewInput, file: string | undefined): void {

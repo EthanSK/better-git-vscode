@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.152
+
+- Keep an unfocused window at the automatic handoff boundary unknown. Failed or late editor activation must not be counted as a user choosing to return to Codex.
+
 ## 1.2.151
 
 - Add local worktree-link usage diagnostics when debug logging is enabled. Distinguish observable review input, Codex returns, configured automatic returns and unknown outcomes without counting the automatic handoff as user input or changing app focus, navigation or staging.
