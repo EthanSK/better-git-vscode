@@ -28,6 +28,7 @@ import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./g
 import {
     createMouseStageSelection,
     MouseStageSelection,
+    mouseStagePreviewIndex,
     moveMouseStageSelection,
     planMouseStagePreviewBoundary,
     selectedMouseStageItems,
@@ -2207,7 +2208,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         onDidChangeFileDecorations: reviewDecoEmitter.event,
         provideFileDecoration(uri) {
             const previewSelection = stagePreviewMode && stageHoldSelections.get(stagePreviewMode.source);
-            const previewCurrentUri = previewSelection?.items[previewSelection.cursorIndex]?.uri;
+            // The explicit ratchet past an outer boundary approves its final file (explosion). Keep eyes
+            // decoration and release exclusion on the shared model's same endpoint decision.
+            const previewIndex = previewSelection && mouseStagePreviewIndex(previewSelection);
+            const previewCurrentUri = previewIndex !== undefined ? previewSelection?.items[previewIndex]?.uri : undefined;
             if (stagePreviewMode?.request.active && previewSelection?.request === stagePreviewMode.request
                 && previewCurrentUri?.path.toLowerCase() === uri.path.toLowerCase()) {
                 return {
@@ -5600,6 +5604,14 @@ const navigateWithMouseOrigin = (
                     active = await getActiveChange();
                     check();
                     if (active?.path !== uri.path) { return; }
+                    if (tab && tab === vscode.window.tabGroups.activeTabGroup.activeTab
+                        && tab.input === undefined && active.staged === null) {
+                        // Current VS Code can hide the input even for the single ~ image preview we just
+                        // explicitly opened. Its unstaged side comes from OUR canonical open, not a guess
+                        // about the previous opaque comparison. Keep this proof local to this hold capture;
+                        // ordinary/staged/history views still require their normal side checks.
+                        active = { path: active.path, staged: false };
+                    }
                     view = captureMouseReviewView();
                 }
                 if (change && active && (active.staged === false || matches.length === 1) && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {

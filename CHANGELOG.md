@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.148
+
+- In eyes review, an extra Next past the final change now marks the final file for staging on release. Previous mirrors this at the first file; the file stays open and the pending batch never crosses worktrees.
+- Share that endpoint decision between its explosion badge and exact release membership for mouse, wand and keyboard review. Keep unfinished previews excluded and reverse removal intact.
+- Keep deleted-image hold entry working when VS Code hides even the canonical index preview's resource input; retain staged-view rejection and exact Undo.
+
 ## 1.2.147
 
 - Let the matching Agentic Mouse update automatically verify running Better Git commands after app and extension restarts, so Default holds can keep starting in eyes review.

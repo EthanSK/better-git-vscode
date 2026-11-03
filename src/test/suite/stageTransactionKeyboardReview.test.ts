@@ -125,6 +125,6 @@ suite("Keyboard review session", () => {
         assert.strictEqual(cross("previous"), "a");
         assert.deepStrictEqual(staged(), ["b"], "beginning with Next does not stop a review upwards");
         assert.strictEqual(cross("previous"), undefined, "the worktree's first file is a boundary, never another worktree");
-        assert.deepStrictEqual(staged(), ["b"], "an outer boundary changes nothing");
+        assert.deepStrictEqual(staged(), ["a", "b"], "an explicit outer-boundary step approves the final preview too");
     });
 });

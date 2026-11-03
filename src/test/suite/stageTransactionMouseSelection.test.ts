@@ -1,3 +1,4 @@
+// Pure pending-set and eyes endpoint rules shared by mouse, wand and keyboard; run with npm test.
 import * as assert from "assert";
 import {
     createMouseStageSelection,
@@ -138,5 +139,28 @@ suite("Mouse stage selection", () => {
         }
         assert.strictEqual(planMouseStagePreviewBoundary(first, -1, "next"), undefined);
         assert.strictEqual(planMouseStagePreviewBoundary(first, 4, "next"), undefined);
+    });
+
+    test("explicitly reviewing past an outer boundary includes the final eyes file on release", () => {
+        for (const direction of ["next", "previous"] as const) {
+            const index = direction === "next" ? 3 : 0;
+            const start = createMouseStageSelection(items, index, direction)!;
+            assert.deepStrictEqual(selectedMouseStageItems(start, true), [], "merely viewing the endpoint still excludes it");
+            const end = planMouseStagePreviewBoundary(start, index, direction)!;
+            assert.strictEqual(end.target, undefined, "never cross to another worktree");
+            assert.deepStrictEqual(selectedMouseStageItems(end.selection, true), [items[index]]);
+            const repeated = planMouseStagePreviewBoundary(end.selection, index, direction)!;
+            assert.deepStrictEqual(selectedMouseStageItems(repeated.selection, true), [items[index]], "repeated ratchets are idempotent");
+            assert.deepStrictEqual(selectedMouseStageItems(start, true), [], "earlier snapshots remain immutable");
+            const back = planMouseStagePreviewBoundary(end.selection, index, direction === "next" ? "previous" : "next")!;
+            assert.deepStrictEqual(selectedMouseStageItems(back.selection, true), [], "reversing removes the completed departing file");
+        }
+    });
+
+    test("a manually opened outer file is included without selecting unrelated gaps", () => {
+        const start = createMouseStageSelection(items, 0)!;
+        const end = planMouseStagePreviewBoundary(start, 3, "next")!;
+        assert.strictEqual(end.selection.cursorIndex, 3);
+        assert.deepStrictEqual(selectedMouseStageItems(end.selection, true), ["a", "d"]);
     });
 });

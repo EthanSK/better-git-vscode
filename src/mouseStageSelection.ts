@@ -1,9 +1,11 @@
+// One immutable pending stage set for mouse, wand and keyboard review; Git changes only when its owner finishes.
 export interface MouseStageSelection<T> {
     readonly items: readonly T[];
     readonly cursorIndex: number;
     readonly initialDirection: "next" | "previous";
     readonly selectedIndices: readonly number[];
     readonly rebaseDirectionAtEndpoint?: boolean;
+    readonly reviewedEndpoint?: number;
 }
 
 export const createMouseStageSelection = <T>(
@@ -34,7 +36,7 @@ const moveToMouseStageItem = <T>(
     if (direction === initialDirection) { marked.add(currentIndex); }
     else { marked.delete(currentIndex); }
     marked.add(cursorIndex);
-    return { ...selection, initialDirection, cursorIndex, selectedIndices: [...marked] };
+    return { ...selection, initialDirection, cursorIndex, selectedIndices: [...marked], reviewedEndpoint: undefined };
 };
 
 export const moveMouseStageSelection = <T>(
@@ -43,6 +45,11 @@ export const moveMouseStageSelection = <T>(
 ): MouseStageSelection<T> => moveToMouseStageItem(selection, selection.cursorIndex,
     Math.max(0, Math.min(selection.items.length - 1, selection.cursorIndex + delta)));
 
+// Ethan: an extra review step past the last/first file means "I've finished this file". It becomes explosion,
+// not an endlessly excluded eyes preview. This one value owns both the badge and release membership.
+export const mouseStagePreviewIndex = <T>(selection: MouseStageSelection<T>): number | undefined =>
+    selection.reviewedEndpoint === selection.cursorIndex ? undefined : selection.cursorIndex;
+
 export const selectedMouseStageItems = <T>(
     selection: MouseStageSelection<T>, excludeCurrent = false
 ): readonly T[] => {
@@ -50,7 +57,7 @@ export const selectedMouseStageItems = <T>(
     // Ethan's eyes mode is a preview: releasing stages the reviewed files before this one, so he can stop
     // on a file that needs more analysis. File/explosion mode includes the endpoint. Compute this at finish
     // without mutating the shared selection, so switching modes midway preserves every earlier decision.
-    if (excludeCurrent) { marked.delete(selection.cursorIndex); }
+    if (excludeCurrent && mouseStagePreviewIndex(selection) !== undefined) { marked.delete(selection.cursorIndex); }
     return selection.items.filter((_, index) => marked.has(index));
 };
 
@@ -62,7 +69,14 @@ export const planMouseStagePreviewBoundary = <T>(
     }
     const nextIndex = currentIndex + (direction === "next" ? 1 : -1);
     const hasTarget = nextIndex >= 0 && nextIndex < selection.items.length;
-    const cursorIndex = hasTarget ? nextIndex : currentIndex;
+    if (!hasTarget) {
+        // Only a real file-boundary callback approves this terminal file: viewing its final hunk alone does
+        // not. Keep it pending until release, idempotent on further ratchets, and never wrap worktrees. A
+        // manually opened terminal file is the endpoint too; do not invent a range through unvisited gaps.
+        return { selection: { ...selection, cursorIndex: currentIndex, reviewedEndpoint: currentIndex,
+            selectedIndices: [...new Set([...selection.selectedIndices, currentIndex])] } };
+    }
+    const cursorIndex = nextIndex;
     return {
         selection: moveToMouseStageItem(selection, currentIndex, cursorIndex),
         target: hasTarget ? selection.items[cursorIndex] : undefined,

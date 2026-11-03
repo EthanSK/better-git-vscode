@@ -3230,6 +3230,100 @@ suite('SCM change navigation E2E', () => {
 		});
 	}
 
+	// Ethan: after reviewing the last file, an extra ratchet approves it too. All owners share that pending
+	// decision; neither the final hunk itself nor a mode toggle may stage early or leave an endless eyes file.
+	for (const source of ['corsair', 'razer', 'keyboard', 'wand'] as const) {
+		for (const direction of ['next', 'previous'] as const) {
+			test(`eyes terminal boundary marks the final file for ${source} ${direction}`, async () => {
+				const config = vscode.workspace.getConfiguration('better-git-vscode');
+				const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+				const ext = vscode.workspace.getConfiguration('extensions');
+				const handlers = ext.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+				await ext.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+				const names = ['terminal_a.txt', 'terminal_b.txt'];
+				const start = direction === 'next' ? 0 : 1, endpoint = 1 - start;
+				const id = randomUUID(); let seq = 0;
+				const wand = (phase: string) => deliverMouseUri(`wand-review/${phase}`, 'wand',
+					new URLSearchParams({ version: '1', id, seq: String(++seq), direction, mode: 'changes' }).toString());
+				const step = () => source === 'wand' ? wand('step') : source === 'keyboard'
+					? vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', direction)
+					: vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', source, direction);
+				const finish = () => source === 'wand' ? wand('finish') : source === 'keyboard'
+					? vscode.commands.executeCommand('better-git-vscode.finish-keyboard-review')
+					: vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source, direction });
+				try {
+					for (const name of names) { write(name, name); }
+					await refreshUntil(() => names.every(isUntracked), 'terminal eyes files');
+					await openPlainAt(names[start], 0); await focusIsolatedTestWindow();
+					if (source === 'wand') { await wand('begin'); }
+					else if (source === 'keyboard') { await vscode.commands.executeCommand('better-git-vscode.begin-keyboard-review', direction); }
+					else {
+						await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source, direction, initialMode: 'changes' });
+						await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+					}
+					await poll(() => extensionApi.getReviewDecorationBadge(wsUri(names[start])) === '👀', 'fresh terminal journey eyes entry');
+					await step(); await expectActiveTab(names[endpoint]);
+					await poll(() => extensionApi.getReviewDecorationBadge(wsUri(names[endpoint])) === '👀', 'last file remains preview until its boundary');
+					await step();
+					await poll(() => extensionApi.getReviewDecorationBadge(wsUri(names[endpoint])) === '💥💥', 'explicit final step approves terminal file');
+					await step(); // Further outward input must neither wrap nor discard the terminal decision.
+					assert.strictEqual(activeTabPath(), wsUri(names[endpoint]).path);
+					assert.strictEqual(git('diff --cached --name-only'), '', 'even the terminal approval stays pending until release');
+					await finish(); await poll(() => git('diff --cached --name-only') === names.join('\n'), 'terminal release stages the complete set');
+					await finish();
+					assert.strictEqual(git('diff --cached --name-only'), names.join('\n'), 'repeated release cannot add another transaction');
+					await extensionApi.whenStageTransactionsSettled();
+					await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+					assert.strictEqual(git('diff --cached --name-only'), '', 'one exact Undo restores the complete terminal batch');
+				} finally {
+					if (source === 'wand') { await wand('cancel'); }
+					else if (source === 'keyboard') { await vscode.commands.executeCommand('better-git-vscode.cancel-keyboard-review'); }
+					else { await vscode.commands.executeCommand('better-git-vscode.cancel-mouse-navigation-hold', source); }
+					await config.update('experimentalMouseHoldNavigateOnButtonDown', previous, vscode.ConfigurationTarget.Global);
+					await ext.update('confirmedUriHandlerExtensionIds', handlers, vscode.ConfigurationTarget.Global);
+				}
+			});
+		}
+	}
+
+	test('eyes terminal approval queued before mouse release is retained', async () => {
+		write('terminal_only.txt', 'only file');
+		await refreshUntil(() => isUntracked('terminal_only.txt'), 'single terminal file');
+		await openPlainAt('terminal_only.txt', 0); await focusIsolatedTestWindow();
+		await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next', initialMode: 'changes' });
+		await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+		const step = vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next');
+		const finish = vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+		await Promise.all([step, finish]);
+		assert.strictEqual(git('diff --cached --name-only'), 'terminal_only.txt', 'release snapshots the admitted terminal decision, not the old eyes endpoint');
+		await extensionApi.whenStageTransactionsSettled();
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		assert.strictEqual(git('diff --cached --name-only'), '');
+	});
+
+	test('eyes terminal modified file stays preview until all its hunks are passed', async () => {
+		const content = lines(40, 'mod_a').split('\n'); content[4] = 'first EDIT'; content[24] = 'last EDIT';
+		write('committed/mod_a.txt', content.join('\n') + '\n');
+		await refreshUntil(() => inWorkingTree('committed/mod_a.txt', 5), 'terminal modified file');
+		await openWorkingDiffAt('committed/mod_a.txt', 0); await focusIsolatedTestWindow();
+		await vscode.commands.executeCommand('better-git-vscode.begin-keyboard-review', 'next');
+		for (let n = 0; n < 2; n++) {
+			await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next');
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('committed/mod_a.txt')), '👀', 'viewing a hunk alone is not approval');
+		}
+		for (let n = 0; n < 6 && extensionApi.getReviewDecorationBadge(wsUri('committed/mod_a.txt')) !== '💥💥'; n++) {
+			await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next');
+		}
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri('committed/mod_a.txt')), '💥💥');
+		assert.strictEqual(git('diff --cached --name-only'), '');
+		await vscode.commands.executeCommand('better-git-vscode.finish-keyboard-review');
+		assert.strictEqual(git('diff --cached --name-only'), 'committed/mod_a.txt');
+		await extensionApi.whenStageTransactionsSettled();
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		assert.strictEqual(git('diff --cached --name-only'), '');
+	});
+
 	test('eyes-only release is inert and preserves earlier Undo history', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		const previous = config.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
@@ -5540,8 +5634,8 @@ suite('SCM change navigation E2E', () => {
 				await keyboardReview.begin(direction);
 				assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '👀',
 					`deleted image must enter keyboard review (${JSON.stringify(vscode.window.tabGroups.activeTabGroup.activeTab?.input)}): ${extensionApi.getMouseDebugTrace().join(' | ')}`);
-				if (imageView === 'comparison' && imageState === 'staged-modified-deleted' && tab?.input === undefined) {
-					// Opaque dual-state comparisons cannot prove their side. Held entry first shows the exact
+				if (imageState !== 'deleted' && tab?.input === undefined) {
+					// Any opaque dual-state image can hide its side, including a single index preview. Held entry first shows the exact
 					// unstaged index preview; it must never guess or stage the other version behind the view.
 					assert.strictEqual(extensionApi.getCurrentReviewUri(), uri.toString(), 'normalization keeps the same deleted image');
 				} else { assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab, 'begin keeps the image preview'); }
