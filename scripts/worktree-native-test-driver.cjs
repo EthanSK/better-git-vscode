@@ -123,9 +123,10 @@ exports.run = async () => {
     }
     else if(request.action==='config') {
      const config=vscode.workspace.getConfiguration('better-git-vscode');
-     for(const [key,setting] of Object.entries(request.settings)) await config.update(key,setting,vscode.ConfigurationTarget.Global);
+     const target=request.scope==='workspace' ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+     for(const [key,setting] of Object.entries(request.settings)) await config.update(key,setting,target);
      const current=vscode.workspace.getConfiguration('better-git-vscode');
-     value={enabled:current.get('worktreeLinkReturnFocus'),app:current.get('worktreeLinkReturnApp')};
+     value={enabled:current.get('worktreeLinkReturnFocus'),app:current.get('worktreeLinkReturnApp'),debugLogging:current.get('debugLogging')};
     }
     else if(request.action==='copy') {
      const before=await vscode.env.clipboard.readText();

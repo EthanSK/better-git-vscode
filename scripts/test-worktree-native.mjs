@@ -244,7 +244,9 @@ try {
         await until(()=>request('state'), state=>state.focused, 'owned host focus restored');
         await request('settle-worktree');
         const count = (await events()).length;
-        await request('config', {settings:{debugLogging:false}});
+        // This fixture enables debug logging in Workspace settings; a Global write cannot override it.
+        const configured = await request('config', {settings:{debugLogging:false},scope:'workspace'});
+        assert.equal(configured.value.debugLogging, false, 'effective debug setting is disabled');
         await open(3);
         assert.equal((await events()).length, count, 'logging disabled creates no observation');
         assert.deepEqual(roots.map(repo=>git(repo,'status','--porcelain=v1')), baseline, 'logging never changes Git');
