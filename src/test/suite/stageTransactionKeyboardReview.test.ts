@@ -1,3 +1,4 @@
+// Pure keyboard review ownership, context and shared pending-set rules; run with npm test.
 import * as assert from "assert";
 import {
     decideKeyboardReviewBegin,
