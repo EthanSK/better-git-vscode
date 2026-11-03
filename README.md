@@ -94,6 +94,8 @@ Hunks whose complete rendered range is already visible are untouched — one pre
 
 For the exact boundary rules and the engineering behind the navigation fix, see [How Better Git VS Code navigation works](docs/navigation-behavior.md).
 
+For contributors, [Regression guards](docs/regression-contracts.md) maps reported bugs and later decisions to their code owners and focused tests. Preserve those rules when changing shared review behavior.
+
 ## Source Control show/hide automation is experimental and off by default
 
 VS Code saves Source Control tree data per workspace, but current releases can still rebuild repository and change-group sections expanded after a restart. VS Code exposes no reliable extension API for reading or setting one particular repository or group node. Better Git's earlier attempt to reconstruct that mixed state by walking generic list rows became visibly repetitive with many worktrees, so v1.2.31 withdraws that implementation.

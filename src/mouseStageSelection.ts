@@ -1,4 +1,7 @@
 // One immutable pending stage set for mouse, wand and keyboard review; Git changes only when its owner finishes.
+// History guard: Ethan corrected "stage while scrolling" to ADD TO THE SET (2026-10-02), never Git add on
+// each ratchet. His subsequent reverse-removal and eyes-preview decisions apply to this SAME set in both
+// modes. The 2026-11-03 terminal approval is the narrow exception to excluding an unfinished eyes preview.
 export interface MouseStageSelection<T> {
     readonly items: readonly T[];
     readonly cursorIndex: number;

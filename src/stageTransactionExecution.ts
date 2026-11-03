@@ -1,3 +1,5 @@
+// Order Better Git's Git add and exact Undo receipt without making next-file review wait for receipt I/O.
+// Called by the shared staging chokepoint in extension.ts, including multi-file held-review releases.
 interface StageTransactionSteps {
     prepareUndo: () => Promise<void>;
     stage: () => Promise<void>;
@@ -5,6 +7,9 @@ interface StageTransactionSteps {
     onUndoError: (error: unknown) => void;
 }
 
+// Ethan's 2026-10-16/18 "it stages but [doesn't] progress the fire" reports: receipt I/O must not sit
+// between successful Git add and opening the next file. Keep the ordering barriers below; removing the
+// wait by abandoning the receipt would regress immediate Undo and multi-file batch Undo instead.
 /// The index mutation must finish before advancing. Receipt persistence uses
 /// the existing ordered observer queue: enqueue it before returning, but let
 /// the user review the next file while it finishes. The next stage's prepare

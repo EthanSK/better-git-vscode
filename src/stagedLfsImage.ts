@@ -1,3 +1,5 @@
+// Read-only image resources for staged Git LFS pointers; extension.ts uses these exact local object bytes
+// so Source Control screenshots remain previewable without fetching or mutating the working checkout.
 import * as vscode from "vscode";
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -85,6 +87,9 @@ const localMediaDir = async (root: string): Promise<string | undefined> => {
 // VS Code's media preview refuses a small `git:` LFS pointer. A locally present LFS object gives the
 // exact staged bytes without changing the index, checkout, or user's working file. Only inspect image
 // sides with pointer-sized Git blobs; ordinary image navigation stays on VS Code's native path.
+// September/October reports: staging a screenshot must not replace its preview with LFS pointer text.
+// The reference is content-addressed Git/LFS data, not a path to the current working image. Missing local
+// bytes retain the native preview; this is not permission to silently download or rewrite the checkout.
 // Ethan must be able to review a staged screenshot as an image. Resolve its exact local object, never
 // the possibly newer working copy, and never smudge/reset the checkout or fetch over the network here.
 export const resolveStagedLfsImage = async (gitUri: vscode.Uri, repositoryRoot: string): Promise<vscode.Uri> => {

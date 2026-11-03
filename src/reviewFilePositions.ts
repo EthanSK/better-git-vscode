@@ -9,6 +9,8 @@ export type ReviewFilePosition = StageUndoView & { resumeFromViewport?: boolean 
 // Ethan: returning to a visited UNSTAGED file resumes its last cursor and scroll position. Staging clears
 // that file's entry; failed staging does not. Store only coordinates, never documents or editor objects.
 // This session-only cache is separate from the three-entry exact Undo history. Bound it even in huge repos.
+// Do not generalize a first-entry top/EOF fix into resetting revisits: Ethan explicitly asked to resume
+// partially reviewed files after switching away (2026-10-31). Images have no text caret/scroll coordinates.
 export class ReviewFilePositions {
     private readonly views = new Map<string, ReviewFilePosition>();
 

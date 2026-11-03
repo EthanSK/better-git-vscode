@@ -2,7 +2,10 @@
 interface Disposable { dispose(): void; }
 
 export const WORKTREE_PRESENTATION_MAX_AGE_MS = 10_000;
+// Ethan repeatedly reported "Staged still expanded" after switching worktrees (September/October).
 // Native expand/group-focus commands return before their renderer work; only explicit link UI uses this gap.
+// This is not a review-input debounce, and increasing the total link age is not a substitute for settling
+// the particular queued tree command. See revealCollapsedWorktree for target-identity verification.
 export const WORKTREE_TREE_SETTLE_MS = 500;
 export type WorktreePresentationEndReason = "cancelled" | "newer-link" | "cursor-move" | "document-edit"
     | "review-navigation" | "expired" | "not-owned" | "completed" | "failed";

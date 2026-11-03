@@ -1,4 +1,6 @@
 // Better Git's activation and command wiring: keyboard/mouse review share exact staging, Undo and navigation.
+// Preserve the owning decision comments; docs/regression-contracts.md maps Ethan's historical bug reports
+// and later corrections to these code paths and their focused tests.
 import { ReviewDocumentWarmup } from "./gitReviewWarmup";
 import { parseWandReviewUri } from "./wandReviewUri";
 import * as vscode from "vscode";
@@ -1749,6 +1751,9 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }), true);
     };
     prepareStageHoldReleaseRequest = (source, request) => {
+        // Regression reports 2026-09-19 and 2026-10-28: clicking the gutter, shrinking the range or a slow
+        // preview must not leave explosion badges that silently do nothing on release. Navigation may be
+        // superseded by editing, but this captured release transaction is not a navigation cancellation.
         // Ethan: if the explosion marks say a group will stage, its real release must commit that group.
         // Retain the selection for already-admitted wheel work; no elapsed-time/scroll-idle heuristic may
         // expire a genuine release or turn a busy queue into an implicit cancel.
@@ -3086,6 +3091,9 @@ interface FileChange {
 const revealCollapsedWorktree = async (
     repository: any, repositories: any[], isCurrent: () => boolean, onDeferred: () => void
 ): Promise<boolean> => {
+    // Ethan's 2026-10-05 correction: use the same GLOBAL minimize command as the toolbar, settle it, then
+    // expand only the requested repository. Do not restore the old expand-everything/repeated sweep path.
+    // Merge Changes is an optional group BEFORE Staged; clean/staged-only roots still need expansion.
     const pause = async (ms = 100) => {
         await new Promise(resolve => setTimeout(resolve, ms));
         if (!isCurrent()) { return false; }
@@ -5359,6 +5367,9 @@ const anchorNavigationAtViewport = (editor: vscode.TextEditor | undefined, direc
 };
 
 const invalidateChangeNavigation = (preserveHeldSelection = false, reason = "navigation context reset"): void => {
+    // Ethan's 2026-09-19 rule: editor/gutter clicks while physically holding may retire stale cursor work,
+    // never the pending file set. App switching is a different event with its own captured-minus-preview
+    // finish policy in stageHeldSelectionOnFocusLoss; do not make these two cancellation paths equivalent.
     changeNavigationGeneration++;
     lastNavigationInvalidation = reason;
     if (preserveHeldSelection) {

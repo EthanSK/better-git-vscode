@@ -1,8 +1,13 @@
+// Parse incoming Worktree links and generate the existing Microsoft redirect used by extension.ts.
+// Keep filesystem identity, encoding and allowed app-return metadata separate from browser behavior.
 import * as path from "path";
 
 export const WORKTREE_LINK_AUTHORITY = "ethansk.better-git-vscode";
 export const WORKTREE_LINK_PATH = "/open-worktree";
 
+// September's "valid worktree path" failure and repeated browser experiments share this boundary:
+// the outer redirect has two encoding layers; the received path query is decoded once, independently
+// of Microsoft's extra `url` query parameter. Do not recursively decode an already decoded filesystem path.
 // Query values are decoded exactly once. Do not interpret URLs, commands or
 // relative paths as filesystem roots, even when a link comes from a trusted chat.
 export function parseWorktreeLink(link: { authority: string; path: string; query: string; fragment: string }): string | undefined {

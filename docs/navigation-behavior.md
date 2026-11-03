@@ -2,6 +2,8 @@
 
 Better Git VS Code treats change review as one continuous, reversible sequence. The same Next and Previous commands must behave predictably in ordinary diffs, tall hunks, brand-new files, staged files, and cross-file transitions.
 
+For the user-reported regressions and decisions that these rules protect, see [Regression guards](regression-contracts.md). Check the owning comments and neighboring tests before changing a shared navigation, hold or release path.
+
 ## The navigation contract
 
 The visible viewport starts review when an editor opens on its own (for example from a Source Control click) or after the user scrolls it independently. Next begins just above the visible top; Previous begins just below the visible bottom, so the first on-screen change remains reachable even if the caret is elsewhere. Consecutive presses then use the exact caret reached by the previous review step until the viewport moves independently again. Better Git VS Code does not keep a separate forward/backward state machine that can drift away from what the user is reading.

@@ -1,3 +1,5 @@
+// The October "stage action failed" reports included concurrent index writers. Retry only this concrete
+// lock collision; a normal stage pays no delay, and permission/content failures must remain real failures.
 export const isTransientGitIndexLockError = (error: unknown): boolean => {
     const candidate = error as { message?: unknown; stderr?: unknown };
     const text = [candidate?.message, candidate?.stderr]

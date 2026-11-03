@@ -1,3 +1,7 @@
+// PROTOTYPE ONLY: this pure planner/queue is not wired into extension.ts or a production native adapter.
+// Ethan's repeated "still doesn't scroll" reports must not be closed because these unit tests pass.
+// Integration needs real SCM geometry/scroll evidence on the Mini; never substitute row navigation,
+// move the staging endpoint, or block the review input queue merely to bring later rows into view.
 // Ethan's "ten or so underneath": move the current Source Control review row near the top only
 // when upcoming files would otherwise be below the viewport. This is presentation, never navigation,
 // selection or staging. The native adapter supplies the visible file area below any sticky headers.

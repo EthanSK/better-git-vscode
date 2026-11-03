@@ -2435,7 +2435,9 @@ suite('SCM change navigation E2E', () => {
     for (const mode of ['next', 'stage-next', 'eyes'] as const) {
         test('fresh new-file landing: ' + mode + ' ignores native history, then pages from line1', async () => {
             const rel = 'zz_fresh_' + mode + '.ts';
-            const current = 'committed/fresh_origin_' + mode + '.txt';
+            // SCM puts root files before nested files. Keep this tracked origin before the root-level
+            // target: held eyes review deliberately does NOT wrap its captured set at the worktree edge.
+            const current = 'aa_fresh_origin_' + mode + '.txt';
             write(current, lines(20, 'origin'));
             git('add -- "' + current + '"'); git('commit -m "fresh landing origin"');
             const exclude = path.join(ws, '.git/info/exclude');
@@ -2444,7 +2446,9 @@ suite('SCM change navigation E2E', () => {
             try {
                 write(rel, lines(160, 'fresh'));
                 await repo.status();
-                const editor = await openPlainAt(rel, 98);
+                // Cache a native caret, not an exact viewport top: EOF clamping varies with Mini window size.
+                const editor = await vscode.window.showTextDocument(wsUri(rel), { preview: false });
+                editor.selection = new vscode.Selection(98, 0, 98, 0);
                 editor.revealRange(new vscode.Range(98, 0, 98, 0), vscode.TextEditorRevealType.AtTop);
                 await poll(() => lineIsVisible(editor, 98), 'ignored file native cached caret');
                 await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
@@ -2456,9 +2460,15 @@ suite('SCM change navigation E2E', () => {
                 if (mode === 'stage-next') {
                     await vscode.commands.executeCommand('better-git-vscode.stage-and-next-changed-file');
                 } else if (mode === 'eyes') {
+                    await focusIsolatedTestWindow(); // Held review is admitted only while this isolated host is focused.
                     await vscode.commands.executeCommand('better-git-vscode.begin-keyboard-review', 'next');
-                    await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next');
-                    await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next');
+                    await poll(() => extensionApi.getReviewDecorationBadge(wsUri(current)) === '👀', 'fresh landing eyes entry');
+                    // This case asserts first arrival, not how many origin-hunk/viewport steps precede it.
+                    // Stop at arrival so a third origin step cannot accidentally become a new-file page.
+                    for (let n = 0; n < 6 && activeTabPath() !== wsUri(rel).path; n++) {
+                        await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next');
+                    }
+                    assert.strictEqual(activeTabPath(), wsUri(rel).path, 'eyes must reach the following new file');
                 } else { await nextChange(); await nextChange(); }
                 await expectCursorVisibleAt(rel, 0);
                 if (mode === 'eyes') { await vscode.commands.executeCommand('better-git-vscode.step-keyboard-review', 'next'); }
@@ -2516,12 +2526,14 @@ suite('SCM change navigation E2E', () => {
 				'test precondition failed: copied fixture must reproduce VS Code skipping from L53 to L149'
 			);
 
-			// Return to the exact reported stop after proving the built-in skip. Better Git should replace that L53->L149
-			// jump with one configured step and must do so without first overshooting and visibly returning.
-			const resetPosition = new vscode.Position(start, 0);
+			// Reach the reported stop through real review navigation. Since viewport-owned entry was added,
+			// manually resetting a caret alone is not proof the next press starts from that caret.
+			const resetPosition = new vscode.Position(0, 0);
 			editor.selection = new vscode.Selection(resetPosition, resetPosition);
 			editor.revealRange(new vscode.Range(resetPosition, resetPosition), vscode.TextEditorRevealType.AtTop);
-			await poll(() => lineIsVisible(editor, start), 'copied profile-pic replacement start to be visible again');
+			await poll(() => lineIsVisible(editor, 0), 'copied profile-pic review entry to be visible again');
+			for (let i = 0; i < 8 && editor.selection.active.line !== start; i++) { await nextChange(); }
+			assert.strictEqual(editor.selection.active.line, start, 'reach the copied stop through review navigation');
 			assert.ok(!positionIsVisible(editor, editor.document.lineAt(252).range.end), 'outer replacement tail must be hidden again');
 			await vscode.commands.executeCommand('workbench.view.scm');
 
@@ -2580,11 +2592,18 @@ suite('SCM change navigation E2E', () => {
 				'test precondition failed: built-in Previous must wrap downward within the copied replacement'
 			);
 
-			const resetPosition = new vscode.Position(firstChange, 0);
-			editor.selection = new vscode.Selection(resetPosition, resetPosition);
-			editor.revealRange(new vscode.Range(resetPosition, resetPosition), vscode.TextEditorRevealType.AtTop);
-			await poll(() => lineIsVisible(editor, firstChange), 'copied profile-pic first change to be visible again');
-
+			// Test an OWNED first-change landing, not a manually opened viewport whose first Previous
+			// legitimately starts from its visible bottom. Use a fresh URI so the native proof above cannot
+			// seed a remembered revisit and disguise which caret owns the following intentional press.
+			const ownedRel = 'committed/profile-pic-owned-wrap.ts';
+			write(ownedRel, fs.readFileSync(path.join(path.dirname(afterFixture), 'profile-pic.service.before.txt'), 'utf8'));
+			git(`add -- "${ownedRel}"`); git('commit -m "owned wrap fixture"');
+			write(ownedRel, fs.readFileSync(afterFixture, 'utf8'));
+			git(`checkout -- "${rel}"`);
+			await refreshUntil(() => inWorkingTree(ownedRel, 5) && inWorkingTree('committed/mod_a.txt', 5), 'owned wrap files');
+			await openWorkingDiffAt('committed/mod_a.txt', 0);
+			await vscode.commands.executeCommand('better-git-vscode.next-changed-file');
+			await expectCursorAt(ownedRel, firstChange);
 			await previousChange();
 			await expectActiveTab('committed/mod_a.txt');
 		} finally {
