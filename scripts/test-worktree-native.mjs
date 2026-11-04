@@ -28,6 +28,7 @@ const testNoUnstaged = process.argv.includes('--no-unstaged');
 const testStageReveal = process.argv.includes('--stage-reveal');
 const testDeletedLink = process.argv.includes('--deleted-link');
 const testLinkOnly = process.argv.includes('--link-only');
+const testLastStaged = process.argv.includes('--last-staged-status');
 const testLookaheadNormal = process.argv.includes('--scm-lookahead-normal');
 const testLookahead = testLookaheadNormal || process.argv.includes('--scm-lookahead');
 const testUsage = process.argv.includes('--usage-tracking');
@@ -226,7 +227,65 @@ try {
         await send('Page.bringToFront');
         await until(() => request('state'), state => state.focused, 'native window focus');
     }
-    if (testLookahead) {
+    if (testLastStaged) {
+        await request('open',{repo:1});
+        const baseline=git(roots[1],'diff','--cached','--name-only');
+        const status=()=>evaluate(`([...document.querySelectorAll('.statusbar-item')].map(item=>item.textContent.trim()).find(text=>text.includes('Staged:')) ?? '')`);
+        const statusPoint=()=>evaluate(`(()=>{const item=[...document.querySelectorAll('.statusbar-item')].find(item=>item.textContent.includes('Staged:'));const r=item.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+        const assertLast=async file=>{
+            await until(status,text=>text.includes('Staged: '+file),'batch status names '+file);
+            const point=await statusPoint();
+            await send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
+            await send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
+            await until(()=>request('state'),state=>{const uri=new URL(state.active);return uri.protocol==='git:' && uri.pathname.endsWith('/'+file) && JSON.parse(decodeURIComponent(uri.search.slice(1))).ref==='';},'click reopens the named staged diff');
+        };
+        // Forward eyes review stages b/c, never the unfinished d preview. The label and click
+        // target must name c, rather than the first member or the file currently being previewed.
+        await request('working',{repo:1,file:'b.txt'});
+        await request('command',{command:'better-git-vscode.begin-keyboard-review',args:['next']});
+        await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
+        for(let i=0;i<2;i++) { await request('command',{command:'better-git-vscode.step-keyboard-review',args:['next']}); }
+        await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
+        await request('command',{command:'better-git-vscode.finish-keyboard-review'});
+        assert.deepEqual(git(roots[1],'diff','--cached','--name-only').trim().split('\n').sort(),['b.txt','c.txt',...baseline.trim().split('\n')].sort());
+        await until(status,text=>text.includes('Staged: c.txt'),'forward batch filename before hover');
+        await send('Input.dispatchMouseEvent',{type:'mouseMoved',...await statusPoint()});
+        const tooltip=await until(()=>evaluate(`([...document.querySelectorAll('.monaco-hover')].map(item=>item.innerText).join(String.fromCharCode(10)))`),text=>text.includes('Last file staged via Better Git — click to reopen its diff') && text.includes('b.txt') && text.includes('c.txt'),'batch tooltip keeps last-file heading and member list');
+        assert.ok(tooltip.startsWith('repo-1/c.txt') || tooltip.startsWith('c.txt'),'tooltip starts with the named last staged path');
+        await capture('last-stage-forward-tooltip');
+        await assertLast('c.txt');
+        await capture('last-stage-forward');
+        await request('command',{command:'better-git-vscode.undo-last-stage-and-advance'});
+        assert.equal(git(roots[1],'diff','--cached','--name-only'),baseline,'forward batch remains one exact Undo');
+        // Reverse file mode reaches b from d. Keep the transaction's SCM order, but display b
+        // as the reviewed endpoint; showing d would conceal an extra file at the other boundary.
+        await request('working',{repo:1,file:'d.txt'});
+        await request('command',{command:'better-git-vscode.begin-keyboard-review',args:['previous']});
+        await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['previous']});
+        for(let i=0;i<2;i++) { await request('command',{command:'better-git-vscode.step-keyboard-review',args:['previous']}); }
+        await request('command',{command:'better-git-vscode.finish-keyboard-review'});
+        assert.deepEqual(git(roots[1],'diff','--cached','--name-only').trim().split('\n').sort(),['b.txt','c.txt','d.txt',...baseline.trim().split('\n')].sort());
+        await assertLast('b.txt');
+        await capture('last-stage-reverse');
+        await request('command',{command:'better-git-vscode.undo-last-stage-and-advance'});
+        assert.equal(git(roots[1],'diff','--cached','--name-only'),baseline,'reverse batch remains one exact Undo');
+        await request('working',{repo:1,file:'d.txt'});
+        await request('command',{command:'better-git-vscode.begin-keyboard-review',args:['next']});
+        await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
+        for(let i=0;i<2;i++) { await request('command',{command:'better-git-vscode.step-keyboard-review',args:['previous']}); }
+        await request('command',{command:'better-git-vscode.finish-keyboard-review'});
+        assert.deepEqual(git(roots[1],'diff','--cached','--name-only').trim().split('\n').sort(),['b.txt','c.txt','d.txt',...baseline.trim().split('\n')].sort());
+        await assertLast('b.txt');
+        await request('command',{command:'better-git-vscode.undo-last-stage-and-advance'});
+        assert.equal(git(roots[1],'diff','--cached','--name-only'),baseline,'rebased range keeps exact batch Undo');
+        await request('working',{repo:1,file:'a.txt'});
+        await request('command',{command:'better-git-vscode.stage-and-next-changed-file'});
+        await assertLast('a.txt');
+        await request('config',{settings:{showLastStagedInStatusBar:false}});
+        await request('config',{settings:{showLastStagedInStatusBar:true}});
+        await until(status,text=>text.includes('Staged: a.txt'),'re-enabled status remembers the same file');
+        console.log('BETTER_GIT_LAST_STAGED_VERIFIED forward-eyes,excluded-preview,reverse-file-mode,rebased-direction,matching-click-target,exact-undo,single-file,setting-restore');
+    } else if (testLookahead) {
         await request('open', {repo:1});
         let file = testLookaheadNormal ? 'review-024.txt' : 'review-025.txt';
         await request('working', {repo:1,file});

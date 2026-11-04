@@ -209,7 +209,7 @@ let navigateStageHoldPreviewRequest: (
 ) => Promise<void> = async () => undefined;
 let takeStageHoldSelectionRequest: (
     source: MouseReviewSource, request: MouseHoldRequest
-) => readonly FileChange[] | undefined = () => undefined;
+) => { readonly changes: readonly FileChange[]; readonly lastStaged: vscode.Uri | undefined } | undefined = () => undefined;
 const mouseNavigationOrigins = new Map<MouseReviewSource, {
     change: FileChange;
     direction: "next" | "previous";
@@ -391,22 +391,21 @@ const showStageAndAdvanceStatusBarEnabled = (): boolean =>
 // chokepoint (stageThroughExtension) so EVERY stage path the extension performs updates the indicator —
 // a future stage path physically cannot bypass it as long as it stages via that helper. We show the
 // basename only (the bar must stay compact) and put the full workspace-relative path in the tooltip.
-const recordLastStagedBatch = (uris: readonly vscode.Uri[]): void => {
-    const uri = uris[0];
+const recordLastStagedBatch = (uris: readonly vscode.Uri[], last = uris[uris.length - 1]): void => {
+    const uri = last;
     if (!uri) { return; }
     lastStagedUri = uri; // always remember it, even if the bar is currently hidden by the setting
     if (!lastStagedStatusBarItem || !showLastStagedEnabled()) {
         return; // item not created yet (pre-activate) or feature disabled -> never show
     }
-    if (uris.length > 1) {
-        lastStagedStatusBarItem.text = `$(check) Staged: ${uris.length} files`;
-        lastStagedStatusBarItem.tooltip = `${uris.map(candidate => vscode.workspace.asRelativePath(candidate)).join("\n")}\nClick to open the first diff.`;
-    } else {
-        const basename = uri.path.split("/").pop() ?? uri.fsPath; // bar text: just the file name, keep it short
-        const relPath = vscode.workspace.asRelativePath(uri); // tooltip: workspace-relative full path for context
-        lastStagedStatusBarItem.text = `$(check) Staged: ${basename}`; // $(check) renders VS Code's codicon checkmark
-        lastStagedStatusBarItem.tooltip = `${relPath}\nLast file staged via Better Git — click to reopen its diff`;
-    }
+    // Ethan's "last file staged" (2026-11-03): a count hides an accidental extra file. Keep the
+    // final reviewed member visible, and make the existing click action reopen that SAME file.
+    // The batch list stays in the tooltip; it must not replace the filename with "15 files" again.
+    const basename = uri.path.split("/").pop() ?? uri.fsPath;
+    const relPath = vscode.workspace.asRelativePath(uri);
+    const batchPaths = uris.length > 1 ? `\n\n${uris.map(candidate => vscode.workspace.asRelativePath(candidate)).join("\n")}` : "";
+    lastStagedStatusBarItem.text = `$(check) Staged: ${basename}`;
+    lastStagedStatusBarItem.tooltip = `${relPath}\nLast file staged via Better Git — click to reopen its diff${batchPaths}`;
     lastStagedStatusBarItem.show(); // persists for the rest of the session (the whole point: a lasting record)
 };
 const recordLastStaged = (uri: vscode.Uri): void => recordLastStagedBatch([uri]);
@@ -454,7 +453,7 @@ const captureActiveStageUndoView = (includeDeletedReview = false): StageUndoView
 
 const stageBatchThroughExtension = async (
     repo: any, uris: readonly vscode.Uri[], priorView?: StageUndoView,
-    preferPriorView = false
+    preferPriorView = false, lastStaged = uris[uris.length - 1]
 ): Promise<void> => {
     if (uris.length === 0) { return; }
     const attempt = ++stageAttemptSequence;
@@ -516,7 +515,7 @@ const stageBatchThroughExtension = async (
             onUndoError: reportUndoError,
         });
     } else { await stage(); }
-    recordLastStagedBatch(uris); // success -> update the status bar with the files we just staged
+    recordLastStagedBatch(uris, lastStaged); // success -> show the batch's final reviewed member
     trace(receiptState ? `stage complete; Undo receipt ${receiptState}` : "stage complete");
 };
 const stageThroughExtension = (repo: any, uri: vscode.Uri, priorView?: StageUndoView): Promise<void> =>
@@ -1877,7 +1876,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         releasedStageSelections.delete(request);
         if (stageHoldSelections.get(source) === selection) { stageHoldSelections.delete(source); }
         reviewDecoEmitter.fire(selected.map(change => change.uri));
-        return selected;
+        // Keyboard/wand ranges can rebase their direction at the starting endpoint. Capture the
+        // final reviewed member with this immutable batch, not the original Next/Previous command.
+        return { changes: selected, lastStaged: (selection.initialDirection === "previous"
+            ? selected[0] : selected[selected.length - 1])?.uri };
     };
     adjustStageHoldSelectionRequest = (source, direction) => {
         // Like eyes ratchets, admit file ratchets before release and keep their exact request.
@@ -5876,9 +5878,10 @@ const stageReviewHoldOrigin = (
         const repo = git?.getRepository(origin.change.uri);
         if (!repo) { mouseDebug(`${label} release ignored, repository is no longer open.`); return; } // A closed repository must not redirect the captured file to the first workspace repo.
         if (heldSelection !== undefined) {
-            mouseDebug(`${label} release committing ${heldSelection.length} marked files.`);
-            if (heldSelection.length) {
-                await stageSelectedFilesAndAdvance(direction, heldSelection, check, origin.view, !request?.excludePreviewOnRelease);
+            mouseDebug(`${label} release committing ${heldSelection.changes.length} marked files.`);
+            if (heldSelection.changes.length) {
+                await stageSelectedFilesAndAdvance(direction, heldSelection.changes, check, origin.view,
+                    !request?.excludePreviewOnRelease, heldSelection.lastStaged);
             }
             return; // An eyes-only selection is an empty batch, never a fallback stage of the origin.
         }
@@ -6175,7 +6178,8 @@ const stageSelectedFilesAndAdvance = async (
     selected: readonly FileChange[],
     check: NavigationCheckpoint = noNavigationCheckpoint,
     priorView?: MouseReviewView,
-    advance = true
+    advance = true,
+    lastStaged?: vscode.Uri
 ): Promise<boolean> => {
     if (selected.length === 0) { return false; }
     const selectedKeys = selected.map(change => change.uri.toString());
@@ -6205,7 +6209,10 @@ const stageSelectedFilesAndAdvance = async (
         : before ?? after ?? remaining[remaining.length - 1];
     const activeWasSelected = advance && selectedKeys.includes((await getActiveFileUri())?.toString() ?? "");
     await stageBatchThroughExtension(repo, selected.map(change => change.uri),
-        selected.map(change => stageUndoViewFromMouseReview(change.uri, priorView)).find(view => view));
+        selected.map(change => stageUndoViewFromMouseReview(change.uri, priorView)).find(view => view), false,
+        // Selection membership is stored in SCM order for exact staging/Undo. Display its END in
+        // the review direction, without reordering the transaction or using the excluded eyes preview.
+        lastStaged ?? (direction === "previous" ? selected[0].uri : selected[selected.length - 1].uri));
     check();
     if (!advance) { return true; } // Leave the excluded eyes editor/cursor/viewport untouched.
 

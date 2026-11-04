@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.156
+
+- Show the last staged filename after a batch, replacing the file-count summary. Click the status to reopen that same staged diff; hover to see the complete batch.
+- Follow the selection's final review direction, including keyboard and wand ranges that reverse direction from their starting file. Keep the exact staged group and batch Undo unchanged.
+
 ## 1.2.155
 
 - Apply Source Control lookahead scrolling to ordinary Next Change, Previous Change and Stage + Next as well as held batches. Keep roughly ten following rows visible without blocking navigation.
