@@ -24,7 +24,11 @@ ObjC.import('AppKit');
 function run(argv) {
 const destination = argv[0];
 const editorId = argv[1];
+const editorPid = Number(argv[2]);
+const expectedFrontPid = Number(argv[3]);
 const front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+if (Number.isInteger(expectedFrontPid) && expectedFrontPid > 0
+    && (!front || Number(front.processIdentifier) !== expectedFrontPid)) { return; }
 const allowed = ['com.microsoft.VSCode', 'com.microsoft.VSCodeInsiders', 'com.google.Chrome',
     'com.apple.Safari', 'org.mozilla.firefox', 'com.microsoft.edgemac', 'com.brave.Browser',
     'com.openai.codex', destination];
@@ -34,7 +38,13 @@ if (front && allowed.includes(ObjC.unwrap(front.bundleIdentifier)) && Number(tar
     let editor;
     if (['com.microsoft.VSCode', 'com.microsoft.VSCodeInsiders'].includes(editorId) && destination !== editorId) {
         // Preserve the exact editor process when multiple installations are running.
-        if (ObjC.unwrap(front.bundleIdentifier) === editorId) {
+        if (Number.isInteger(editorPid) && editorPid > 0) {
+            const candidate = $.NSRunningApplication.runningApplicationWithProcessIdentifier(editorPid);
+            if (candidate && Number(candidate.processIdentifier) === editorPid && candidate.bundleIdentifier
+                && ObjC.unwrap(candidate.bundleIdentifier) === editorId) {
+                editor = candidate;
+            }
+        } else if (ObjC.unwrap(front.bundleIdentifier) === editorId) {
             editor = front;
         } else {
             const editors = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(editorId);
@@ -56,7 +66,8 @@ if (front && allowed.includes(ObjC.unwrap(front.bundleIdentifier)) && Number(tar
             // Wait only for acknowledgement; a deliberate switch to another app always wins.
             for (let editorAttempt = 0; editorAttempt < 50; editorAttempt++) {
                 const editorFront = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-                if (!editorFront || Number(editorFront.processIdentifier) === Number(editor.processIdentifier)) { return; }
+                if (!editorFront) { return; }
+                if (Number(editorFront.processIdentifier) === Number(editor.processIdentifier)) { return 'editor-active'; }
                 if (Number(editorFront.processIdentifier) !== Number(target.processIdentifier)) { return; }
                 $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.01));
             }
@@ -74,14 +85,25 @@ export async function returnToApp(
     destination: string,
     platform: NodeJS.Platform = process.platform,
     run: typeof runFile = runFile,
-    editorBundleId?: string
-): Promise<void> {
+    editorBundleId?: string,
+    editorProcessId?: number,
+    expectedFrontProcessId?: number
+): Promise<"editor-active" | undefined> {
     const bundleId = normalizeReturnApp(destination);
     if (platform !== "darwin" || !bundleId) { return; }
     // Best effort: a focus failure must not undo or misreport a successful reveal.
     const args = ["-l", "JavaScript", "-e", RETURN_TO_APP_SCRIPT, bundleId];
-    if (editorBundleId === "com.microsoft.VSCode" || editorBundleId === "com.microsoft.VSCodeInsiders") {
-        args.push(editorBundleId);
+    const editorId = editorBundleId === "com.microsoft.VSCode" || editorBundleId === "com.microsoft.VSCodeInsiders"
+        ? editorBundleId : undefined;
+    const validPid = (value: number | undefined): value is number => typeof value === "number"
+        && Number.isSafeInteger(value) && value > 0 && value <= 0x7fffffff;
+    if (editorId || validPid(expectedFrontProcessId)) { args.push(editorId ?? ""); }
+    if ((editorId !== undefined && validPid(editorProcessId)) || validPid(expectedFrontProcessId)) {
+        args.push(editorId && validPid(editorProcessId) ? String(editorProcessId) : "");
     }
-    await run("/usr/bin/osascript", args, { timeout: 5000 });
+    if (validPid(expectedFrontProcessId)) { args.push(String(expectedFrontProcessId)); }
+    const result = await run("/usr/bin/osascript", args, { timeout: 5000 });
+    // The caller may restore its origin only after this exact editor was acknowledged. A missing app,
+    // ambiguous editor, timeout or user app switch must never arm a later automatic focus change.
+    return result?.stdout?.toString().trim() === "editor-active" ? "editor-active" : undefined;
 }

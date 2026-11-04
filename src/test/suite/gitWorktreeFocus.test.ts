@@ -28,7 +28,7 @@ suite('Git worktree focus', () => {
         }
     });
     test('optional editor return waits for the origin and preserves the original editor process', () => {
-        for (const mode of ['immediate', 'delayed', 'timeout', 'user-switch', 'activation-failed', 'ambiguous-editor', 'missing-origin', 'browser-start', 'insiders', 'editor-delayed', 'editor-user-switch', 'editor-timeout']) {
+        for (const mode of ['immediate', 'delayed', 'timeout', 'user-switch', 'activation-failed', 'ambiguous-editor', 'missing-origin', 'browser-start', 'insiders', 'editor-delayed', 'editor-user-switch', 'editor-timeout', 'explicit-editor', 'stale-editor-pid']) {
             const editorId = mode === 'insiders' ? 'com.microsoft.VSCodeInsiders' : 'com.microsoft.VSCode';
             const events: string[] = [];
             let sleeps = 0;
@@ -40,20 +40,23 @@ suite('Git worktree focus', () => {
             } };
             const origin = { bundleIdentifier: 'com.openai.codex', processIdentifier: 20, activateWithOptions: () => {
                 events.push('origin');
-                if (['immediate', 'browser-start', 'insiders'].includes(mode) || mode.startsWith('editor-')) { current = origin; }
+                if (['immediate', 'browser-start', 'insiders', 'explicit-editor'].includes(mode) || mode.startsWith('editor-')) { current = origin; }
                 return mode !== 'activation-failed';
             } };
-            current = ['browser-start', 'ambiguous-editor'].includes(mode)
+            current = ['browser-start', 'ambiguous-editor', 'explicit-editor', 'stale-editor-pid'].includes(mode)
                 ? { bundleIdentifier: 'com.google.Chrome', processIdentifier: 30 } : editor;
-            runInNewContext(RETURN_TO_APP_SCRIPT + '\nrun([destination, editorId]);', {
+            const result = runInNewContext(RETURN_TO_APP_SCRIPT + '\nrun([destination, editorId, editorPid]);', {
                 destination: origin.bundleIdentifier, editorId,
+                editorPid: ['explicit-editor','stale-editor-pid'].includes(mode) ? '10' : undefined,
                 ObjC: { import: () => {}, unwrap: (value: unknown) => value },
                 $: {
                     NSWorkspace: { sharedWorkspace: { get frontmostApplication() { return current; } } },
                     NSRunningApplication: { runningApplicationsWithBundleIdentifier: (id: string) => ({
-                        count: id === editorId ? (mode === 'ambiguous-editor' ? 2 : 1) : mode === 'missing-origin' ? 0 : 1,
+                        count: id === editorId ? (['ambiguous-editor','explicit-editor','stale-editor-pid'].includes(mode) ? 2 : 1) : mode === 'missing-origin' ? 0 : 1,
                         objectAtIndex: () => id === editorId ? editor : origin,
-                    }) },
+                    }), runningApplicationWithProcessIdentifier: (pid: number) => {
+                        assert.strictEqual(pid,10); return mode==='stale-editor-pid' ? {bundleIdentifier:'com.apple.finder',processIdentifier:10} : editor;
+                    } },
                     NSDate: { dateWithTimeIntervalSinceNow: (seconds: number) => seconds },
                     NSRunLoop: { currentRunLoop: { runUntilDate: (seconds: number) => {
                         assert.strictEqual(seconds, 0.01); sleeps++;
@@ -64,8 +67,10 @@ suite('Git worktree focus', () => {
                     } } },
                 },
             });
-            assert.deepStrictEqual(events, ['ambiguous-editor', 'missing-origin'].includes(mode) ? []
+            assert.deepStrictEqual(events, ['ambiguous-editor', 'missing-origin', 'stale-editor-pid'].includes(mode) ? []
                 : ['timeout', 'user-switch', 'activation-failed'].includes(mode) ? ['origin'] : ['origin', 'editor'], mode);
+            assert.strictEqual(result, ['immediate','delayed','browser-start','insiders','editor-delayed','explicit-editor'].includes(mode)
+                ? 'editor-active' : undefined, mode + ': only acknowledged receiving-editor focus arms an origin restore');
             if (mode === 'delayed') { assert.strictEqual(sleeps, 3); }
             if (mode === 'timeout') { assert.strictEqual(sleeps, 50); }
             if (mode === 'user-switch') { assert.strictEqual(sleeps, 1); }
@@ -73,6 +78,28 @@ suite('Git worktree focus', () => {
             if (mode === 'editor-timeout') { assert.strictEqual(sleeps, 50); }
             if (mode === 'editor-user-switch') { assert.strictEqual(sleeps, 1); }
         }
+    });
+    test('an origin restore refuses a newer frontmost process inside the native call', () => {
+        for (const pid of [10,11]) {
+            let calls=0;
+            runInNewContext(RETURN_TO_APP_SCRIPT+'\nrun(["com.openai.codex", "", "", "10"]);',{
+                ObjC:{import:()=>{},unwrap:(value:unknown)=>value},
+                $:{NSWorkspace:{sharedWorkspace:{frontmostApplication:{bundleIdentifier:'com.microsoft.VSCode',processIdentifier:pid}}},
+                    NSRunningApplication:{runningApplicationsWithBundleIdentifier:()=>({count:1,objectAtIndex:()=>({activateWithOptions:()=>{calls++;return true;}})})}},
+            });
+            assert.strictEqual(calls,pid===10 ? 1 : 0);
+        }
+    });
+    test('passes exact editor identity and the final frontmost-process guard as data', async () => {
+        const acknowledged=(async(_file:string,args:string[])=>{
+            assert.deepStrictEqual(args.slice(4),['com.openai.codex','com.microsoft.VSCode','123']);
+            return {stdout:'editor-active\n'};
+        }) as any;
+        assert.strictEqual(await returnToApp('com.openai.codex','darwin',acknowledged,'com.microsoft.VSCode',123),'editor-active');
+        const restore=(async(_file:string,args:string[])=>{
+            assert.deepStrictEqual(args.slice(4),['com.openai.codex','','','123']); return {stdout:''};
+        }) as any;
+        assert.strictEqual(await returnToApp('com.openai.codex','darwin',restore,undefined,undefined,123),undefined);
     });
     test('passes only supported editor identifiers and defaults to the existing one-way return', async () => {
         for (const editor of [undefined, 'com.microsoft.VSCode', 'com.microsoft.VSCodeInsiders', 'com.apple.TextEdit', '-e.bad']) {

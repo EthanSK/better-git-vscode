@@ -117,7 +117,7 @@ A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolut
 
 If VS Code is behind another app, a recent link gets one focus retry. That retry must start its tree work within ten seconds of the click; once started, it can finish opening the target instead of timing out halfway through collapse. Switching review files, starting review navigation or opening a newer link still cancels the old request. Ordinary later app switches do not repeat it.
 
-Worktree links can optionally return focus to another already-running app before repository loading and Source Control expansion. This feature is **macOS only and off by default**. In your VS Code User settings:
+Worktree links can optionally return focus to another already-running app. Better Git activates that origin first, briefly brings the receiving VS Code window forward to collapse the other worktrees and reveal the target, then returns to the origin. This feature is **macOS only and off by default**. In your VS Code User settings:
 
 ```json
 "better-git-vscode.worktreeLinkReturnFocus": true,
@@ -128,6 +128,8 @@ Use another app's macOS bundle identifier to change the default. **Copy link to 
 
 Returning focus never launches an app. Invalid or duplicate destinations, missing worktree paths, and an unrelated app becoming active during the handoff skip the return. Turning the feature off skips app activation even when a link contains return metadata. Ordinary Source Control commands do not return focus.
 
+Switching apps or starting a review while the link is opening takes priority: Better Git does not switch you back to the origin after that intervention, even if you later return to VS Code to finish the tree expansion. Disabling the return setting or turning on Keep Editor Front during loading also cancels the final return.
+
 To finish in VS Code with the origin app next in macOS app switching, also enable `better-git-vscode.worktreeLinkKeepEditorFront`. Better Git waits for the origin's activation, then for the same VS Code app to acknowledge its return to front. This handoff finishes before repository loading, so you can switch back to the origin immediately while loading continues in the background. Native Source Control folding completes when the receiving window regains focus. This setting is off by default and requires Worktree Link Return Focus. It uses the same configurable origin and existing links.
 
 
@@ -135,7 +137,7 @@ For chat clients that require HTTPS, encode the complete URI twice as the `url` 
 
 Right-click a Git repository header and choose **Copy link to open worktree in Source Control**, or use **Better Git: Open Worktree in Source Control** in the Command Palette to choose an open repository. The link can also open a Git worktree outside the current workspace without replacing or adding workspace folders. It does not modify Git contents.
 
-Expansion and scrolling use VS Code's **SCM: Auto Reveal**. Better Git refreshes the requested repository and opens the first unstaged change even while Chrome or another app stays in front. It does not wait for operating-system focus or ask you to click the link again. Native tree folding needs VS Code's list focus; a background link completes that presentation once its receiving window becomes active. Newer links and review navigation cancel the pending presentation. No background polling or repeated app activation is added.
+Expansion and scrolling use VS Code's **SCM: Auto Reveal**. Better Git refreshes the requested repository and opens its first unstaged change. Native folding needs the receiving VS Code window in front; an enabled origin return now gives that operation temporary focus before returning you to the origin. If you switch away while loading, the file still opens in the background and a recent link can finish its tree presentation when you return. Newer links and review navigation cancel the pending presentation. There is no background polling or app activation on ordinary later app switches.
 
 In an active window the link settles Source Control updates, collapses other repositories and Staged Changes, then reveals the requested worktree. Native tree expansion and staged-group focus each receive a bounded 500 ms settling gap; ordinary review/staging input has no new delay and cancels a still-running link presentation. A background presentation belongs to one recent link and expires ten seconds after the click, including loading time. With debug logging enabled, the Better Git output records why that pending presentation ended. With no unstaged changes, it leaves the current editor unchanged; the commit-input reveal requires **Git: Show Commit Input**. Disabled Auto Reveal or changes without a working file can still require manual expansion. Better Git does not change either setting.
 

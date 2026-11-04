@@ -29,6 +29,7 @@ const testStageReveal = process.argv.includes('--stage-reveal');
 const testDeletedLink = process.argv.includes('--deleted-link');
 const testLinkOnly = process.argv.includes('--link-only');
 const testLastStaged = process.argv.includes('--last-staged-status');
+const testBackgroundPeers = process.argv.includes('--background-peer-collapse');
 const testLookaheadNormal = process.argv.includes('--scm-lookahead-normal');
 const testLookahead = testLookaheadNormal || process.argv.includes('--scm-lookahead');
 const testUsage = process.argv.includes('--usage-tracking');
@@ -99,7 +100,7 @@ const log = fs.openSync(path.join(evidence, 'native-worktree.log'), 'w');
 const child = spawn(executable, [workspace, `--user-data-dir=${profile}`, `--extensions-dir=${path.join(root, 'extensions')}`,
     `--extensionDevelopmentPath=${extensionRoot}`, `--extensionTestsPath=${path.join(extensionRoot, 'scripts/worktree-native-test-driver.cjs')}`,
     `--remote-debugging-port=${port}`, '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-telemetry'],
-{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_WORKTREE_USAGE_TEST: testUsage ? '1' : '', BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '', BGV_PREORDERED_API_TEST: testPreorderedApi ? '1' : '' }, stdio: ['ignore', log, log] });
+{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_WORKTREE_USAGE_TEST: testUsage ? '1' : '', BGV_SCM_FOCUS_TRACE_TEST: testBackgroundPeers ? '1' : '', BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '', BGV_PREORDERED_API_TEST: testPreorderedApi ? '1' : '' }, stdio: ['ignore', log, log] });
 let socket;
 let activationMonitor;
 let nextRequest = 0;
@@ -227,7 +228,118 @@ try {
         await send('Page.bringToFront');
         await until(() => request('state'), state => state.focused, 'native window focus');
     }
-    if (testLastStaged) {
+    if (testBackgroundPeers) {
+        // Reproduce the stay-in-Codex route with Finder as the running origin. Code must briefly own
+        // its native tree, then return to that origin. A background-only prototype failed repeats.
+        const observer = path.join(root,'app-activation');
+        execFileSync('/usr/bin/swiftc',[path.join(extensionRoot,'scripts/test-app-activation.swift'),'-o',observer]);
+        activationMonitor=spawn(observer,[],{stdio:['ignore','pipe','pipe']});
+        let activationOutput=''; activationMonitor.stdout.on('data',data=>{activationOutput+=data.toString();});
+        await until(()=>activationOutput,text=>text.includes('ready\n'),'native activation observer ready');
+        const focusCode=()=>execFileSync('/usr/bin/osascript',['-l','JavaScript','-e',`ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`]);
+        const focusOrigin=()=>execFileSync('/usr/bin/osascript',['-l','JavaScript','-e',"ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);"]);
+        await request('plain', {repo:0});
+        const graph = await evaluate(`(()=>{const row=[...document.querySelectorAll('[role="treeitem"]')].find(row=>row.getAttribute('aria-label')==='base, Test');if(!row)return null;const r=row.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+        assert.ok(graph, 'Graph row exists');
+        for (const type of ['mousePressed','mouseReleased']) { await send('Input.dispatchMouseEvent',{type,...graph,button:'left',clickCount:1}); }
+        await until(()=>evaluate(rowsExpression), rows=>rows.some(row=>row.aria==='base, Test' && row.selected==='true'), 'Graph selected');
+        await request('config', {settings:{worktreeLinkReturnFocus:true,worktreeLinkReturnApp:'com.apple.finder',worktreeLinkKeepEditorFront:false}});
+        const baseline = roots.map(repo=>git(repo,'status','--porcelain=v1'));
+        const headers = async count => {
+            const found = new Map();
+            const collect = async()=>{for(const row of await evaluate(rowsExpression)){if(row.level==='1' && /^repo-\d+ Git$/.test(row.aria))found.set(row.aria,row.expanded);}};
+            await collect();
+            const point = await evaluate(`(()=>{const r=document.querySelector('[role="tree"][aria-label="Source Control Management"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+Math.min(100,r.height/2)}})()`);
+            // Observation only, after the link finished: inspect virtualized peer headers without
+            // repairing expansion, selecting a row, or issuing another collapse command.
+            for(const direction of [-1,1,-1]) { for(let i=0;i<20 && found.size<count;i++) {
+                await send('Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX:0,deltaY:direction*900});
+                await pause(50); await collect();
+            } }
+            assert.equal(found.size,count,'every repository header inspected');
+            return [...found];
+        };
+        for(const [index,repo] of [1,1,3,roots.length-1].entries()) {
+            const before = await request('state');
+            activationOutput='';
+            await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}`});
+            const after = await until(()=>request('state'),state=>!state.focused,'origin restored after native presentation');
+            await until(()=>activationOutput,text=>text.trim().split('\n').at(-1)?.startsWith('com.apple.finder '),'native origin activation');
+            const activations=activationOutput.trim().split('\n');
+            assert.ok(activations.includes(`com.microsoft.VSCode ${child.pid}`),'exact receiving editor briefly activated');
+            if(before.focused) { assert.ok(activations.findIndex(line=>line.startsWith('com.apple.finder '))<activations.indexOf(`com.microsoft.VSCode ${child.pid}`),'origin activates before editor'); }
+            fs.writeFileSync(path.join(evidence,`background-peers-${index}-activations.json`),JSON.stringify(activations));
+            const trace = after.trace.slice(before.trace.length);
+            assert.equal(trace.filter(command=>command==='workbench.scm.action.collapseAllRepositories').length,1,'one global collapse');
+            const focusSamples=after.scmFocusTrace.slice(before.scmFocusTrace.length);
+            assert.ok(focusSamples.some(sample=>sample.command==='list.expand'),'native target expanded');
+            assert.ok(focusSamples.every(sample=>sample.focused),'native tree commands run only while receiving Code is focused');
+            // Native Auto Reveal has its own UI queue after the extension command returns. Observe its
+            // selected resource before inspecting expansion; an immediate all-collapsed snapshot is transient.
+            await until(()=>evaluate(rowsExpression),rows=>rows.some(row=>row.selected==='true'
+                && row.text.includes(`repo-${repo}`) && row.aria?.startsWith('a.txt,')),'background target Auto Reveal');
+            const count = repo===roots.length-1 ? roots.length : roots.length-1;
+            const result = await headers(count);
+            assert.deepEqual(result.filter(([,expanded])=>expanded==='true').map(([name])=>name),[`repo-${repo} Git`],'only linked worktree expanded');
+            assert.deepEqual(roots.map(root=>git(root,'status','--porcelain=v1')),baseline,'background presentation does not modify Git');
+            await capture(`background-peers-${index}-${repo}`);
+            console.log(`PASS origin-return peers ${index}: repo-${repo}`);
+        }
+        for(const [kind,repo] of [['staged',4],['clean',5],['deleted',6]]) {
+            git(roots[repo],'reset','--hard','HEAD'); git(roots[repo],'clean','-fd');
+            if(kind==='staged') { fs.writeFileSync(path.join(roots[repo],'only-staged.txt'),'staged\n');git(roots[repo],'add','.'); }
+            if(kind==='deleted') { fs.unlinkSync(path.join(roots[repo],'a.txt')); }
+            const index=git(roots[repo],'status','--porcelain=v1');
+            const before=await request('state'); await request('watch-tabs');
+            await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}`});
+            await until(()=>request('state'),state=>!state.focused,kind+': origin restored');
+            assert.deepEqual((await headers(roots.length)).filter(([,expanded])=>expanded==='true').map(([name])=>name),[`repo-${repo} Git`],kind+': exact worktree expanded');
+            const rows=await evaluate(rowsExpression);
+            assert.ok(!rows.some(row=>row.aria==='Staged Changes' && row.expanded==='true'),kind+': Staged collapsed');
+            if(kind!=='deleted') {
+                assert.equal((await request('state')).active,before.active,kind+': editor preserved');
+                assert.deepEqual((await request('watched-tabs')).value,[],kind+': no transient staged editor');
+            } else { assert.ok((await request('state')).active.includes('/repo-6/a.txt'),'deleted first entry opens its Git content'); }
+            assert.equal(git(roots[repo],'status','--porcelain=v1'),index,kind+': Git unchanged');
+            await capture(`origin-return-${kind}`);
+            console.log(`PASS origin-return ${kind}`);
+        }
+        await request('scm-config',{settings:{autoReveal:false}});
+        await request('command',{command:'workbench.scm.action.expandAllRepositories'});
+        const before = await request('state');
+        await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[2])}`});
+        assert.deepEqual((await request('state')).trace.slice(before.trace.length),['workbench.view.scm'],'Auto Reveal off preserves expansion');
+        await request('scm-config',{settings:{autoReveal:true}});
+        await request('command',{command:'workbench.view.explorer'});
+        await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[2])}`});
+        await until(()=>evaluate(rowsExpression),rows=>rows.some(row=>row.selected==='true'
+            && row.text.includes('repo-2') && row.aria?.startsWith('a.txt,')),'hidden SCM target Auto Reveal');
+        assert.deepEqual((await headers(roots.length)).filter(([,expanded])=>expanded==='true').map(([name])=>name),['repo-2 Git'],'hidden SCM is revealed before collapsing');
+        // User intervention cancels automatic app restoration permanently for this click, including a
+        // later manual return to Code that finishes the same still-recent tree presentation.
+        activationOutput='';
+        const interrupted=request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[3])}`});
+        await until(()=>activationOutput,text=>text.includes(`com.microsoft.VSCode ${child.pid}`),'editor activation before user switch');
+        focusOrigin(); await interrupted;
+        focusCode(); await until(()=>request('state'),state=>state.focused,'manual Code return');
+        await check(3,'origin-return-user-intervened');
+        assert.equal((await request('state')).focused,true,'finishing deferred work never restores an origin after a user switch');
+        await request('config',{settings:{worktreeLinkKeepEditorFront:true}});
+        await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[2])}`});
+        assert.equal((await request('state')).focused,true,'keep-editor-front remains in Code');
+        await request('config',{settings:{worktreeLinkReturnFocus:false}});
+        activationOutput='';
+        await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[2])}`});
+        assert.equal((await request('state')).focused,true,'public opt-out never returns to origin');
+        assert.equal(activationOutput,'','public opt-out never activates an app');
+        focusCode();
+        await check(2,'background-peers-returned');
+        const stagedBefore = git(roots[2],'diff','--cached','--binary');
+        await request('command',{command:'better-git-vscode.stage-and-next-changed-file'});
+        await request('command',{command:'better-git-vscode.undo-last-stage-and-advance'});
+        assert.equal(git(roots[2],'diff','--cached','--binary'),stagedBefore,'one Undo restores exact prior index');
+        console.log('BETTER_GIT_BACKGROUND_PEERS_VERIFIED checks=13 graph,repeat,switch,new-large,clean,staged-only,deleted,auto-reveal-off,hidden-scm,user-interruption,keep-editor-front,opt-out,stage-undo');
+    } else if (testLastStaged) {
         await request('open',{repo:1});
         const baseline=git(roots[1],'diff','--cached','--name-only');
         const status=()=>evaluate(`([...document.querySelectorAll('.statusbar-item')].map(item=>item.textContent.trim()).find(text=>text.includes('Staged:')) ?? '')`);

@@ -1276,13 +1276,17 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     // are no startup scans, expansion loops or configuration writes.
     let worktreeLinkQueue: Promise<void> = Promise.resolve();
     let worktreeLinkGeneration = 0;
+    let worktreeFocusLossGeneration = 0;
     const worktreePresentation = new DeferredWorktreePresentation(
         listener => vscode.window.onDidChangeWindowState(listener),
         () => vscode.window.state.focused, undefined,
         reason => debugLog("worktree-link", `Deferred native presentation ended: ${reason}.`));
     context.subscriptions.push(worktreePresentation);
     pendingWorktreePresentation = worktreePresentation;
-    context.subscriptions.push(vscode.window.onDidChangeWindowState(state => worktreeUsage?.focusChanged(state.focused)),
+    context.subscriptions.push(vscode.window.onDidChangeWindowState(state => {
+        if (!state.focused) { worktreeFocusLossGeneration++; }
+        worktreeUsage?.focusChanged(state.focused);
+    }),
         { dispose: () => { worktreeUsage?.dispose(); worktreeUsage = undefined; } });
     const openWorktree = (root?: vscode.Uri, sourceLink?: vscode.Uri): Promise<void> => {
         worktreeUsage?.finish("newer-link");
@@ -1303,10 +1307,27 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 debugLog("worktree-link", `Skipped superseded #${generation}.`);
                 return;
             }
+            let originAfterPresentation: { destination: string; editorProcessId: number; focusLossGeneration: number } | undefined;
+            const restoreOrigin = async (stillOwned: () => boolean) => {
+                const pending = originAfterPresentation;
+                originAfterPresentation = undefined;
+                if (!pending || !stillOwned() || !vscode.window.state.focused
+                    || pending.focusLossGeneration !== worktreeFocusLossGeneration) { return; }
+                const config = vscode.workspace.getConfiguration("better-git-vscode");
+                if (config.get<boolean>("worktreeLinkKeepEditorFront", false) || !sourceLink
+                    || worktreeLinkReturnApp(sourceLink, config.get<boolean>("worktreeLinkReturnFocus", false),
+                        config.get<string>("worktreeLinkReturnApp", "")) !== pending.destination) { return; }
+                // Check the receiving Code process inside AppKit too: a browser switch during native
+                // process startup must win, even when the host has not received its focus event yet.
+                try { await returnToApp(pending.destination, process.platform, undefined, undefined, undefined, pending.editorProcessId); }
+                catch (error) { debugLog("worktree-focus", String(error)); }
+            };
             const handoff = async () => {
                 // Ethan wants Codex next in Cmd-Tab immediately, before slow repository/tree work. The
-                // configured origin is activated first, then Code when keep-editor-front is enabled;
-                // finish that sequence here, never refocus either app after background loading settles.
+                // origin still activates first. Native SCM collapse/expand needs the receiving Code
+                // window briefly in front even in "return to Codex" mode; background-only attempts
+                // retained stale collapsed selections on repeat. Restore the origin after this owned
+                // presentation only, never after a user focus switch, review input or a newer link.
                 if (!sourceLink || !isCurrent()) { return; }
                 let automaticOriginReturn = false;
                 try {
@@ -1317,12 +1338,18 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                         config.get<boolean>("worktreeLinkReturnFocus", false),
                         config.get<string>("worktreeLinkReturnApp", ""));
                     if (!destination) { return; }
-                    const editorBundleId = config.get<boolean>("worktreeLinkKeepEditorFront", false)
-                        ? ({ vscode: "com.microsoft.VSCode", "vscode-insiders": "com.microsoft.VSCodeInsiders" } as Record<string, string>)[vscode.env.uriScheme]
-                        : undefined;
-                    automaticOriginReturn = destination === "com.openai.codex" && !editorBundleId;
+                    const keepEditorFront = config.get<boolean>("worktreeLinkKeepEditorFront", false);
+                    const editorBundleId = ({ vscode: "com.microsoft.VSCode", "vscode-insiders": "com.microsoft.VSCodeInsiders" } as Record<string, string>)[vscode.env.uriScheme];
+                    automaticOriginReturn = destination === "com.openai.codex" && !keepEditorFront;
                     debugLog("worktree-focus", `Starting app handoff for #${generation} before repository loading.`);
-                    try { await returnToApp(destination, process.platform, undefined, editorBundleId); }
+                    try {
+                        const editorProcessId = Number(process.env.VSCODE_PID);
+                        const acknowledged = await returnToApp(destination, process.platform, undefined, editorBundleId, editorProcessId);
+                        if (!keepEditorFront && acknowledged === "editor-active" && Number.isSafeInteger(editorProcessId)
+                            && editorProcessId > 0 && editorProcessId <= 0x7fffffff) {
+                            originAfterPresentation = { destination, editorProcessId, focusLossGeneration: worktreeFocusLossGeneration };
+                        }
+                    }
                     catch (error) { debugLog("worktree-focus", String(error)); }
                     debugLog("worktree-focus", `Finished app handoff for #${generation} before repository loading.`);
                 } finally {
@@ -1335,6 +1362,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 () => isCurrent() && initialPresentationIsCurrent(), value => { deferredRoot = value; }, handoff);
             debugLog("worktree-link", `Finished #${generation}: loaded=${revealed}, nativePending=${!!deferredRoot}, current=${isCurrent()}, elapsed=${Date.now() - receivedAt}ms.`);
             if (!revealed) { usage?.finish("open-incomplete"); }
+            if (revealed && !deferredRoot) { await restoreOrigin(() => isCurrent() && initialPresentationIsCurrent()); }
             if (revealed && deferredRoot && isCurrent()) {
                 const presentationRoot = deferredRoot;
                 const originalTab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -1361,6 +1389,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                             return false;
                         }
                         debugLog("worktree-link", `Native presentation for #${generation}: loaded=${revealed}, current=${isCurrent()}.`);
+                        if (revealed && !deferredAgain) { await restoreOrigin(() => isScheduled() && stillOwned()); }
                         return true;
                     });
                     worktreeLinkQueue = presentation.then(() => undefined, error => debugLog("worktree-link", String(error)));

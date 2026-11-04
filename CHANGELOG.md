@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.157
+
+- Reliably collapse the other worktrees when a Worktree link returns to Codex or another origin app. The origin activates first, VS Code briefly comes forward for its native Source Control operation, then Better Git returns to the origin. Switching apps or starting a review during the operation takes priority over that final return. Keep Editor Front still leaves VS Code in front.
+
 ## 1.2.156
 
 - Show the last staged filename after a batch, replacing the file-count summary. Click the status to reopen that same staged diff; hover to see the complete batch.
