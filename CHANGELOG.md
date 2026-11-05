@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.158
+
+- Keep local stage/index history files for 30 days, independently of the three-entry Undo stack and verbose debug logging. Record successful Better Git stages and exact Undos separately from observed changes whose author is unknown. File writing and path lookup run outside review/staging queues.
+
 ## 1.2.157
 
 - Reliably collapse the other worktrees when a Worktree link returns to Codex or another origin app. The origin activates first, VS Code briefly comes forward for its native Source Control operation, then Better Git returns to the origin. Switching apps or starting a review during the operation takes priority over that final return. Keep Editor Front still leaves VS Code in front.

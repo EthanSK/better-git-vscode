@@ -26,6 +26,7 @@ import { GitStatus } from "./gitStatus";
 import { StageTransactionStore, StageUndoView, StoredStageTransaction } from "./stageTransactionStore";
 import { StageTransactionObserver } from "./stageTransactionObserver";
 import { stageWithDeferredReceipt } from "./stageTransactionExecution";
+import { StageTransactionHistoryLog } from "./stageTransactionHistoryLog";
 import { readIndexSnapshot, readStageTransactionPaths, restoreStageTransaction } from "./gitStageUndo";
 import { extractFileDiffSection } from "./gitDiffSection";
 import { isTransientGitIndexLockError, runWithTransientGitIndexRetry } from "./gitIndexRetry";
@@ -280,6 +281,7 @@ let lastStagedStatusBarItem: vscode.StatusBarItem | undefined; // the bottom-bar
 let lastStagedUri: vscode.Uri | undefined; // file: URI of the most recent file staged THROUGH this extension
 let stageTransactionStore: StageTransactionStore | undefined;
 let stageTransactionObserver: StageTransactionObserver | undefined;
+let stageHistoryLog: StageTransactionHistoryLog | undefined;
 let stageUndoQueue: Promise<void> = Promise.resolve();
 let stageAttemptSequence = 0;
 // Git's getRepository(Uri) sorts its own repository array in place by path
@@ -484,6 +486,7 @@ const stageBatchThroughExtension = async (
     const stage = async (): Promise<void> => {
         trace("Git add starting");
         await runWithTransientGitIndexRetry(() => repo.add(uris.map(uri => uri.fsPath)));
+        stageHistoryLog?.stage(repoRoot, uris.map(uri => path.relative(repoRoot, uri.fsPath)));
         // Ethan: remember unfinished reviews, then forget ONLY after a successful whole-file stage.
         // The exact Undo receipt above owns its own saved view; this cache must not replace Undo history.
         for (const uri of uris) { reviewFilePositions.forget(uri.toString()); }
@@ -550,6 +553,8 @@ const undoLastStageTransaction = async (): Promise<void> => {
         );
         return;
     }
+
+    stageHistoryLog?.undo(transaction); // A known successful index restore can unstage OR restage.
 
     // Refresh only after releasing the shared history lock. The resulting Git
     // event sees the persisted restored baseline in every observing window.
@@ -790,6 +795,8 @@ interface ScmTreeStartupOutcome {
 interface BetterGitExtensionApi {
     whenScmTreeStateSettled: Promise<ScmTreeStartupOutcome>;
     whenStageTransactionsSettled(): Promise<void>;
+    whenStageHistorySettled(): Promise<void>;
+    getStageHistoryFile(): string | undefined;
     whenReviewDecorationSettled(): Promise<void>;
     getCurrentReviewUri(): string | undefined;
     getReviewDecorationBadge(uri: vscode.Uri): string | vscode.ThemeIcon | undefined;
@@ -939,8 +946,14 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     registerAgentFlowSelectionBridge(context);
     registerDiffViewDisplay(context, (message) => debugLog("diff-display", message));
     const commitMessageGenerator = new CommitMessageGenerator(context.globalState);
+    stageHistoryLog = new StageTransactionHistoryLog(
+        path.join(context.globalStorageUri.fsPath, "stage-history"), readStageTransactionPaths,
+        error => appendDebugLog("stage-history", `Could not save local history: ${String(error)}`)
+    );
+    stageHistoryLog.start(String(context.extension.packageJSON.version));
     stageTransactionStore = new StageTransactionStore(
-        path.join(context.globalStorageUri.fsPath, "last-stage-next-transaction.json")
+        path.join(context.globalStorageUri.fsPath, "last-stage-next-transaction.json"),
+        change => stageHistoryLog?.observe(change)
     );
     stageTransactionObserver = new StageTransactionObserver(
         stageTransactionStore,
@@ -2791,6 +2804,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     return {
         whenScmTreeStateSettled,
         whenStageTransactionsSettled: () => stageTransactionObserver?.settled() ?? Promise.resolve(),
+        whenStageHistorySettled: () => stageHistoryLog?.settled() ?? Promise.resolve(),
+        getStageHistoryFile: () => stageHistoryLog?.filePath,
         whenReviewDecorationSettled: () => reviewDecorationRefreshPromise,
         getCurrentReviewUri: () => currentReviewUri?.toString(),
         getReviewDecorationBadge: (uri: vscode.Uri) => {
@@ -6675,4 +6690,4 @@ async function smartNavigate(direction: "forward" | "back") {
     }
 }
 
-export function deactivate() {}
+export function deactivate(): Promise<void> | undefined { return stageHistoryLog?.settled(); }

@@ -1,3 +1,5 @@
+// Own the bounded exact-Undo receipts and shared cross-window baselines. History logging observes these
+// same transitions after persistence; it never enlarges the Undo stack or adds work inside its lock.
 import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
@@ -44,6 +46,12 @@ export interface StageUndoResult {
     status: RestoreResult | "empty";
     transaction?: StoredStageTransaction;
     remaining: StoredStageTransaction[];
+}
+
+export interface ObservedIndexTransition {
+    repoRoot: string;
+    before: IndexSnapshot;
+    after: IndexSnapshot;
 }
 
 const LOCK_RETRY_MS = 20;
@@ -133,7 +141,10 @@ const findLastMatchingIndex = (
 export class StageTransactionStore {
     private queue: Promise<void> = Promise.resolve();
 
-    constructor(private readonly receiptPath: string) {}
+    constructor(
+        private readonly receiptPath: string,
+        private readonly onIndexTransition: (change: ObservedIndexTransition) => void = () => undefined
+    ) {}
 
     async append(receipt: StoredStageTransaction): Promise<StoredStageTransaction> {
         return this.update(async (state) => {
@@ -251,12 +262,16 @@ export class StageTransactionStore {
         details?: Pick<StoredStageTransaction, "kind" | "uri" | "uris" | "view">,
         suppressed = false
     ): Promise<IndexSnapshot> {
-        return this.update(async (state) => {
+        let transition: ObservedIndexTransition | undefined;
+        const snapshot = await this.update(async (state) => {
             const current = await readSnapshot();
             const previous = state.baselines.find((entry) => entry.repoRoot === repoRoot)?.snapshot ?? fallback;
             this.setBaseline(state, repoRoot, current);
             if (!previous) {
                 return current;
+            }
+            if (!suppressed && (!sameHead(previous, current) || previous.indexTree !== current.indexTree)) {
+                transition = { repoRoot, before: previous, after: current };
             }
             if (!sameHead(previous, current)) {
                 state.entries = state.entries.filter((entry) => entry.repoRoot !== repoRoot);
@@ -282,6 +297,10 @@ export class StageTransactionStore {
             }
             return current;
         });
+        // The shared baseline deduplicates observing windows. Enqueue diagnostics only after the
+        // existing history write/lock completes; diagnostic errors cannot change its Undo contract.
+        if (transition) { try { this.onIndexTransition(transition); } catch { /* best effort */ } }
+        return snapshot;
     }
 
     async consumeLatest(restore: (receipt: StoredStageTransaction) => Promise<RestoreResult>): Promise<StageUndoResult> {

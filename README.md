@@ -70,6 +70,16 @@ When you open a *staged* file, what you see is a frozen, read-only snapshot of w
 
 That is the core workflow. The same navigation keys also handle the awkward cases that ordinary hunk navigation skips: brand-new files and changes larger than the editor viewport.
 
+## Stage and index history
+
+Better Git keeps local metadata history even when verbose debug logging is off. It records successful Better Git stage commands (requested filenames), successful Better Git Undos, and index/HEAD changes seen through the existing Git observer. Observed changes have **unknown authorship**: they may come from VS Code Git, a terminal, another extension or another Git client. A known stage command succeeding can also be a no-op.
+
+The history uses plain JSON Lines files in `stage-history` under Better Git's VS Code global storage. On macOS with the default profile, this is `~/Library/Application Support/Code/User/globalStorage/ethansk.better-git-vscode/stage-history/`. Each UTC day and extension host has its own file, so multiple windows do not contend for a new shared lock. Files older than 30 days are removed on a later write. Filenames, repository paths, timestamps and before/after Git tree/commit identifiers are local only; file contents are never copied into these logs.
+
+This is separate from the **three-entry Undo stack**. Undo and HEAD changes can clear receipts without deleting the history log. File writing and immutable-tree path lookup run in a separate background queue; review and exact Undo never wait for that queue. Graceful extension shutdown flushes pending history. It is not a crash/power-loss-proof audit trail.
+
+`recordedAt` is when Better Git records an action or observation, not a proven execution time for an external command. An initial observation may compare a persisted baseline from an earlier session. Observation can combine several external actions between Git status notifications. Rapid external stage-then-unstage actions may cancel before Better Git sees them. A rebase/commit/reset is recorded as an observed HEAD change, never labelled as a known unstage. Missing Git objects leave `pathsUnavailable: true` alongside the identifiers. Nothing reconstructs actions from before logging began.
+
 ## Generate commit messages with Codex or Claude — no Copilot subscription
 
 Click **Generate Commit Message with AI** (`$(sparkle)`) in a Git repository's Source Control header, choose it from the **Commit** dropdown, or run it from the Command Palette. On first use, Better Git detects the Codex and Claude Code CLIs in your configured paths, VS Code's PATH, and a small set of standard macOS install locations. Choose **Codex, then Claude Code** to try Codex first and fall back to Claude if generation fails, or **Claude Code** to use only Claude. Better Git saves this choice globally. Existing Codex selections now include Claude fallback when its CLI is available. Run **Better Git: Change Commit Message AI Provider** whenever you want to switch.

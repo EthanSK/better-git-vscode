@@ -29,6 +29,7 @@ const testStageReveal = process.argv.includes('--stage-reveal');
 const testDeletedLink = process.argv.includes('--deleted-link');
 const testLinkOnly = process.argv.includes('--link-only');
 const testLastStaged = process.argv.includes('--last-staged-status');
+const testStageHistory = process.argv.includes('--stage-history');
 const testBackgroundPeers = process.argv.includes('--background-peer-collapse');
 const testLookaheadNormal = process.argv.includes('--scm-lookahead-normal');
 const testLookahead = testLookaheadNormal || process.argv.includes('--scm-lookahead');
@@ -228,7 +229,30 @@ try {
         await send('Page.bringToFront');
         await until(() => request('state'), state => state.focused, 'native window focus');
     }
-    if (testBackgroundPeers) {
+    if (testStageHistory) {
+        await request('config',{settings:{debugLogging:false}});
+        await request('open',{repo:1});
+        const before=await request('stage-history');
+        assert.ok(before.value.records.some(row=>row.action==='session-start'),'history starts without verbose debug logging');
+        const baseline=git(roots[1],'diff','--cached','--binary');
+        await request('command',{command:'better-git-vscode.stage-and-next-changed-file'});
+        const staged=await request('stage-history');
+        assert.ok(staged.value.records.some(row=>row.action==='better-git-stage' && row.repoRoot===roots[1] && row.paths.includes('a.txt')),'successful stage attributed to Better Git');
+        assert.ok(staged.active.includes('b.txt'),'log writes do not prevent the next-file jump');
+        await request('command',{command:'better-git-vscode.undo-last-stage-and-advance'});
+        const undone=await request('stage-history');
+        assert.ok(undone.value.records.some(row=>row.action==='better-git-undo' && row.paths.includes('a.txt')),'exact Undo is logged');
+        assert.equal(git(roots[1],'diff','--cached','--binary'),baseline,'Undo preserves exact original index');
+        git(roots[1],'add','b.txt'); await request('refresh',{repo:1});
+        const external=await request('stage-history');
+        assert.ok(external.value.records.some(row=>row.action==='observed-index-change' && row.source==='unknown' && row.paths.includes('b.txt')),'external stage is observed without guessing author');
+        git(roots[1],'reset','HEAD','--','b.txt'); await request('refresh',{repo:1});
+        const unstage=await request('stage-history');
+        assert.ok(unstage.value.records.filter(row=>row.action==='observed-index-change' && row.paths?.includes('b.txt')).length>=2,'external unstage persists too');
+        assert.equal(unstage.value.records.filter(row=>row.action==='better-git-stage').length,1,'external action never attributed to Better Git');
+        fs.writeFileSync(path.join(evidence,'stage-history.json'),JSON.stringify(unstage.value,null,2));
+        console.log('BETTER_GIT_STAGE_HISTORY_VERIFIED checks=6 debug-off,stage,next,undo,external-stage,external-unstage');
+    } else if (testBackgroundPeers) {
         // Reproduce the stay-in-Codex route with Finder as the running origin. Code must briefly own
         // its native tree, then return to that origin. A background-only prototype failed repeats.
         const observer = path.join(root,'app-activation');

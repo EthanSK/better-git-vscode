@@ -1,3 +1,4 @@
+// Read immutable index snapshots/paths and restore exact Undo receipts without changing working files.
 import { execFile } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
@@ -62,7 +63,9 @@ export const readIndexSnapshot = async (root: string): Promise<IndexSnapshot> =>
 
 // External stages have no saved editor URI. Read the immutable receipt trees,
 // not today's working tree/index, and retain both paths of a staged rename.
-export const readStageTransactionPaths = async (receipt: StoredStageTransaction): Promise<string[]> => {
+export const readStageTransactionPaths = async (
+    receipt: Pick<StoredStageTransaction, "repoRoot" | "beforeIndexTree" | "afterIndexTree">
+): Promise<string[]> => {
     const { stdout } = await exec("git", [
         "diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z",
         receipt.beforeIndexTree, receipt.afterIndexTree, "--",

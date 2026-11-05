@@ -140,6 +140,11 @@ exports.run = async () => {
      finally { if(copied!==undefined && await vscode.env.clipboard.readText()===copied) await vscode.env.clipboard.writeText(before); }
     }
     else if(request.action==='usage-log') value=usageEvents;
+    else if(request.action==='stage-history') {
+     await api.whenStageTransactionsSettled(); await api.whenStageHistorySettled();
+     const file=api.getStageHistoryFile();
+     value={file,records:file ? fs.readFileSync(file,'utf8').trim().split('\n').map(line=>JSON.parse(line)) : []};
+    }
     else if(request.action==='native-accessibility') value=JSON.parse(cp.execFileSync(require('node:path').join(__dirname,'../dist/scm-review-scroll'),[process.env.VSCODE_PID],{encoding:'utf8',timeout:3000,input:JSON.stringify({id:1,action:'state'})+'\n'}));
     else if(request.action==='command') value=await vscode.commands.executeCommand(request.command,...(request.args??[]));
     else if(request.action==='stop') { clearInterval(timer); resolve(); }
