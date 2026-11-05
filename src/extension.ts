@@ -58,7 +58,7 @@ import { registerAgentFlowSelectionBridge } from "./agentFlowSelectionBridge";
 import { registerDiffViewDisplay } from "./diffViewDisplay";
 import { registerStagedLfsImageProvider, resolveStagedLfsImage } from "./stagedLfsImage";
 
-let confirmOpenedReview: (uri: vscode.Uri) => void = () => undefined;
+let confirmOpenedReview: (uri: vscode.Uri, staged: boolean) => void = () => undefined;
 let requestNavigationScmLookahead: () => void = () => undefined;
 let pendingWorktreePresentation: DeferredWorktreePresentation | undefined;
 let worktreeUsage: WorktreeUsage | undefined;
@@ -1753,6 +1753,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     const reviewDecoEmitter = new vscode.EventEmitter<vscode.Uri[]>();
     let currentReviewUri: vscode.Uri | undefined; // file: URI of the file currently shown in a review view
     let currentReviewTab: vscode.Tab | undefined;
+    let currentReviewStaged = false;
     const stageHoldSelections = new Map<MouseReviewSource, ActiveMouseStageSelection>();
     const releasedStageSelections = new WeakMap<MouseHoldRequest, ActiveMouseStageSelection>();
     let stagePreviewMode: { source: MouseReviewSource; request: MouseHoldRequest } | undefined;
@@ -2389,13 +2390,16 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 // VS Code caps the badge at 2 GRAPHEMES and drops the whole decoration if it's longer, so take
                 // the first two graphemes. Intl.Segmenter keeps multi-codepoint emoji intact — a naive
                 // slice(0,2) would cut a two-emoji badge like "🔥🔥" down to one (each emoji is 2 UTF-16 units).
-                let badge = badgeSetting;
+                // Ethan's "fire's being put out": an Index/staged review must be visibly different
+                // from unstaged flames. Keep the badge-off setting and eyes/explosion priorities;
+                // this is presentation only, never permission to stage an Index/history view.
+                let badge = currentReviewStaged ? "🧯" : badgeSetting;
                 try {
                     // (Intl as any): Intl.Segmenter may not be in the project's TS lib types, but it exists at runtime.
                     const seg = new (Intl as any).Segmenter(undefined, { granularity: "grapheme" });
-                    badge = [...seg.segment(badgeSetting)].slice(0, 2).map((s: any) => s.segment).join("");
+                    badge = [...seg.segment(badge)].slice(0, 2).map((s: any) => s.segment).join("");
                 } catch {
-                    badge = Array.from(badgeSetting).slice(0, 2).join(""); // fallback by code point if Segmenter is unavailable
+                    badge = Array.from(badge).slice(0, 2).join(""); // fallback by code point if Segmenter is unavailable
                 }
                 return { badge, tooltip: "Better Git VS Code: reviewing this file", color: new vscode.ThemeColor("charts.blue"), propagate: false };
             }
@@ -2552,7 +2556,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             if (current()) { documentWarmup.request(tasks, current); }
         }], current);
     };
-    const applyReviewDecorationUri = (next: vscode.Uri | undefined) => {
+    const applyReviewDecorationUri = (next: vscode.Uri | undefined, staged = false) => {
         const prev = currentReviewUri;
         const nextTab = vscode.window.tabGroups.activeTabGroup.activeTab;
         // A Git preview can transiently resolve to the old file or no file while its replacement tab renders.
@@ -2566,6 +2570,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }
         currentReviewUri = next;
         currentReviewTab = nextTab;
+        currentReviewStaged = staged;
         requestScmLookahead();
         warmAdjacentReviewDocuments(next);
         const changed: vscode.Uri[] = [];
@@ -2597,11 +2602,25 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             let handledRequest = -1;
             while (handledRequest !== reviewDecorationRefreshRequest) {
                 handledRequest = reviewDecorationRefreshRequest;
+                const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
                 const next = await currentReviewFileUriAsync();
+                // Reuse this tab's already-resolved path for opaque media; do not perform a
+                // second workbench/clipboard lookup just to choose its badge.
+                const active = next ? await getActiveChange(next) : null;
+                let staged = active?.staged === true;
+                if (next && active?.staged === null) {
+                    // Some native image comparisons omit their public input. Infer a badge only for
+                    // an unambiguous staged-only path; never guess the side of a partially staged image.
+                    const repo = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1).getRepository(next);
+                    const contains = (changes: any[] = []) => changes.some(change =>
+                        change.uri.path.toLowerCase() === next.path.toLowerCase());
+                    staged = contains(repo?.state.indexChanges) && !contains(repo?.state.workingTreeChanges)
+                        && !contains(repo?.state.untrackedChanges) && !contains(repo?.state.mergeChanges);
+                }
                 // Only the latest request may move/clear the badge. If another event arrived during the await,
                 // loop once more and resolve that newer active tab instead.
-                if (handledRequest === reviewDecorationRefreshRequest) {
-                    applyReviewDecorationUri(next);
+                if (handledRequest === reviewDecorationRefreshRequest && tab === vscode.window.tabGroups.activeTabGroup.activeTab) {
+                    applyReviewDecorationUri(next, staged);
                 }
             }
         })().finally(() => {
@@ -2610,11 +2629,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         return reviewDecorationRefreshPromise;
     };
 
-    const confirmedReview = (uri: vscode.Uri): void => {
+    const confirmedReview = (uri: vscode.Uri, staged: boolean): void => {
         // Use only a verified open. Invalidate an older async badge lookup so it cannot
         // move the fire marker back while an opaque editor's path lookup finishes.
         reviewDecorationRefreshRequest++;
-        applyReviewDecorationUri(uri);
+        applyReviewDecorationUri(uri, staged);
     };
     confirmOpenedReview = confirmedReview;
     context.subscriptions.push(new vscode.Disposable(() => {
@@ -3249,6 +3268,13 @@ const revealCollapsedWorktree = async (
     await executeScmTreeCommand("manual", "workbench.scm.focus");
     if (!await pause()) { return false; }
     const collapseStagedGroup = async (hasHeader: boolean, firstGroupFocused = false): Promise<boolean> => {
+        // Native boundary (VS Code 1.144 SCMViewPane, verified 2026-11-05): collapseByDefault returns
+        // false for every resource group, so a re-created Staged node starts EXPANDED. Git's empty Staged
+        // group is only tree-filtered (hideWhenEmpty) and cannot receive focus, so this link cannot fold
+        // it; the first later stage then reveals it expanded. With Git's own
+        // `git.alwaysShowStagedChangesResourceGroup`, the empty group is visible, is folded here and keeps
+        // that state by tree identity while this root stays open. There is no public per-group expansion
+        // API or setting; never add a background recollapse, focus-stealing group walk or polling instead.
         if ((repository.state.indexChanges ?? []).length === 0
             && !vscode.workspace.getConfiguration("git", repository.rootUri)
                 .get<boolean>("alwaysShowStagedChangesResourceGroup", false)) { return true; }
@@ -3643,7 +3669,7 @@ interface ActiveChange {
     staged: boolean | null;
 }
 
-const getActiveChange = async (): Promise<ActiveChange | null> => {
+const getActiveChange = async (resolvedReviewUri?: vscode.Uri): Promise<ActiveChange | null> => {
     // Prefer the active tab's diff input: it exposes the modified (right) side regardless of which pane
     // has keyboard focus. VSCode's git extension builds the modified side as a `git`-scheme uri for the
     // index/staged diff and the plain `file` uri for the working-tree diff (see getRightResource in
@@ -3721,7 +3747,7 @@ const getActiveChange = async (): Promise<ActiveChange | null> => {
 
     // Fallback for genuinely non-textual files (images/media/future custom diffs): path only, side unknown.
     // The async shared resolver owns the workbench path fallback and rejects stale/non-change tabs.
-    const reviewUri = await currentReviewFileUriAsync();
+    const reviewUri = resolvedReviewUri ?? await currentReviewFileUriAsync();
     if (reviewUri) {
         return { path: reviewUri.path, staged: null };
     }
@@ -3794,7 +3820,7 @@ const getEmptyTreeRef = async (uri: vscode.Uri): Promise<string | undefined> => 
 };
 
 // Opens the diff for a single list entry on the correct (staged vs unstaged) side.
-const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promise<void> => {
+const openChangeEntry = async (entry: FileChange, preserveFocus = false, allowStagedReveal = true): Promise<void> => {
     rememberUnstagedReviewPosition(visibleEditorForActiveTab());
     // Capture BEFORE opening: the native first-hunk landing can create a fresh cache entry during open.
     // Treating that new entry as a prior visit would suppress first-visit backward EOF/last-hunk landing.
@@ -3859,7 +3885,7 @@ const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promis
     // is why this is off by default: a brief flash of the file before the diff, and for a partially-staged
     // (dual-state) file autoReveal picks the working-tree row instead (it scans groups back-to-front).
     const revealStaged = vscode.workspace.getConfiguration("better-git-vscode").get("revealStagedInSourceControl");
-    if (revealStaged) {
+    if (revealStaged && allowStagedReveal) {
         try {
             await vscode.window.showTextDocument(entry.uri, { preview: true, preserveFocus }); // fires autoReveal -> selects the staged row
         } catch {
@@ -5600,7 +5626,8 @@ const observeNavigationTab = (): void => {
 
 // Only the actual close/open commands own a tab transition. Git reads and subsequent landing/scroll
 // waits remain cancellable; otherwise a slow diff could consume a manually chosen file as its target.
-const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoint, closeCurrent = false): Promise<void> => {
+const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoint, closeCurrent = false,
+    presentation?: { preserveFocus: boolean; allowStagedReveal: boolean }): Promise<void> => {
     check();
     // Explicit file commands are a new user intention, not part of a queued change burst.
     if (check === noNavigationCheckpoint) {
@@ -5612,9 +5639,9 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
     const previousTab = closeCurrent ? vscode.window.tabGroups.activeTabGroup.activeTab : undefined;
     navigationOwnTabChange = true;
     try {
-        await openChangeEntry(entry);
+        await openChangeEntry(entry, presentation?.preserveFocus, presentation?.allowStagedReveal);
         if (currentReviewFileUri()?.toString() === entry.uri.toString()) {
-            confirmOpenedReview(entry.uri);
+            confirmOpenedReview(entry.uri, entry.staged);
         }
         // Closing first activates an unrelated background tab. A staged-only file: tab then
         // makes SCM Auto Reveal expand Staged Changes, even after the next review file opens.
@@ -5633,7 +5660,7 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
         // Opaque image tabs need the existing async path resolver.
         const shown = await currentReviewFileUriAsync();
         if (shown?.toString() !== entry.uri.toString()) { invalidateChangeNavigation(); }
-        else { confirmOpenedReview(entry.uri); }
+        else { confirmOpenedReview(entry.uri, entry.staged); }
     }
     check();
 };
@@ -6201,9 +6228,11 @@ const stageCurrentFile = async () => {
     const git = gitExtension.getAPI(1);
     const activeRepo = git.getRepository(currentUri) || git.repositories[0];
     if (activeRepo) {
+        const stagedFromTab = vscode.window.tabGroups.activeTabGroup.activeTab;
         // Route through the single stage chokepoint: stages (same as clicking the + in Source Control) AND
         // records it in the last-staged status bar. No advance here — this command stays on the file.
         await stageThroughExtension(activeRepo, currentUri);
+        await presentStagedOnlyReview([currentUri], noNavigationCheckpoint, stagedFromTab);
     }
 };
 
@@ -6215,6 +6244,50 @@ const distinctUnstagedChanges = (changes: readonly FileChange[]): FileChange[] =
         seen.add(key);
         return true;
     });
+};
+
+// Ethan (2026-11-05): Staged Changes must never open unless he opens it. Native SCM Auto Reveal
+// (`scm.autoReveal`) calls expandTo on the group holding the active editor's file: URI. It reruns on
+// later editor changes, when Source Control becomes visible and when any repository opens or closes.
+// After Better Git stages a worktree's final unstaged file, its retained working view is staged-only,
+// so an unrelated later event (for example a new Codex worktree) expanded Staged Changes and selected
+// that row. Present the same file's staged (Index) review instead: its git: side never matches an SCM
+// row, the review stays in this worktree, and the staged badge shows nothing unstaged remains.
+// Only a clean, still-active view of a file this command staged changes; a partially staged file keeps
+// its view because Auto Reveal already prefers its Changes row. The stage and Undo receipt are already
+// complete: presentation failure or newer input must not alter that transaction's result.
+const presentStagedOnlyReview = async (stagedUris: readonly vscode.Uri[], check: NavigationCheckpoint,
+    expectedTab?: vscode.Tab): Promise<void> => {
+    try {
+        const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        const input = tab?.input;
+        const primary = input instanceof vscode.TabInputTextDiff || input instanceof vscode.TabInputNotebookDiff
+            ? input.modified
+            : input instanceof vscode.TabInputText || input instanceof vscode.TabInputCustom
+                || input instanceof vscode.TabInputNotebook ? input.uri : undefined;
+        if (!tab || (expectedTab && tab !== expectedTab) || tab.isDirty || primary?.scheme !== "file") { return; }
+        const samePath = (candidate: vscode.Uri) => candidate.path.toLowerCase() === primary.path.toLowerCase();
+        if (!stagedUris.some(samePath)) { return; } // Never replace an unrelated manually chosen editor.
+        const rows = (await getFileChanges(primary)).filter(change => samePath(change.uri));
+        check();
+        const staged = rows.length === 1 && rows[0].staged ? rows[0] : undefined;
+        if (!staged || vscode.window.tabGroups.activeTabGroup.activeTab !== tab || tab.isDirty) { return; }
+        const view = captureActiveStageUndoView();
+        // This automatic side conversion is not a request to reveal Staged, even when a user opted
+        // into row reveal for deliberate staged navigation. Keep SCM/editor focus where it was.
+        await openNavigationTarget(staged, check, !tab.isPreview, { preserveFocus: true, allowStagedReveal: false });
+        const editor = visibleEditorForActiveTab();
+        if (view && editor && currentReviewFileUri()?.toString() === staged.uri.toString()) {
+            check();
+            // Staging the full file keeps these bytes identical; carry its cursor and viewport onto
+            // the Index side instead of jumping to the first hunk merely to prevent Auto Reveal.
+            await restoreStageUndoView({ ...view, documentUri: editor.document.uri.toString() });
+        }
+        // Staging completed this file's unstaged review; do not let the replaced working view become memory.
+        reviewFilePositions.forget(staged.uri.toString());
+    } catch (error) {
+        debugLog("stage-flow", `staged-only final review kept its working view: ${String(error)}`);
+    }
 };
 
 const stageSelectedFilesAndAdvance = async (
@@ -6261,9 +6334,11 @@ const stageSelectedFilesAndAdvance = async (
     if (!advance) { return true; } // Leave the excluded eyes editor/cursor/viewport untouched.
 
     if (!target) {
-        // Keep the current view when this worktree is exhausted. Closing it would
+        // Keep reviewing this file when this worktree is exhausted. Closing it would
         // activate an arbitrary background tab, potentially in another worktree.
+        // A staged-only working view switches to its Index side in place (above).
         // Invalidate already-queued navigation without touching the staged receipt.
+        await presentStagedOnlyReview(selected.map(change => change.uri), check);
         invalidateChangeNavigation();
         return true;
     }
@@ -6372,9 +6447,12 @@ const stageCurrentFileAndAdvance = async (
     check(); // Finish the exact stage, but never pull the user back after a manual tab/worktree switch.
 
     if (!targetUnstagedChange) {
-        // Nothing remains in this worktree: keep the final review tab open. Closing
+        // Nothing remains in this worktree: keep reviewing the final file. Closing
         // it can reveal another worktree and make the next stage press act there.
+        // Its staged-only working view becomes the Index view so SCM Auto Reveal
+        // cannot later expand Staged Changes (see presentStagedOnlyReview).
         // Still discard already-queued navigation; the successful stage stays undoable.
+        await presentStagedOnlyReview([currentUri], check);
         invalidateChangeNavigation();
         return;
     }

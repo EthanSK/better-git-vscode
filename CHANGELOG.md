@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.161
+
+- Show 🧯 for the staged file being reviewed, keeping 🔥🔥 for unstaged changes and preserving eyes/explosion markers and the badge-off setting.
+- After staging in place or finishing a worktree, keep the same file and review position on its Index side. This prevents a later Source Control reveal from opening Staged Changes for the leftover working-file view. Manual expansion remains available.
+- Document VS Code's separate new-group expansion limit and its native setting for keeping an empty Staged Changes header available to fold.
+
 ## 1.2.158
 
 - Keep local stage/index history files for 30 days, independently of the three-entry Undo stack and verbose debug logging. Record successful Better Git stages and exact Undos separately from observed changes whose author is unknown. File writing and path lookup run outside review/staging queues.

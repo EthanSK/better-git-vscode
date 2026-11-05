@@ -1136,6 +1136,54 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+	test('staged review badge distinguishes both sides of one file and honours badge-off', async () => {
+		const rel = 'committed/mod_a.txt';
+		const uri = write(rel, lines(40, 'staged badge'));
+		git(`add ${rel}`);
+		write(rel, lines(40, 'unstaged badge'));
+		await refreshUntil(() => inIndex(rel) && inWorkingTree(rel), 'both review sides');
+		const before = git('write-tree');
+		await vscode.commands.executeCommand('vscode.diff', toGitUri(uri, 'HEAD'), toGitUri(uri, ''), 'staged badge');
+		await extensionApi.whenReviewDecorationSettled();
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '🧯');
+		await vscode.commands.executeCommand('git.openChange', uri);
+		await extensionApi.whenReviewDecorationSettled();
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '🔥🔥');
+		const config = vscode.workspace.getConfiguration('better-git-vscode');
+		const previous = config.inspect<string>('currentFileBadge')?.workspaceValue;
+		try {
+			await config.update('currentFileBadge', '', vscode.ConfigurationTarget.Workspace);
+			await vscode.commands.executeCommand('vscode.diff', toGitUri(uri, 'HEAD'), toGitUri(uri, ''), 'staged badge');
+			await extensionApi.whenReviewDecorationSettled();
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), undefined);
+		} finally {
+			await config.update('currentFileBadge', previous, vscode.ConfigurationTarget.Workspace);
+		}
+		assert.strictEqual(git('write-tree'), before, 'the badge never changes the index');
+	});
+
+	test('stage without advance keeps the reviewed position on its Index side', async () => {
+		const rel = 'committed/mod_a.txt';
+		const uri = write(rel, lines(200, 'stage in place'));
+		await refreshUntil(() => inWorkingTree(rel), 'stage-in-place change');
+		const editor = await openWorkingDiffAt(rel, 75);
+		editor.selection = new vscode.Selection(80, 2, 82, 5);
+		const selections = editor.selections;
+		const top = editor.visibleRanges[0].start.line;
+		const before = git('write-tree');
+		await vscode.commands.executeCommand('better-git-vscode.stage-current-file');
+		await extensionApi.whenReviewDecorationSettled();
+		const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+		assert.ok(input instanceof vscode.TabInputTextDiff && input.modified.scheme === 'git');
+		assert.strictEqual(activeTabPath(), uri.path);
+		const stagedEditor = visibleEditorFor(input.modified)!;
+		assert.deepStrictEqual(stagedEditor.selections, selections, 'staging in place keeps the selection');
+		assert.strictEqual(stagedEditor.visibleRanges[0].start.line, top, 'staging in place keeps the viewport');
+		assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '🧯');
+		await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+		assert.strictEqual(git('write-tree'), before, 'one Undo restores the exact prior index');
+	});
+
 	test('stage-hold readiness changes only the badge, clears by source and cancels on review switch', async () => {
 		if (process.env.BGV_PLACE_ON_MACBOOK === '1') {
 			const pid = process.env.VSCODE_PID!;
@@ -1252,20 +1300,20 @@ suite('SCM change navigation E2E', () => {
 		});
 	}
 
-	test('current-review fire badge covers every image Git state and rapid tab switches', async () => {
+	test('current-review badges distinguish image Git states and rapid tab switches', async () => {
 		const imageB = Buffer.from(
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==',
 			'base64'
 		);
 		const trackedRel = 'committed/image.png';
 		const trackedUri = wsUri(trackedRel);
-		const expectFireBadge = async (uri: vscode.Uri, label: string) => {
+		const expectFireBadge = async (uri: vscode.Uri, label: string, staged = false) => {
 			await poll(
 				() => extensionApi.getCurrentReviewUri() === uri.toString(),
 				`${label} to become the current review decoration URI (was ${extensionApi.getCurrentReviewUri()})`
 			);
 			await extensionApi.whenReviewDecorationSettled();
-			assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), '🔥🔥', `${label} must render the fire badge`);
+			assert.strictEqual(extensionApi.getReviewDecorationBadge(uri), staged ? '🧯' : '🔥🔥', `${label} must render its review-side badge`);
 			// The media-preview/notebook extensions finish rendering after their open command resolves. Let that
 			// renderer settle before the next matrix case closes/replaces its editor; otherwise VS Code 1.135 can
 			// emit an unrelated rejected "Webview is disposed" promise that contaminates later shared-host tests.
@@ -1308,7 +1356,7 @@ suite('SCM change navigation E2E', () => {
 				toGitUri(trackedUri, ''),
 				'image.png (Index)'
 			);
-			await expectFireBadge(trackedUri, 'staged modified image');
+			await expectFireBadge(trackedUri, 'staged modified image', true);
 
 			// Notebook diffs are another non-TextEditor review surface with their own public tab input type.
 			await resetImageFixture();
@@ -1326,6 +1374,10 @@ suite('SCM change navigation E2E', () => {
 			await refreshUntil(() => inWorkingTree(notebookRel, 5), 'modified notebook to appear in working tree');
 			await vscode.commands.executeCommand('git.openChange', notebookUri);
 			await expectFireBadge(notebookUri, 'modified notebook');
+			git(`add ${notebookRel}`);
+			await refreshUntil(() => inIndex(notebookRel, 0), 'staged notebook to appear in index');
+			await vscode.commands.executeCommand('vscode.diff', toGitUri(notebookUri, 'HEAD'), toGitUri(notebookUri, ''), 'notebook.ipynb (Index)');
+			await expectFireBadge(notebookUri, 'staged notebook', true);
 
 			// Untracked and staged-new images.
 			await resetImageFixture();
@@ -1343,7 +1395,7 @@ suite('SCM change navigation E2E', () => {
 				toGitUri(addedUri, ''),
 				'added-image.png (Index)'
 			);
-			await expectFireBadge(addedUri, 'staged-new image');
+			await expectFireBadge(addedUri, 'staged-new image', true);
 
 			// Unstaged and staged deletion images.
 			await resetImageFixture();
@@ -1359,7 +1411,7 @@ suite('SCM change navigation E2E', () => {
 				toGitUri(trackedUri, EMPTY_TREE),
 				'image.png (Index)'
 			);
-			await expectFireBadge(trackedUri, 'staged-deleted image');
+			await expectFireBadge(trackedUri, 'staged-deleted image', true);
 
 			// Staged rename: decorate the new/current path, not the old HEAD path.
 			await resetImageFixture();
@@ -1373,7 +1425,7 @@ suite('SCM change navigation E2E', () => {
 				toGitUri(renamedUri, ''),
 				'renamed-image.png (Index)'
 			);
-			await expectFireBadge(renamedUri, 'renamed image');
+			await expectFireBadge(renamedUri, 'renamed image', true);
 			assert.strictEqual(extensionApi.getReviewDecorationBadge(trackedUri), undefined);
 
 			// A rapid image -> text switch must leave the badge on the final active tab. This guards the async
@@ -4522,7 +4574,13 @@ suite('SCM change navigation E2E', () => {
 							await sleep(150); // Catch delayed tab activation after the Git refresh.
 							assert.strictEqual(git('diff --cached --name-only'), names.join('\n'));
 							assert.strictEqual(activeTabPath(), originalPath, 'exhaustion must keep the final review file');
-							assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, originalTab, 'do not close or replace the final review tab');
+							// Ethan 2026-11-05: the staged-only working view would let SCM Auto Reveal expand
+							// Staged Changes on a later unrelated event. The same file's Index side replaces it.
+							const finalInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+							assert.ok(finalInput instanceof vscode.TabInputTextDiff && finalInput.modified.scheme === 'git',
+								'the exhausted file is presented on its staged (Index) side, never as a file: view');
+							assert.strictEqual(vscode.window.tabGroups.activeTabGroup.viewColumn, originalTab.group.viewColumn,
+								'the final review stays in its original editor group');
 							assert.ok(!activations.includes(siblingUri.path), 'never transiently activate another worktree');
 							assert.strictEqual(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: sibling, encoding: 'utf8' }).trim(), '');
 						} finally { listener.dispose(); }

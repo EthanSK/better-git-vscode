@@ -30,6 +30,7 @@ const testDeletedLink = process.argv.includes('--deleted-link');
 const testLinkOnly = process.argv.includes('--link-only');
 const testLastStaged = process.argv.includes('--last-staged-status');
 const testStageHistory = process.argv.includes('--stage-history');
+const testStagedGroupGuard = process.argv.includes('--staged-group-guard');
 const testBackgroundPeers = process.argv.includes('--background-peer-collapse');
 const testLookaheadNormal = process.argv.includes('--scm-lookahead-normal');
 const testLookaheadTall = process.argv.includes('--scm-lookahead-tall');
@@ -230,7 +231,58 @@ try {
         await send('Page.bringToFront');
         await until(() => request('state'), state => state.focused, 'native window focus');
     }
-    if (testStageHistory) {
+    if (testStagedGroupGuard) {
+        // Keep the empty native group alive so a link can fold it before the first stage.
+        // This tests the supported personal setting, not a production background recollapse.
+        await request('git-config', {settings:{alwaysShowStagedChangesResourceGroup:true}});
+        const stagedCollapsed = async () => (await evaluate(rowsExpression))
+            .find(row => row.aria === 'Staged Changes')?.expanded === 'false';
+        for (const [repo, mode] of [[1,'in-place'], [2,'advance'], [3,'batch']]) {
+            git(roots[repo], 'reset', '--hard', 'HEAD');
+            git(roots[repo], 'clean', '-fdq');
+            fs.writeFileSync(path.join(roots[repo], 'a.txt'), 'only unstaged file\n');
+            await request('refresh', {repo});
+            await request('open', {repo});
+            await until(stagedCollapsed, Boolean, mode + ': empty Staged group collapsed');
+            const before = git(roots[repo], 'write-tree');
+            if (mode === 'batch') {
+                await request('command', {command:'better-git-vscode.begin-mouse-navigation-hold',args:[{source:'corsair',direction:'next',initialMode:'files',navigateOnButtonDown:false}]});
+                await request('command', {command:'better-git-vscode.stage-hold-ready',args:['corsair']});
+                await request('command', {command:'better-git-vscode.finish-mouse-navigation-hold',args:[{source:'corsair',direction:'next'}]});
+            } else {
+                await request('command', {command: mode === 'in-place' ? 'better-git-vscode.stage-current-file' : 'better-git-vscode.stage-and-next-changed-file'});
+            }
+            assert.equal(git(roots[repo], 'diff', '--cached', '--name-only').trim(), 'a.txt', mode + ': exact stage');
+            // Revealing SCM again invokes its real Auto Reveal implementation. The old file: view
+            // expands Staged here; the new Index view must keep the user's collapsed group intact.
+            // Move tree focus off the old resource first, as happens when another repository is
+            // selected. Otherwise native Auto Reveal's same-focus shortcut masks the reproduction.
+            await request('command', {command:'workbench.scm.focus'});
+            await request('command', {command:'list.focusFirst'});
+            await request('command', {command:'workbench.action.closeSidebar'});
+            await request('command', {command:'workbench.view.scm'});
+            await pause(400);
+            await capture('staged-group-' + mode);
+            assert.equal(await stagedCollapsed(), true, mode + ': Staged reopened after sidebar reveal');
+            await until(() => request('state'), state => state.badge === '🧯', mode + ': staged badge');
+            const point = await evaluate(`(()=>{const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');const row=[...tree.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')==='Staged Changes');if(!row)return null;const r=row.getBoundingClientRect(),t=tree.getBoundingClientRect();if(r.top<t.top||r.bottom>t.bottom)return null;const b=row.querySelector('.monaco-tl-twistie').getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2};})()`);
+            assert.ok(point, mode + ': Staged header visible for manual expansion');
+            for (const type of ['mousePressed','mouseReleased']) {
+                await send('Input.dispatchMouseEvent', {type,...point,button:'left',clickCount:1});
+            }
+            await until(() => evaluate(rowsExpression), rows => rows.some(row => row.aria === 'Staged Changes' && row.expanded === 'true'), mode + ': manual Staged expansion');
+            await capture('staged-group-' + mode + '-manual');
+            // File decorations are CSS pseudo-elements, not textContent or the row's ARIA label.
+            await until(() => evaluate(`(()=>{const row=[...document.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')?.startsWith('a.txt,'));return row&&[row,...row.querySelectorAll('*')].some(n=>['::before','::after'].some(p=>getComputedStyle(n,p).content.includes('🧯')));})()`), Boolean, mode + ': staged row paints the extinguisher');
+            await request('command', {command:'workbench.action.closeSidebar'});
+            await request('command', {command:'workbench.view.scm'});
+            await pause(200);
+            assert.equal((await evaluate(rowsExpression)).find(row => row.aria === 'Staged Changes')?.expanded, 'true', mode + ': manual expansion must remain open');
+            await request('command', {command:'better-git-vscode.undo-last-stage-and-advance'});
+            assert.equal(git(roots[repo], 'write-tree'), before, mode + ': exact Undo');
+            console.log('PASS staged-group-' + mode);
+        }
+    } else if (testStageHistory) {
         await request('config',{settings:{debugLogging:false}});
         await request('open',{repo:1});
         const before=await request('stage-history');
@@ -1152,7 +1204,7 @@ try {
         console.log('BETTER_GIT_KEYBOARD_LEGACY_AND_RELEASE_VERIFIED');
     }
     }
-    if (!testNoUnstaged && !testMergeLink && !testSingleRepository) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
+    if (!testStagedGroupGuard && !testNoUnstaged && !testMergeLink && !testSingleRepository) for (const repo of roots) for (const file of ['a.txt', 'b.txt', 'c.txt', 'd.txt']) {
         if (testDeletedLink && repo === roots[4] && file === 'a.txt') {
             assert.equal(fs.existsSync(path.join(repo, file)), false, 'deleted link must not recreate its working file');
             continue;

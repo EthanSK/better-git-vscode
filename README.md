@@ -410,8 +410,14 @@ A few behaviours are configurable under **Settings → Better Git VS Code**:
 - **Tall-hunk staging** — present or step through any hunk whose complete rendered range is not on-screen, instead of letting unread lines run off the bottom (`better-git-vscode.hunkStagingEnabled`, default on — see *Step through tall hunks in stages* above). Tune the engage threshold (`hunkStagingThreshold`, 0 = auto/rendered visibility), the exact per-step move (`hunkStagingLineStep`, default 10; any positive custom value; 0 = viewport-minus-overlap auto mode), and the overlap used by auto mode (`hunkStagingOverlap`, default 4).
 - **List vs Tree view** in Source Control (`better-git-vscode.treeView`).
 - Whether the Source Control panel opens on navigation (`shouldOpenScmView`).
-- The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥), including modified/staged/new/deleted/renamed image and binary views plus notebook diffs.
-- Experimental staged-file highlighting (`revealStagedInSourceControl`).
+- The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥). Staged/index reviews show 🧯 instead, so they cannot be mistaken for unstaged changes. This includes text, image, binary and notebook reviews. Setting the badge to empty hides both; eyes and explosion mode retain their existing markers.
+- Experimental staged-file highlighting (`revealStagedInSourceControl`, off by default). Selecting a staged row this way deliberately expands **Staged Changes**.
+
+**Keep Staged Changes closed.** After staging in place, or staging the final file with Stage + Next or a held batch, Better Git keeps the same file and review position on its staged (Index) side. This prevents Source Control's Auto Reveal from expanding Staged Changes later for the leftover working-file view. Manual staged review still works.
+
+Worktree links fold Staged Changes when its header exists. Git's `git.alwaysShowStagedChangesResourceGroup` setting keeps that header visible while empty, so the link can fold it before your first stage. The header stays closed through the tested staging and sidebar-reveal paths, and deliberately opening it is respected.
+
+VS Code can still create new groups expanded when it rebuilds the tree, and opening a fully staged file as a normal working-file editor can trigger Auto Reveal. There is no public per-group expansion API, so Better Git cannot guarantee that every native VS Code path keeps Staged Changes closed.
 
 ## Credits
 
