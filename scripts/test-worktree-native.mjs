@@ -32,6 +32,7 @@ const testLastStaged = process.argv.includes('--last-staged-status');
 const testStageHistory = process.argv.includes('--stage-history');
 const testBackgroundPeers = process.argv.includes('--background-peer-collapse');
 const testLookaheadNormal = process.argv.includes('--scm-lookahead-normal');
+const testLookaheadTall = process.argv.includes('--scm-lookahead-tall');
 const testLookahead = testLookaheadNormal || process.argv.includes('--scm-lookahead');
 const testUsage = process.argv.includes('--usage-tracking');
 const testSingleRepository = process.argv.includes('--single-repository');
@@ -422,16 +423,38 @@ try {
         await until(status,text=>text.includes('Staged: a.txt'),'re-enabled status remembers the same file');
         console.log('BETTER_GIT_LAST_STAGED_VERIFIED forward-eyes,excluded-preview,reverse-file-mode,rebased-direction,matching-click-target,exact-undo,single-file,setting-restore');
     } else if (testLookahead) {
+        // The default compact window separately proves context shrinks to fit a shorter pane.
         await request('open', {repo:1});
+        if (testLookaheadTall) {
+            // Graph shares half the sidebar height in this fixture. Collapse that test
+            // view to exercise ten context rows, rather than resizing the entire app.
+            const graph=await evaluate(`(()=>{const h=[...document.querySelectorAll('.pane-header')].find(h=>h.textContent.includes('Graph'));if(!h)return null;const r=h.getBoundingClientRect();return {x:r.x+10,y:r.y+r.height/2,expanded:h.getAttribute('aria-expanded')};})()`);
+            assert.ok(graph && graph.expanded==='true','expanded Graph header in isolated fixture');
+            for(const type of ['mousePressed','mouseReleased']) await send('Input.dispatchMouseEvent',{type,x:graph.x,y:graph.y,button:'left',clickCount:1});
+            await until(()=>evaluate(`document.querySelector('[role="tree"][aria-label="Source Control Management"]').getBoundingClientRect().height`),height=>height>=22*21,'tall isolated review pane');
+        }
         let file = testLookaheadNormal ? 'review-024.txt' : 'review-025.txt';
         await request('working', {repo:1,file});
         const geometry = () => evaluate(`(() => {
             const tree=document.querySelector('[role="tree"][aria-label="Source Control Management"]');
             const row=[...tree.querySelectorAll('[role="treeitem"]')].find(r=>r.getAttribute('aria-label')?.startsWith('${file},'));
             const box=tree.getBoundingClientRect(), current=row?.getBoundingClientRect();
-            return {top:box.top,bottom:box.bottom,rowTop:current?.top,rowBottom:current?.bottom,
+            let top=box.top;
+            const headers=[...tree.querySelectorAll('[role="treeitem"]')]
+                .filter(r=>!r.getAttribute('aria-label')?.includes(','))
+                .map(r=>r.getBoundingClientRect()).sort((a,b)=>a.top-b.top);
+            for(const header of headers) { if(header.top<=top+1 && header.bottom<=current?.top) top=Math.max(top,header.bottom); }
+            return {top,left:box.left,bottom:box.bottom,rowTop:current?.top,rowBottom:current?.bottom,rowHeight:current?.height,
                 selected:[...tree.querySelectorAll('[aria-selected="true"]')].map(r=>r.getAttribute('aria-label'))};
         })()`);
+        // The jump now preserves ten rows above where they fit, in every review mode.
+        // Independently inspect painted row geometry and leave ten complete upcoming rows.
+        const hasContext = g => {
+            const capacity=Math.floor((g.bottom-g.top)/g.rowHeight);
+            const above=Math.min(10,Math.max(0,capacity-11));
+            return Math.abs(g.rowTop-g.top-above*g.rowHeight)<2
+                && g.bottom-g.rowBottom>=Math.min(10,capacity-1)*g.rowHeight-1;
+        };
         const initialAccessibility = (await request('native-accessibility')).value;
         const before = await geometry();
         const indexBefore = git(roots[1], 'diff', '--cached', '--name-only');
@@ -440,7 +463,7 @@ try {
             assert.ok(before.bottom-before.rowBottom<220,'fixture starts with fewer than ten file rows below');
             await request('command',{command:'better-git-vscode.next-scm-change'});
             file = path.basename(new URL((await request('state')).active).pathname);
-            const after = await until(geometry,g=>g.rowTop>=g.top && g.rowTop<g.top+65 && g.bottom-g.rowBottom>=220,'ordinary Next scrolls current row near top');
+            const after = await until(geometry,hasContext,'ordinary Next preserves context above and ten rows below');
             const normal = await request('state');
             assert.deepEqual(after.selected,before.selected,'ordinary presentation cannot change SCM selection');
             assert.equal(normal.keyboardReviewActive,false,'ordinary Next must not enter a batch');
@@ -469,7 +492,11 @@ try {
             console.log('BETTER_GIT_SCM_NORMAL_LOOKAHEAD_VERIFIED ordinary-next,fire-badge,no-batch,no-stage,repeated-navigation,previous,stage-next,pointer,accessibility-restored');
         } else {
         await request('command', {command:'better-git-vscode.begin-keyboard-review',args:['next']});
-        const after = await until(geometry, g=>g.rowTop>=g.top && g.rowTop<g.top+65 && g.bottom-g.rowBottom>220, 'native row near top with ten below');
+        // A tall pane can already have enough room here: do not demand an unnecessary
+        // jump. The following repeated explosion-mode steps must reach its real boundary.
+        const after = await until(geometry, testLookaheadTall
+            ? g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220 : hasContext,
+            'eyes mode leaves ten rows below without an unnecessary jump');
         assert.deepEqual(after.selected,before.selected,'presentation cannot change SCM selection');
         assert.equal(git(roots[1], 'diff', '--cached', '--name-only'),indexBefore,'presentation cannot stage');
         assert.ok((await request('state')).active.endsWith('/'+file),'presentation cannot navigate');
@@ -478,9 +505,22 @@ try {
         assert.equal(pointerAfter.pointerX,initialAccessibility.pointerX,'physical pointer X unchanged');
         assert.equal(pointerAfter.pointerY,initialAccessibility.pointerY,'physical pointer Y unchanged');
         await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
-        for (let i=0;i<12;i++) { await request('command',{command:'better-git-vscode.step-keyboard-review',args:['next']}); }
-        file = 'review-037.txt';
-        await until(geometry,g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220,'repeated file-mode lookahead');
+        let previous=after, explosionJump;
+        for (let i=0;i<12;i++) {
+            await request('command',{command:'better-git-vscode.step-keyboard-review',args:['next']});
+            file = `review-${String(26+i).padStart(3,'0')}.txt`;
+            const current=await until(geometry,g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220,'repeated explosion-mode lookahead');
+            // In a short pane every new row can trigger a one-row scroll, keeping the
+            // current row at the same Y. Compare with its unscrolled next-row position.
+            if(current.rowTop<previous.rowTop+current.rowHeight-1) explosionJump=current;
+            previous=current;
+        }
+        // A real jump while the explosion set grows must preserve context too, without
+        // committing the set. Eyes and explosion share one background presentation path.
+        assert.ok(explosionJump && hasContext(explosionJump),'explosion-mode jump preserves context above');
+        if (testLookaheadTall) assert.ok(Math.abs((explosionJump.rowTop-explosionJump.top)/explosionJump.rowHeight-10)<0.1,'tall pane keeps ten complete rows above');
+        await capture('lookahead-explosion-after');
+        assert.equal(git(roots[1],'diff','--cached','--name-only'),indexBefore,'explosion-mode presentation cannot stage before release');
         await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
         await request('command',{command:'better-git-vscode.finish-keyboard-review'});
         for (let i=25;i<37;i++) { assert.ok(git(roots[1],'diff','--cached','--name-only').includes(`review-${String(i).padStart(3,'0')}.txt`)); }
@@ -497,7 +537,7 @@ try {
         assert.equal(finalPointer.pointerX,initialAccessibility.pointerX,'held review preserves pointer X after all events');
         assert.equal(finalPointer.pointerY,initialAccessibility.pointerY,'held review preserves pointer Y after all events');
         assert.equal(git(roots[1], 'diff', '--cached', '--name-only'),indexBefore,'cancel cannot stage');
-        fs.writeFileSync(path.join(evidence,'lookahead-result.json'),JSON.stringify({before,after},null,2));
+        fs.writeFileSync(path.join(evidence,'lookahead-result.json'),JSON.stringify({before,after,explosionJump},null,2));
         console.log('BETTER_GIT_SCM_LOOKAHEAD_VERIFIED checks=9 geometry,selection,editor,index,pointer,repeated-navigation,staging,undo,accessibility-restored');
         }
     } else {
