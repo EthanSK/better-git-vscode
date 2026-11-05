@@ -1,4 +1,13 @@
+## 2026-11-05 — Agent Flow terminal selection is separate from editor selection
+
+VS Code's editor-selection event never represented its integrated terminal. On the tested 1.144.0 host, the stable local `lm.tools` registry supplied `terminal_selection`; `invokeTool` read the selection locally without a model, Copy, clipboard or proposed API. Feature-detect that tool, accept only its exact single text payload and known English header, and preserve the 8,192 UTF-16 limit. A terminal pull must explicitly name its surface; old clients retain the editor event protocol. Revalidate window focus, the same active terminal and request freshness after the asynchronous read. Native Agent Flow separately proves the terminal pane and pointer bounds; this companion must not infer terminal focus from activeTerminal alone.
+
+Mini coverage exercised ordinary and diff-editor pointer highlights plus a terminal highlight, native Swift focus/bounds checks, and rejection of the old editor selection while the terminal was selected. The disposable host disables update checks; no user's profile settings are changed. The terminal tool may register after the fixture becomes visible, so test setup must wait for its actual availability rather than interpret fixture startup as a production success.
+
+
 ## 2026-11-05 — Source Control jumps retain context above the current file
+
+
 
 Ethan replaced top-aligned lookahead with about ten file-row heights above the current file and explicitly included explosion/Stage files mode. Keep the existing near-bottom trigger and one shared pure planner for ordinary Next/Previous, Stage + Next, eyes review and explosion mode. Reserve the upcoming rows first, then retain up to ten rows above using the pane's actual capacity. Short panes shrink that context; the end of the worktree, off-screen measurements and already-sufficient upcoming rows still do not scroll. No input delay, stage-set mutation or navigation/staging queue wait was added.
 

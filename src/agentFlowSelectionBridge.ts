@@ -4,7 +4,17 @@ import * as net from "net";
 import * as path from "path";
 import { randomUUID } from "crypto";
 import { AgentFlowSelectionEventKind, AgentFlowSelectionDirection, agentFlowSelectionEventKind, agentFlowSelectionIsFresh,
-    parseAgentFlowSelectionRequest } from "./agentFlowSelectionProtocol";
+    agentFlowTerminalSelection, parseAgentFlowSelectionRequest } from "./agentFlowSelectionProtocol";
+
+// Keep the extension's older VS Code minimum: the stable local tool API is
+// optional on old hosts. Only this bounded read is used, never model selection.
+interface LocalTerminalTools {
+    readonly tools: readonly { name: string }[];
+    invokeTool(name: string, options: { input: Record<string, never> }): Thenable<{
+        content: readonly unknown[];
+    }>;
+}
+const localToolHost = vscode as typeof vscode & { lm?: LocalTerminalTools };
 
 /**
  * Monaco deliberately hides its text from macOS AX when screen-reader mode is off.
@@ -14,7 +24,8 @@ import { AgentFlowSelectionEventKind, AgentFlowSelectionDirection, agentFlowSele
  *
  * A private per-user Unix socket has no TCP/network endpoint. Only a request tied to
  * the current mouse/keyboard gesture and focused VS Code PID can read text. Other windows,
- * programmatic hunk selections, old highlights, terminals and webviews return null.
+ * programmatic hunk selections, old highlights and webviews return null. Terminal
+ * pulls require Agent Flow to prove terminal focus; they never borrow editor text.
  * See https://code.visualstudio.com/api/references/vscode-api#TextEditorSelectionChangeEvent
  */
 export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContext): void {
@@ -94,7 +105,7 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
         socket.on("close", () => clients.delete(socket));
         let input = Buffer.alloc(0);
         let handled = false;
-        socket.on("data", chunk => {
+        socket.on("data", async chunk => {
             if (handled) { return; }
             input = Buffer.concat([input, chunk]);
             if (input.length > 1024) { socket.destroy(); return; }
@@ -104,7 +115,25 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
             try {
                 const request = parseAgentFlowSelectionRequest(JSON.parse(input.toString("utf8").trim()));
                 const current = latest;
-                if (request && request.sourcePID === mainPID && current && vscode.window.state.focused &&
+                if (request && request.sourcePID === mainPID && request.surface === "terminal" && vscode.window.state.focused) {
+                    const terminal = vscode.window.activeTerminal;
+                    // This is VS Code's local, read-only tool, not a model call.
+                    // No Copilot session, proposed API, Copy or clipboard access.
+                    const tools = localToolHost.lm;
+                    const reader = tools?.tools.find(tool => tool.name === "terminal_selection");
+                    if (terminal && reader && tools) {
+                        const response = await tools.invokeTool(reader.name, { input: {} });
+                        const text = agentFlowTerminalSelection(response.content.map(part =>
+                            part !== null && typeof part === "object" && "value" in part ? part.value : undefined));
+                        if (text && !disposed && !socket.destroyed && vscode.window.state.focused &&
+                            terminal === vscode.window.activeTerminal &&
+                            parseAgentFlowSelectionRequest(request)) {
+                            result = { version: 1, nonce: request.nonce, sourcePID: mainPID,
+                                surface: "terminal", observedAt: Date.now(), text,
+                                inputKind: request.inputKind ?? "mouse" };
+                        }
+                    }
+                } else if (request && request.surface !== "terminal" && request.sourcePID === mainPID && current && vscode.window.state.focused &&
                     current.editor === vscode.window.activeTextEditor &&
                     vscode.window.visibleTextEditors.includes(current.editor) &&
                     current.editor.document.version === current.version &&

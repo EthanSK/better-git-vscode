@@ -7,6 +7,7 @@ export interface AgentFlowSelectionRequest {
     requestedAt: number;
     inputKind?: AgentFlowSelectionKind;
     inputDirection?: AgentFlowSelectionDirection;
+    surface?: "editor" | "terminal";
 }
 
 export type AgentFlowSelectionKind = "mouse" | "keyboard" | "selectAll";
@@ -36,8 +37,20 @@ export function parseAgentFlowSelectionRequest(value: unknown, now = Date.now())
         request.requestedAt > now + 100 || now - request.requestedAt > 1000 ||
         request.gestureStartedAt > request.requestedAt || request.requestedAt - request.gestureStartedAt > 60_000 ||
         (request.inputKind !== undefined && !["mouse", "keyboard", "selectAll"].includes(request.inputKind)) ||
-        (request.inputDirection !== undefined && !["left", "right", "up", "down"].includes(request.inputDirection))) { return; }
+        (request.inputDirection !== undefined && !["left", "right", "up", "down"].includes(request.inputDirection)) ||
+        (request.surface !== undefined && !["editor", "terminal"].includes(request.surface))) { return; }
     return request;
+}
+
+/** The built-in reader runs locally; its prose is not selected text. Preserve
+ * the exact payload after the known header, and fail closed on other results. */
+export function agentFlowTerminalSelection(parts: readonly unknown[]): string | undefined {
+    if (parts.length !== 1 || typeof parts[0] !== "string") { return; }
+    const prefix = "The active terminal's selection:\n";
+    if (!parts[0].startsWith(prefix)) { return; }
+    const selected = parts[0].slice(prefix.length);
+    if (!selected.trim()) { return; }
+    return selected.slice(0, 8192).replace(/[\uD800-\uDBFF]$/, "");
 }
 
 export function agentFlowSelectionIsFresh(request: AgentFlowSelectionRequest, changedAt: number, now = Date.now(),

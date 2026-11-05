@@ -1,5 +1,5 @@
 import * as assert from "assert";
-import { agentFlowSelectionEventKind, agentFlowSelectionIsFresh, parseAgentFlowSelectionRequest } from "../../agentFlowSelectionProtocol";
+import { agentFlowSelectionEventKind, agentFlowSelectionIsFresh, agentFlowTerminalSelection, parseAgentFlowSelectionRequest } from "../../agentFlowSelectionProtocol";
 
 suite("AgentFlow selection protocol", () => {
     const request = { version: 1 as const, nonce: "12345678-1234-1234-1234-123456789012", sourcePID: 42,
@@ -17,6 +17,19 @@ suite("AgentFlow selection protocol", () => {
         assert.ok(!agentFlowSelectionIsFresh(request, 8500, 10_050));
         assert.ok(!agentFlowSelectionIsFresh(request, 11_000, 10_050));
         assert.ok(!agentFlowSelectionIsFresh(request, 9500, 12_000));
+    });
+    test("terminal requests are explicit and cannot become editor requests", () => {
+        assert.ok(parseAgentFlowSelectionRequest({ ...request, surface: "terminal" }, 10_050));
+        assert.ok(parseAgentFlowSelectionRequest({ ...request, surface: "editor" }, 10_050));
+        assert.strictEqual(parseAgentFlowSelectionRequest({ ...request, surface: "other" }, 10_050), undefined);
+    });
+    test("terminal reader returns only exact selected text, preserving whitespace", () => {
+        assert.strictEqual(agentFlowTerminalSelection(["The active terminal's selection:\n  selected\n"]), "  selected\n");
+        for (const parts of [[], [undefined], ["No text is currently selected in the active terminal."],
+            ["The active terminal's selection:\n \n"], ["editor", "terminal"]]) {
+            assert.strictEqual(agentFlowTerminalSelection(parts), undefined);
+        }
+        assert.strictEqual(agentFlowTerminalSelection(["The active terminal's selection:\n" + "x".repeat(8191) + "😀"]), "x".repeat(8191));
     });
     test("keyboard and mouse gestures never borrow each other's range", () => {
         const keyboard = { ...request, inputKind: "keyboard" as const };

@@ -10,6 +10,7 @@ exports.run = async () => {
     fs.writeFileSync(path.join(root, 'ready.json'), JSON.stringify({ pid: Number(process.env.VSCODE_PID),
         version: vscode.version, focused: vscode.window.state.focused }));
     let previous = 0;
+    let terminal;
     await new Promise(resolve => {
         const timer = setInterval(async () => {
             let request;
@@ -21,12 +22,21 @@ exports.run = async () => {
             } else if (request.action === 'diff') {
                 await vscode.commands.executeCommand('vscode.diff',
                     vscode.Uri.file(path.join(root, 'original.txt')), file, 'Selection bridge diff');
+            } else if (request.action === 'terminal') {
+                const output = new vscode.EventEmitter();
+                terminal = vscode.window.createTerminal({ name: 'AgentFlow terminal fixture', pty: {
+                    onDidWrite: output.event,
+                    open() { output.fire('TERMINAL_ONLY_SENTINEL\r\n'); },
+                    close() { output.dispose(); }
+                }});
+                terminal.show();
             } else if (request.action === 'state') {
                 const editor = vscode.window.activeTextEditor;
                 request.text = editor?.document.getText(editor.selection);
                 request.focused = vscode.window.state.focused;
                 request.version = vscode.extensions.getExtension('EthanSK.better-git-vscode').packageJSON.version;
-            } else if (request.action === 'stop') { clearInterval(timer); resolve(); }
+                request.terminalText = terminal?.selection;
+            } else if (request.action === 'stop') { terminal?.dispose(); clearInterval(timer); resolve(); }
             fs.writeFileSync(path.join(root, 'result.json'), JSON.stringify(request));
         }, 25);
     });

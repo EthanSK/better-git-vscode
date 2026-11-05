@@ -28,7 +28,8 @@ const profile = path.join(root, 'profile');
 fs.mkdirSync(path.join(profile, 'User'), { recursive: true });
 fs.writeFileSync(path.join(profile, 'User/settings.json'), JSON.stringify({
     'editor.accessibilitySupport': 'off', 'workbench.startupEditor': 'none',
-    'editor.minimap.enabled': false, 'diffEditor.renderSideBySide': true
+    'editor.minimap.enabled': false, 'diffEditor.renderSideBySide': true,
+    'update.mode': 'none', 'extensions.autoUpdate': false
 }));
 const reservation = net.createServer();
 await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
@@ -109,6 +110,48 @@ try {
     assert.equal(await query(Date.now() - 500), null, 'Programmatic selection must not become context');
     await command('diff');
     await highlight('diff editor, screen-reader mode off');
+    await command('terminal');
+    const terminalBox = await until(() => evaluate(`(() => {
+        const nodes = [...document.querySelectorAll('.xterm-screen')];
+        const node = nodes.find(e => { const r=e.getBoundingClientRect(); return r.width>10 && r.height>10; });
+        if (!node) return null; const r=node.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height};
+    })()`), box => box?.width > 0, 'terminal screen');
+    const terminalSince = Date.now();
+    // Real pointer input, not a programmatic terminal selection. The old editor
+    // range remains visible above, so this also catches cross-pane substitution.
+    const terminalPoint = { x: terminalBox.x + 45, y: terminalBox.y + 9, button: 'left', clickCount: 2 };
+    const terminalState = await until(async () => {
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...terminalPoint });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...terminalPoint });
+        return command('state');
+    }, state => state.terminalText?.includes('TERMINAL'), 'terminal highlight');
+    const terminalReply = await until(() => query(terminalSince, { surface: 'terminal' }),
+        reply => reply?.text === terminalState.terminalText, 'local terminal tool registration');
+    assert.equal(terminalReply?.text, terminalState.terminalText);
+    assert.equal(terminalReply.surface, 'terminal');
+    assert.equal(await query(terminalSince), null, 'Terminal click must not refresh the old editor selection');
+    if (process.env.AGENTFLOW_SELECTION_PROBE) {
+        const native = JSON.parse(execFileSync(process.env.AGENTFLOW_SELECTION_PROBE,
+            [String(ready.pid), String(terminalSince), 'terminal'], { encoding: 'utf8', timeout: 5000 }));
+        fs.writeFileSync(path.join(root, 'native-result.json'), JSON.stringify(native));
+        if (process.env.AGENTFLOW_AX_PROBE) {
+            const origin = await evaluate('({x:window.screenX,y:window.screenY})');
+            fs.writeFileSync(path.join(root, 'native-ax.txt'), execFileSync(process.env.AGENTFLOW_AX_PROBE,
+                [String(ready.pid), String(origin.x + terminalPoint.x), String(origin.y + terminalPoint.y)],
+                { encoding: 'utf8', timeout: 5000 }));
+        }
+        assert.equal(native.surface, 'terminal');
+        assert.equal(native.text, terminalState.terminalText);
+        const origin = await evaluate('({x:window.screenX,y:window.screenY})');
+        assert.ok(native.bounds && native.bounds.width > 100 && native.bounds.height > 30,
+            'Use the terminal pane, not its hidden one-character input');
+        assert.ok(origin.x + terminalPoint.x >= native.bounds.x &&
+            origin.x + terminalPoint.x <= native.bounds.x + native.bounds.width &&
+            origin.y + terminalPoint.y >= native.bounds.y &&
+            origin.y + terminalPoint.y <= native.bounds.y + native.bounds.height,
+            'Native bounds must contain the actual highlight gesture');
+    }
+    console.log('PASS terminal highlight: exact terminal text, stale editor rejected, native focus verified');
     assert.equal(fs.readFileSync(path.join(root, 'selection.txt'), 'utf8'), 'AgentFlow selected code\nSecond line for the diff\n');
     console.log(`AGENTFLOW_SELECTION_E2E_PASSED VSCode=${ready.version} evidence=${root}`);
     await command('stop');
