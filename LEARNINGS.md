@@ -4,6 +4,8 @@ VS Code's editor-selection event never represented its integrated terminal. On t
 
 Mini coverage exercised ordinary and diff-editor pointer highlights plus a terminal highlight, native Swift focus/bounds checks, and rejection of the old editor selection while the terminal was selected. The disposable host disables update checks; no user's profile settings are changed. The terminal tool may register after the fixture becomes visible, so test setup must wait for its actual availability rather than interpret fixture startup as a production success.
 
+Version 1.2.160 passed 250 non-GUI checks, its production build and the isolated Mini integration. The exact authenticated publisher/public validated-only Gallery/archive gate passed for VSIX SHA-256 `fe8a41b2e6f59fd3dbc8ee64f8449ccad1e8e26e64b3f7466d7cf2f8204538f5`. Unversioned Gallery installation preserved the Marketplace UUID, gallery association and no version pin. After a delivered heads-up, the pending-update **Restart Extensions** action activated 1.2.160 in normal host 46340 at 2026-11-05 16:47:08 UTC, verified by its process-bound receipt. Code main 12404 and terminal host 12892 survived; the same fal.service.ts editor and Source Control view remained. No MacBook E2E or Development Host ran. Native Agent Flow build 487 is the matching consumer; physical user acceptance remains distinct from these checks.
+
 
 ## 2026-11-05 — Source Control jumps retain context above the current file
 
