@@ -220,6 +220,12 @@ Fresh fleet qualification separates SSH/editor tests from native access. A Code-
 
 # Learnings
 
+## 2026-11-06 — Startup selection needs a current snapshot, not a new selection event
+
+Agent Flow startup can follow a range highlighted before its watcher was attached. The companion must distinguish an explicit `captureKind=startup` request from live gesture capture. Startup reads the currently selected single visible editor range directly, or the stable local terminal selection tool for an explicitly proven terminal surface. Echo the purpose, surface, nonce and fresh observation time; do not require a recent selection-change event for startup. Keep live event freshness, source-PID/window validation and the 8,192 UTF-16 limit. This adds no model request, Copy, clipboard read, focus command, selected-text cache or polling.
+
+Version1.2.162 passed251 non-GUI checks, TypeScript, lint and production packaging on the Mini. Source and packaged integration exercised real editor, diff and terminal highlights made before a startup request, rejected empty/multiple selections and preserved fixture files. The exact authenticated/public Marketplace archive gate passed for VSIX SHA25699a16a8da7ec72cafb1c4a56fe33e661a890438bc896cc367f5d3bbd042ef98a. Gallery installation alone did not activate162; the Better Git owner's subsequent163 release retained the same two bridge sources and supplied activation. Its live process-bound163 receipt and private selection socket identify host67111 under Code7855, with Gallery UUID, unpinned status and source preserved. Native Agent Flow489 separately waits for initial Code capture before automatic HUD typing focus; the isolated non-activating HUD probe had shown why Code's frontmost PID alone was insufficient. Physical acceptance remains separate.
+
 ## 2026-10-31 — Native Worktree folding commands can finish after their command promise
 
 Ethan reported both Staged Changes and other worktrees remaining expanded after a Worktree link. The live 1.2.141 log at 15:26:51 UTC loaded aimvs39, deferred native presentation until focus, then returned loaded=false at 15:26:56 while the link generation remained current. Those records establish an aborted presentation, but do not identify the precise guard or prove one timing cause for every incident. Keep per-command debug records, explicit expiry/cancellation reasons and ownership diagnostics rather than treating every missing completion as slowness.
