@@ -306,8 +306,8 @@ try {
         fs.writeFileSync(path.join(evidence,'stage-history.json'),JSON.stringify(unstage.value,null,2));
         console.log('BETTER_GIT_STAGE_HISTORY_VERIFIED checks=6 debug-off,stage,next,undo,external-stage,external-unstage');
     } else if (testBackgroundPeers) {
-        // Reproduce the stay-in-Codex route with Finder as the running origin. Code must briefly own
-        // its native tree, then return to that origin. A background-only prototype failed repeats.
+        // The OS URL receiver arrives in Code. Finish its tree first, then activate Finder (the Codex
+        // stand-in) once. A second Code/origin bounce must not be hidden by eventual tree correctness.
         const observer = path.join(root,'app-activation');
         execFileSync('/usr/bin/swiftc',[path.join(extensionRoot,'scripts/test-app-activation.swift'),'-o',observer]);
         activationMonitor=spawn(observer,[],{stdio:['ignore','pipe','pipe']});
@@ -315,6 +315,12 @@ try {
         await until(()=>activationOutput,text=>text.includes('ready\n'),'native activation observer ready');
         const focusCode=()=>execFileSync('/usr/bin/osascript',['-l','JavaScript','-e',`ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`]);
         const focusOrigin=()=>execFileSync('/usr/bin/osascript',['-l','JavaScript','-e',"ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.finder').objectAtIndex(0).activateWithOptions(2);"]);
+        const receiveInCode=async()=>{
+            if((await request('state')).focused)return;
+            activationOutput='';focusCode();
+            await until(()=>request('state'),state=>state.focused,'OS URL receiver is frontmost');
+            await until(()=>activationOutput,text=>text.includes(`com.microsoft.VSCode ${child.pid}`),'receiver activation observed');
+        };
         await request('plain', {repo:0});
         const graph = await evaluate(`(()=>{const row=[...document.querySelectorAll('[role="treeitem"]')].find(row=>row.getAttribute('aria-label')==='base, Test');if(!row)return null;const r=row.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
         assert.ok(graph, 'Graph row exists');
@@ -324,7 +330,10 @@ try {
         const baseline = roots.map(repo=>git(repo,'status','--porcelain=v1'));
         const headers = async count => {
             const found = new Map();
-            const collect = async()=>{for(const row of await evaluate(rowsExpression)){if(row.level==='1' && /^repo-\d+ Git$/.test(row.aria))found.set(row.aria,row.expanded);}};
+            const collect = async()=>{for(const row of await evaluate(rowsExpression)){
+                if(row.aria==='Staged Changes')assert.equal(row.expanded,'false','every observed Staged group stays collapsed');
+                if(row.level==='1' && /^repo-\d+ Git$/.test(row.aria))found.set(row.aria,row.expanded);
+            }};
             await collect();
             const point = await evaluate(`(()=>{const r=document.querySelector('[role="tree"][aria-label="Source Control Management"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+Math.min(100,r.height/2)}})()`);
             // Observation only, after the link finished: inspect virtualized peer headers without
@@ -337,14 +346,22 @@ try {
             return [...found];
         };
         for(const [index,repo] of [1,1,3,roots.length-1].entries()) {
+            await receiveInCode();
             const before = await request('state');
             activationOutput='';
-            await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}`});
+            if(index===0)await request('hold-status',{repo});
+            const opening=request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}`});
+            if(index===0) {
+                try {
+                    await until(()=>JSON.parse(fs.readFileSync(path.join(root,'handoff-events.json'),'utf8')),events=>events.includes('status-start'),'repository loading is blocked');
+                    assert.equal(activationOutput,'','origin must not activate before repository loading finishes');
+                } finally {fs.writeFileSync(path.join(root,'release-status'),'release');}
+            }
+            await opening;
             const after = await until(()=>request('state'),state=>!state.focused,'origin restored after native presentation');
             await until(()=>activationOutput,text=>text.trim().split('\n').at(-1)?.startsWith('com.apple.finder '),'native origin activation');
             const activations=activationOutput.trim().split('\n');
-            assert.ok(activations.includes(`com.microsoft.VSCode ${child.pid}`),'exact receiving editor briefly activated');
-            if(before.focused) { assert.ok(activations.findIndex(line=>line.startsWith('com.apple.finder '))<activations.indexOf(`com.microsoft.VSCode ${child.pid}`),'origin activates before editor'); }
+            assert.deepEqual(activations,[activations.find(line=>line.startsWith('com.apple.finder '))],'one final origin activation, no editor bounce');
             fs.writeFileSync(path.join(evidence,`background-peers-${index}-activations.json`),JSON.stringify(activations));
             const trace = after.trace.slice(before.trace.length);
             assert.equal(trace.filter(command=>command==='workbench.scm.action.collapseAllRepositories').length,1,'one global collapse');
@@ -363,6 +380,7 @@ try {
             console.log(`PASS origin-return peers ${index}: repo-${repo}`);
         }
         for(const [kind,repo] of [['staged',4],['clean',5],['deleted',6]]) {
+            await receiveInCode();activationOutput='';
             git(roots[repo],'reset','--hard','HEAD'); git(roots[repo],'clean','-fd');
             if(kind==='staged') { fs.writeFileSync(path.join(roots[repo],'only-staged.txt'),'staged\n');git(roots[repo],'add','.'); }
             if(kind==='deleted') { fs.unlinkSync(path.join(roots[repo],'a.txt')); }
@@ -382,25 +400,42 @@ try {
             console.log(`PASS origin-return ${kind}`);
         }
         await request('scm-config',{settings:{autoReveal:false}});
+        await receiveInCode();
         await request('command',{command:'workbench.scm.action.expandAllRepositories'});
         const before = await request('state');
         await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[2])}`});
         assert.deepEqual((await request('state')).trace.slice(before.trace.length),['workbench.view.scm'],'Auto Reveal off preserves expansion');
         await request('scm-config',{settings:{autoReveal:true}});
+        await receiveInCode();
         await request('command',{command:'workbench.view.explorer'});
         await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[2])}`});
         await until(()=>evaluate(rowsExpression),rows=>rows.some(row=>row.selected==='true'
             && row.text.includes('repo-2') && row.aria?.startsWith('a.txt,')),'hidden SCM target Auto Reveal');
         assert.deepEqual((await headers(roots.length)).filter(([,expanded])=>expanded==='true').map(([name])=>name),['repo-2 Git'],'hidden SCM is revealed before collapsing');
-        // User intervention cancels automatic app restoration permanently for this click, including a
-        // later manual return to Code that finishes the same still-recent tree presentation.
-        activationOutput='';
+        // Leaving Code while real work is pending cancels the final origin return. A subsequent manual
+        // return may complete the fold, but must leave Ethan in Code rather than bounce him out again.
+        await receiveInCode();activationOutput='';
+        await request('hold-status',{repo:3});
         const interrupted=request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[3])}`});
-        await until(()=>activationOutput,text=>text.includes(`com.microsoft.VSCode ${child.pid}`),'editor activation before user switch');
-        focusOrigin(); await interrupted;
+        try {
+            await until(()=>JSON.parse(fs.readFileSync(path.join(root,'handoff-events.json'),'utf8')),events=>events.includes('status-start'),'status blocked before user app switch');
+            focusOrigin();
+            await until(()=>activationOutput,text=>text.includes('com.apple.finder '),'manual origin activation');
+        } finally {fs.writeFileSync(path.join(root,'release-status'),'release');}
+        await interrupted;
         focusCode(); await until(()=>request('state'),state=>state.focused,'manual Code return');
         await check(3,'origin-return-user-intervened');
         assert.equal((await request('state')).focused,true,'finishing deferred work never restores an origin after a user switch');
+        // Delivery can itself happen behind another app, without a fresh Code focus-loss event.
+        // Finishing that deferred link on a manual Code return must not activate the origin again.
+        activationOutput='';focusOrigin();
+        await until(()=>activationOutput,text=>text.includes('com.apple.finder '),'origin before background delivery');
+        await until(()=>request('state'),state=>!state.focused,'Code is already in background');
+        activationOutput='';
+        await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[1])}`});
+        assert.equal(activationOutput,'','background delivery never activates an app');
+        await receiveInCode();await check(1,'origin-return-background-delivery');
+        assert.equal((await request('state')).focused,true,'manual completion of background-delivered link stays in Code');
         await request('config',{settings:{worktreeLinkKeepEditorFront:true}});
         await request('uri',{uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[2])}`});
         assert.equal((await request('state')).focused,true,'keep-editor-front remains in Code');
@@ -415,7 +450,7 @@ try {
         await request('command',{command:'better-git-vscode.stage-and-next-changed-file'});
         await request('command',{command:'better-git-vscode.undo-last-stage-and-advance'});
         assert.equal(git(roots[2],'diff','--cached','--binary'),stagedBefore,'one Undo restores exact prior index');
-        console.log('BETTER_GIT_BACKGROUND_PEERS_VERIFIED checks=13 graph,repeat,switch,new-large,clean,staged-only,deleted,auto-reveal-off,hidden-scm,user-interruption,keep-editor-front,opt-out,stage-undo');
+        console.log('BETTER_GIT_BACKGROUND_PEERS_VERIFIED checks=14 graph,repeat,switch,new-large,clean,staged-only,deleted,auto-reveal-off,hidden-scm,user-interruption,background-delivery,keep-editor-front,opt-out,stage-undo');
     } else if (testLastStaged) {
         await request('open',{repo:1});
         const baseline=git(roots[1],'diff','--cached','--name-only');

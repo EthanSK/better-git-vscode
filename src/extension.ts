@@ -1336,11 +1336,11 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 catch (error) { debugLog("worktree-focus", String(error)); }
             };
             const handoff = async () => {
-                // Ethan wants Codex next in Cmd-Tab immediately, before slow repository/tree work. The
-                // origin still activates first. Native SCM collapse/expand needs the receiving Code
-                // window briefly in front even in "return to Codex" mode; background-only attempts
-                // retained stale collapsed selections on repeat. Restore the origin after this owned
-                // presentation only, never after a user focus switch, review input or a newer link.
+                // Ethan (2026-11-06): finish Source Control first, then return to Codex once. Activating
+                // another app before native list work can leave Graph as lastFocusedList or defer the
+                // fold until its recent-link deadline expires; that is a focus failure, not slow Git.
+                // Keep Editor Front retains its separately requested origin -> Code Cmd-Tab ordering.
+                // Return mode does no app activation here: the URL receiver already owns the window.
                 if (!sourceLink || !isCurrent()) { return; }
                 let automaticOriginReturn = false;
                 try {
@@ -1354,17 +1354,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     const keepEditorFront = config.get<boolean>("worktreeLinkKeepEditorFront", false);
                     const editorBundleId = ({ vscode: "com.microsoft.VSCode", "vscode-insiders": "com.microsoft.VSCodeInsiders" } as Record<string, string>)[vscode.env.uriScheme];
                     automaticOriginReturn = destination === "com.openai.codex" && !keepEditorFront;
-                    debugLog("worktree-focus", `Starting app handoff for #${generation} before repository loading.`);
                     try {
                         const editorProcessId = Number(process.env.VSCODE_PID);
-                        const acknowledged = await returnToApp(destination, process.platform, undefined, editorBundleId, editorProcessId);
-                        if (!keepEditorFront && acknowledged === "editor-active" && Number.isSafeInteger(editorProcessId)
+                        if (keepEditorFront) {
+                            debugLog("worktree-focus", `Starting Keep Editor Front handoff for #${generation} before repository loading.`);
+                            await returnToApp(destination, process.platform, undefined, editorBundleId, editorProcessId);
+                            debugLog("worktree-focus", `Finished Keep Editor Front handoff for #${generation} before repository loading.`);
+                        } else if (Number.isSafeInteger(editorProcessId)
                             && editorProcessId > 0 && editorProcessId <= 0x7fffffff) {
                             originAfterPresentation = { destination, editorProcessId, focusLossGeneration: worktreeFocusLossGeneration };
+                            debugLog("worktree-focus", `Origin return for #${generation} waits until native presentation completes.`);
                         }
                     }
                     catch (error) { debugLog("worktree-focus", String(error)); }
-                    debugLog("worktree-focus", `Finished app handoff for #${generation} before repository loading.`);
                 } finally {
                     if (automaticOriginReturn) { usage?.automaticReturnConfigured(); }
                     else { usage?.arm(); }
@@ -1374,6 +1376,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             const revealed = await openWorktreeInSourceControl(root,
                 () => isCurrent() && initialPresentationIsCurrent(), value => { deferredRoot = value; }, handoff);
             debugLog("worktree-link", `Finished #${generation}: loaded=${revealed}, nativePending=${!!deferredRoot}, current=${isCurrent()}, elapsed=${Date.now() - receivedAt}ms.`);
+            // If Code did not keep focus, a later manual return may finish this one recent fold but
+            // must not bounce Ethan out again. This also covers a link delivered while already behind
+            // another app, where there is no new focus-loss event to invalidate the captured generation.
+            if (deferredRoot) { originAfterPresentation = undefined; }
             if (!revealed) { usage?.finish("open-incomplete"); }
             if (revealed && !deferredRoot) { await restoreOrigin(() => isCurrent() && initialPresentationIsCurrent()); }
             if (revealed && deferredRoot && isCurrent()) {
@@ -3244,8 +3250,8 @@ interface FileChange {
 const revealCollapsedWorktree = async (
     repository: any, repositories: any[], isCurrent: () => boolean, onDeferred: () => void
 ): Promise<boolean> => {
-    // Ethan's 2026-11-06 "activate Codex ... do its own thing in the bg" trial remains a desired alternative,
-    // not a reason to remove the focus guards below: in the isolated 1.144 workbench, background list.*
+    // Ethan's 2026-11-06 "activate Codex ... do its own thing in the bg" trial was superseded by his
+    // return-after-fold choice. Keep the focus guards below: in the isolated 1.144 workbench, background list.*
     // commands still used the previously focused Graph list and opened its historical file. A direct SCM
     // group-focus command did not fix that routing. A background replacement must prove target ownership
     // from Graph too; the successful global collapse alone does not prove the requested root was expanded.

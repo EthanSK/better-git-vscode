@@ -1,4 +1,5 @@
-// Native app handoff for explicit Worktree links; preserve the origin's app-switching order before loading.
+// Native app handoff for explicit Worktree links. Normal return activates the origin after SCM work;
+// the separate Keep Editor Front opt-in preserves origin -> exact Code app-switching order before loading.
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { normalizeReturnApp } from "./gitWorktreeLink";
@@ -103,7 +104,7 @@ export async function returnToApp(
     }
     if (validPid(expectedFrontProcessId)) { args.push(String(expectedFrontProcessId)); }
     const result = await run("/usr/bin/osascript", args, { timeout: 5000 });
-    // The caller may restore its origin only after this exact editor was acknowledged. A missing app,
-    // ambiguous editor, timeout or user app switch must never arm a later automatic focus change.
+    // Keep Editor Front receives an acknowledgement only for its exact editor. Normal one-way return
+    // has no editor acknowledgement; its caller guards the expected front process before activation.
     return result?.stdout?.toString().trim() === "editor-active" ? "editor-active" : undefined;
 }

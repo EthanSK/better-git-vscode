@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.163
+
+- For optional Worktree-link return focus, finish opening the target in Source Control before returning to the origin app once. Keep Editor Front retains its existing app-switching order.
+- Reduce the explicit link's native tree settling gap from 500 to 400 ms. Review navigation and staging timing are unchanged.
+- Leave VS Code in front when a manual return finishes a presentation interrupted by an app switch.
+
 ## 1.2.161
 
 - Show 🧯 for the staged file being reviewed, keeping 🔥🔥 for unstaged changes and preserving eyes/explosion markers and the badge-off setting.

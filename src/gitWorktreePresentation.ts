@@ -6,7 +6,9 @@ export const WORKTREE_PRESENTATION_MAX_AGE_MS = 10_000;
 // Native expand/group-focus commands return before their renderer work; only explicit link UI uses this gap.
 // This is not a review-input debounce, and increasing the total link age is not a substitute for settling
 // the particular queued tree command. See revealCollapsedWorktree for target-identity verification.
-export const WORKTREE_TREE_SETTLE_MS = 500;
+// Ethan (2026-11-06) asked to lower the gap once the premature origin activation was removed.
+// The remaining native queue still needs settling; this is independent of the focus requirement.
+export const WORKTREE_TREE_SETTLE_MS = 400;
 export type WorktreePresentationEndReason = "cancelled" | "newer-link" | "cursor-move" | "document-edit"
     | "review-navigation" | "expired" | "not-owned" | "completed" | "failed";
 
