@@ -19,12 +19,13 @@ const localToolHost = vscode as typeof vscode & { lm?: LocalTerminalTools };
 /**
  * Monaco deliberately hides its text from macOS AX when screen-reader mode is off.
  * AgentFlow therefore pulls one fresh, user-made editor selection through VS Code's
- * public API. Never enable accessibility mode, copy, execute an editor command, poll,
+ * public API. A startup pull also reads the currently highlighted range without
+ * requiring a new gesture. Never copy, execute an editor command, poll,
  * cache selected text, or change focus. Ordinary Git/navigation latency is untouched.
  *
  * A private per-user Unix socket has no TCP/network endpoint. Only a request tied to
- * the current mouse/keyboard gesture and focused VS Code PID can read text. Other windows,
- * programmatic hunk selections, old highlights and webviews return null. Terminal
+ * recording startup or the current mouse/keyboard gesture and focused VS Code PID can read text. Other windows,
+ * programmatic hunk movements during recording and webviews return null. Terminal
  * pulls require Agent Flow to prove terminal focus; they never borrow editor text.
  * See https://code.visualstudio.com/api/references/vscode-api#TextEditorSelectionChangeEvent
  */
@@ -54,6 +55,14 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
         const editor = vscode.window.activeTextEditor;
         return editor && editor.selections.length === 1 ?
             { editor, selection: editor.selection, version: editor.document.version } : undefined;
+    };
+    const readEditorSelection = (editor: vscode.TextEditor, selection: vscode.Selection): string => {
+        // Both startup and live pulls use the same UTF-16 transport bound.
+        const document = editor.document;
+        const start = document.offsetAt(selection.start);
+        const end = Math.min(document.offsetAt(selection.end), start + 8192);
+        return document.getText(new vscode.Range(selection.start, document.positionAt(end)))
+            .replace(/[\uD800-\uDBFF]$/, "");
     };
     let previous = snapshot();
     let disposed = false;
@@ -130,8 +139,23 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
                             parseAgentFlowSelectionRequest(request)) {
                             result = { version: 1, nonce: request.nonce, sourcePID: mainPID,
                                 surface: "terminal", observedAt: Date.now(), text,
+                                captureKind: request.captureKind,
                                 inputKind: request.inputKind ?? "mouse" };
                         }
+                    }
+                } else if (request && request.captureKind === "startup" && request.surface === "editor" &&
+                    request.sourcePID === mainPID && vscode.window.state.focused) {
+                    // "Preselect" is an existing highlight at Agent Flow start,
+                    // not a selection-change event. Read today's active range,
+                    // never latest's old editor. Native code separately proves
+                    // this pane owns focus before and after the socket read.
+                    const initial = snapshot();
+                    if (initial && !initial.selection.isEmpty &&
+                        vscode.window.visibleTextEditors.includes(initial.editor)) {
+                        const text = readEditorSelection(initial.editor, initial.selection);
+                        result = { version: 1, nonce: request.nonce, sourcePID: mainPID,
+                            surface: "editor", captureKind: "startup", observedAt: Date.now(), text,
+                            inputKind: request.inputKind ?? "mouse" };
                     }
                 } else if (request && request.surface !== "terminal" && request.sourcePID === mainPID && current && vscode.window.state.focused &&
                     current.editor === vscode.window.activeTextEditor &&
@@ -140,12 +164,7 @@ export function registerAgentFlowSelectionBridge(context: vscode.ExtensionContex
                     current.editor.selection.isEqual(current.selection) &&
                     agentFlowSelectionIsFresh(request, current.changedAt, Date.now(), current.inputKind,
                         current.fullDocument, current.direction)) {
-                    const document = current.editor.document;
-                    const start = document.offsetAt(current.selection.start);
-                    const end = Math.min(document.offsetAt(current.selection.end), start + 8192);
-                    // Do not split a UTF-16 surrogate pair at the transport bound.
-                    const text = document.getText(new vscode.Range(current.selection.start, document.positionAt(end)))
-                        .replace(/[\uD800-\uDBFF]$/, "");
+                    const text = readEditorSelection(current.editor, current.selection);
                     result = { version: 1, nonce: request.nonce, sourcePID: mainPID,
                         changedAt: current.changedAt, text, inputKind: request.inputKind ?? "mouse" };
                 }

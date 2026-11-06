@@ -19,6 +19,10 @@ exports.run = async () => {
             previous = request.id;
             if (request.action === 'programmatic') {
                 vscode.window.activeTextEditor.selection = new vscode.Selection(0, 0, 0, 5);
+            } else if (request.action === 'multiple') {
+                vscode.window.activeTextEditor.selections = [new vscode.Selection(0, 0, 0, 5), new vscode.Selection(1, 0, 1, 5)];
+            } else if (request.action === 'empty') {
+                vscode.window.activeTextEditor.selection = new vscode.Selection(0, 0, 0, 0);
             } else if (request.action === 'diff') {
                 await vscode.commands.executeCommand('vscode.diff',
                     vscode.Uri.file(path.join(root, 'original.txt')), file, 'Selection bridge diff');

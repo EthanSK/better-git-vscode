@@ -104,12 +104,39 @@ try {
         assert.equal(await query(since, { nonce: 'bad' }), null, 'Malformed request');
         console.log(`PASS ${label}: real mouse selection -> Better Git -> Unix socket -> native client`);
     }
+    async function preselected(surface, expectedText) {
+        // Fixture-only aging: the next request deliberately starts after the
+        // selection event, as when Ethan highlights first and then summons HUD.
+        await pause(100);
+        const startedAt = Date.now();
+        const reply = await query(startedAt, { surface, captureKind: 'startup' });
+        assert.equal(reply?.text, expectedText, `${surface} preselection must not require a new selection event`);
+        assert.equal(reply.captureKind, 'startup');
+        assert.equal(reply.surface, surface);
+        assert.ok(reply.observedAt >= startedAt);
+        if (process.env.AGENTFLOW_SELECTION_PROBE) {
+            const native = JSON.parse(execFileSync(process.env.AGENTFLOW_SELECTION_PROBE,
+                [String(ready.pid), String(startedAt), surface, 'startup'], { encoding: 'utf8', timeout: 5000 }));
+            assert.equal(native.surface, surface);
+            assert.equal(native.text, expectedText, 'Production Swift startup pull must preserve preselected text');
+        }
+        assert.equal(await query(Date.now()), null, 'Startup snapshot must not weaken a later live gesture');
+        console.log(`PASS ${surface} preselected before startup -> companion -> production native client`);
+    }
     await highlight('plain editor, screen-reader mode off');
+    await preselected('editor', (await command('state')).text);
+    await command('multiple');
+    assert.equal(await query(Date.now(), { surface: 'editor', captureKind: 'startup' }), null,
+        'Multiple editor selections stay ambiguous at startup');
+    await command('empty');
+    assert.equal(await query(Date.now(), { surface: 'editor', captureKind: 'startup' }), null,
+        'An empty startup selection must not reuse the previous range');
     await command('programmatic');
     await pause(100);
     assert.equal(await query(Date.now() - 500), null, 'Programmatic selection must not become context');
     await command('diff');
     await highlight('diff editor, screen-reader mode off');
+    await preselected('editor', (await command('state')).text);
     await command('terminal');
     const terminalBox = await until(() => evaluate(`(() => {
         const nodes = [...document.querySelectorAll('.xterm-screen')];
@@ -152,6 +179,7 @@ try {
             'Native bounds must contain the actual highlight gesture');
     }
     console.log('PASS terminal highlight: exact terminal text, stale editor rejected, native focus verified');
+    await preselected('terminal', terminalState.terminalText);
     assert.equal(fs.readFileSync(path.join(root, 'selection.txt'), 'utf8'), 'AgentFlow selected code\nSecond line for the diff\n');
     console.log(`AGENTFLOW_SELECTION_E2E_PASSED VSCode=${ready.version} evidence=${root}`);
     await command('stop');

@@ -23,6 +23,13 @@ suite("AgentFlow selection protocol", () => {
         assert.ok(parseAgentFlowSelectionRequest({ ...request, surface: "editor" }, 10_050));
         assert.strictEqual(parseAgentFlowSelectionRequest({ ...request, surface: "other" }, 10_050), undefined);
     });
+    test("startup snapshots name their pane and never relax live gesture freshness", () => {
+        assert.ok(parseAgentFlowSelectionRequest({ ...request, surface: "editor", captureKind: "startup" }, 10_050));
+        assert.ok(parseAgentFlowSelectionRequest({ ...request, surface: "terminal", captureKind: "startup" }, 10_050));
+        assert.strictEqual(parseAgentFlowSelectionRequest({ ...request, captureKind: "startup" }, 10_050), undefined);
+        assert.strictEqual(parseAgentFlowSelectionRequest({ ...request, surface: "editor", captureKind: "other" }, 10_050), undefined);
+        assert.ok(!agentFlowSelectionIsFresh(request, 8500, 10_050));
+    });
     test("terminal reader returns only exact selected text, preserving whitespace", () => {
         assert.strictEqual(agentFlowTerminalSelection(["The active terminal's selection:\n  selected\n"]), "  selected\n");
         for (const parts of [[], [undefined], ["No text is currently selected in the active terminal."],

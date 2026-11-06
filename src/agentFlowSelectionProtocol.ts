@@ -8,6 +8,7 @@ export interface AgentFlowSelectionRequest {
     inputKind?: AgentFlowSelectionKind;
     inputDirection?: AgentFlowSelectionDirection;
     surface?: "editor" | "terminal";
+    captureKind?: "startup";
 }
 
 export type AgentFlowSelectionKind = "mouse" | "keyboard" | "selectAll";
@@ -38,7 +39,9 @@ export function parseAgentFlowSelectionRequest(value: unknown, now = Date.now())
         request.gestureStartedAt > request.requestedAt || request.requestedAt - request.gestureStartedAt > 60_000 ||
         (request.inputKind !== undefined && !["mouse", "keyboard", "selectAll"].includes(request.inputKind)) ||
         (request.inputDirection !== undefined && !["left", "right", "up", "down"].includes(request.inputDirection)) ||
-        (request.surface !== undefined && !["editor", "terminal"].includes(request.surface))) { return; }
+        (request.surface !== undefined && !["editor", "terminal"].includes(request.surface)) ||
+        (request.captureKind !== undefined && request.captureKind !== "startup") ||
+        (request.captureKind === "startup" && request.surface === undefined)) { return; }
     return request;
 }
 
