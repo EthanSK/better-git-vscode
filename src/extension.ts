@@ -3244,6 +3244,11 @@ interface FileChange {
 const revealCollapsedWorktree = async (
     repository: any, repositories: any[], isCurrent: () => boolean, onDeferred: () => void
 ): Promise<boolean> => {
+    // Ethan's 2026-11-06 "activate Codex ... do its own thing in the bg" trial remains a desired alternative,
+    // not a reason to remove the focus guards below: in the isolated 1.144 workbench, background list.*
+    // commands still used the previously focused Graph list and opened its historical file. A direct SCM
+    // group-focus command did not fix that routing. A background replacement must prove target ownership
+    // from Graph too; the successful global collapse alone does not prove the requested root was expanded.
     // Ethan's 2026-10-05 correction: use the same GLOBAL minimize command as the toolbar, settle it, then
     // expand only the requested repository. Do not restore the old expand-everything/repeated sweep path.
     // Merge Changes is an optional group BEFORE Staged; clean/staged-only roots still need expansion.
