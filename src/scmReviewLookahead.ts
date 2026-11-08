@@ -1,6 +1,6 @@
 // Viewport planning and a replaceable presentation queue for macScmReviewLookahead.ts.
 // Ethan's "ten or so underneath": move the current Source Control review row only
-// when upcoming files would otherwise be below the viewport, keeping context above it too.
+// when upcoming files would otherwise be below the viewport, aligning that row at the top.
 // This is presentation, never navigation,
 // selection or staging. The native adapter supplies the visible file area below any sticky headers.
 export interface ScmReviewViewport {
@@ -25,12 +25,10 @@ export function scmReviewScrollDistance(view: ScmReviewViewport): number {
     if (wanted <= 0) { return 0; }
     const visibleBelow = Math.floor((view.bottom - view.rowTop - view.rowHeight) / view.rowHeight);
     if (visibleBelow >= wanted) { return 0; }
-    // Ethan wants about ten file rows above the current file after the jump (2026-11-05),
-    // not a top-aligned row. Short panes keep as much context as fits without sacrificing
-    // the upcoming rows that caused this scroll. The same planner owns normal, eyes and
-    // explosion/file-mode presentation; none of these modes may change the staging set.
-    const contextRowsAbove = Math.min(10, Math.max(0, capacity - wanted - 1));
-    return Math.max(0, view.rowTop - view.top - contextRowsAbove * view.rowHeight);
+    // Ethan (2026-11-08) reverted the ten-rows-above destination: the earlier jump to the
+    // top worked well enough. Keep the existing near-bottom trigger
+    // and shared normal/eyes/explosion path; scrolling never changes the staging set.
+    return Math.max(0, view.rowTop - view.top);
 }
 
 // Only presentation requests may be coalesced. Every review ratchet and release still follows the

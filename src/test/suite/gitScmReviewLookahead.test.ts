@@ -1,3 +1,4 @@
+// Cover the near-bottom trigger, top-aligned destination and non-blocking presentation queue.
 import * as assert from 'assert';
 import { ScmReviewLookahead, scmReviewScrollDistance, ScmReviewViewport } from '../../scmReviewLookahead';
 
@@ -6,8 +7,8 @@ suite('Source Control review lookahead', () => {
         top: 100, bottom: 700, rowTop: 500, rowHeight: 20, remainingFiles: 50, lookahead: 10, ...changes,
     });
 
-    test('a file near the bottom keeps ten file rows of context above it', () => {
-        assert.strictEqual(scmReviewScrollDistance(view()), 200);
+    test('a file near the bottom returns to the top of the visible file area', () => {
+        assert.strictEqual(scmReviewScrollDistance(view()), 400);
     });
     test('ten complete following rows already visible need no movement', () => {
         assert.strictEqual(scmReviewScrollDistance(view({ rowTop: 480 })), 0);
@@ -15,7 +16,7 @@ suite('Source Control review lookahead', () => {
     });
     test('the end of the worktree does not repeatedly scroll when every remaining file fits', () => {
         assert.strictEqual(scmReviewScrollDistance(view({ rowTop: 600, remainingFiles: 4 })), 0);
-        assert.strictEqual(scmReviewScrollDistance(view({ rowTop: 600, remainingFiles: 5 })), 300);
+        assert.strictEqual(scmReviewScrollDistance(view({ rowTop: 600, remainingFiles: 5 })), 500);
         assert.strictEqual(scmReviewScrollDistance(view({ remainingFiles: 0 })), 0);
     });
     test('short panes request only the following rows they can fit', () => {
@@ -24,13 +25,13 @@ suite('Source Control review lookahead', () => {
         assert.strictEqual(scmReviewScrollDistance(view({ bottom: 120, rowTop: 100 })), 0);
     });
     test('fractional row positions do not count clipped rows as fully visible', () => {
-        assert.strictEqual(scmReviewScrollDistance(view({ rowTop: 480.25 })), 180.25);
+        assert.strictEqual(scmReviewScrollDistance(view({ rowTop: 480.25 })), 380.25);
     });
-    test('a medium pane preserves the context that fits alongside ten following rows', () => {
+    test('a medium pane also top-aligns the current row when the jump triggers', () => {
         const distance = scmReviewScrollDistance(view({ bottom: 500, rowTop: 460 }));
-        assert.strictEqual(distance, 180);
-        assert.strictEqual((460 - distance - 100) / 20, 9);
-        assert.strictEqual((500 - (460 - distance) - 20) / 20, 10);
+        assert.strictEqual(distance, 360);
+        assert.strictEqual(460 - distance, 100);
+        assert.ok((500 - (460 - distance) - 20) / 20 >= 10);
     });
     test('the jump satisfies lookahead and does not retrigger at the same row', () => {
         for (const capacity of [2, 5, 15, 20, 21, 30]) {
@@ -50,7 +51,7 @@ suite('Source Control review lookahead', () => {
     });
     test('native planning uses the same standalone function', () => {
         const native = new Function(`return (${scmReviewScrollDistance.toString()})`)() as typeof scmReviewScrollDistance;
-        assert.strictEqual(native(view()), 200);
+        assert.strictEqual(native(view()), 400);
         assert.strictEqual(native(view({ remainingFiles: 2 })), 0);
     });
 

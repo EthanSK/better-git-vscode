@@ -94,7 +94,7 @@ fs.writeFileSync(path.join(profile, 'User', 'keybindings.json'), JSON.stringify(
     { key: 'cmd+shift+f20', command: 'better-git-vscode.stage-hold-ready', args: 'razer' },
     { key: 'cmd+shift+f15', command: 'better-git-vscode.stage-hold-clear', args: 'razer' },
 ]));
-if (testLookahead) { for (let i = 0; i < 70; i++) { fs.writeFileSync(path.join(roots[1], `review-${String(i).padStart(3, '0')}.txt`), 'review\n'); } fs.writeFileSync(path.join(roots[1], 'review-050 • test.txt'), 'review\n'); }
+if (testLookahead) { for (let i = 0; i < (testLookaheadTall ? 120 : 70); i++) { fs.writeFileSync(path.join(roots[1], `review-${String(i).padStart(3, '0')}.txt`), 'review\n'); } fs.writeFileSync(path.join(roots[1], 'review-050 • test.txt'), 'review\n'); }
 const server = net.createServer();
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
@@ -510,11 +510,11 @@ try {
         await until(status,text=>text.includes('Staged: a.txt'),'re-enabled status remembers the same file');
         console.log('BETTER_GIT_LAST_STAGED_VERIFIED forward-eyes,excluded-preview,reverse-file-mode,rebased-direction,matching-click-target,exact-undo,single-file,setting-restore');
     } else if (testLookahead) {
-        // The default compact window separately proves context shrinks to fit a shorter pane.
+        // Both compact and tall windows must restore the earlier top-aligned jump.
         await request('open', {repo:1});
         if (testLookaheadTall) {
             // Graph shares half the sidebar height in this fixture. Collapse that test
-            // view to exercise ten context rows, rather than resizing the entire app.
+            // view to exercise the same jump in a taller pane, rather than resizing the app.
             const graph=await evaluate(`(()=>{const h=[...document.querySelectorAll('.pane-header')].find(h=>h.textContent.includes('Graph'));if(!h)return null;const r=h.getBoundingClientRect();return {x:r.x+10,y:r.y+r.height/2,expanded:h.getAttribute('aria-expanded')};})()`);
             assert.ok(graph && graph.expanded==='true','expanded Graph header in isolated fixture');
             for(const type of ['mousePressed','mouseReleased']) await send('Input.dispatchMouseEvent',{type,x:graph.x,y:graph.y,button:'left',clickCount:1});
@@ -534,12 +534,11 @@ try {
             return {top,left:box.left,bottom:box.bottom,rowTop:current?.top,rowBottom:current?.bottom,rowHeight:current?.height,
                 selected:[...tree.querySelectorAll('[aria-selected="true"]')].map(r=>r.getAttribute('aria-label'))};
         })()`);
-        // The jump now preserves ten rows above where they fit, in every review mode.
-        // Independently inspect painted row geometry and leave ten complete upcoming rows.
-        const hasContext = g => {
+        // Ethan reverted the destination to the top (2026-11-08). Observe actual painted
+        // geometry independently of the planner; navigation, selection and Git stay untouched.
+        const isTopAligned = g => {
             const capacity=Math.floor((g.bottom-g.top)/g.rowHeight);
-            const above=Math.min(10,Math.max(0,capacity-11));
-            return Math.abs(g.rowTop-g.top-above*g.rowHeight)<2
+            return Math.abs(g.rowTop-g.top)<2
                 && g.bottom-g.rowBottom>=Math.min(10,capacity-1)*g.rowHeight-1;
         };
         const initialAccessibility = (await request('native-accessibility')).value;
@@ -550,7 +549,7 @@ try {
             assert.ok(before.bottom-before.rowBottom<220,'fixture starts with fewer than ten file rows below');
             await request('command',{command:'better-git-vscode.next-scm-change'});
             file = path.basename(new URL((await request('state')).active).pathname);
-            const after = await until(geometry,hasContext,'ordinary Next preserves context above and ten rows below');
+            const after = await until(geometry,isTopAligned,'ordinary Next top-aligns the current file and leaves upcoming rows');
             const normal = await request('state');
             assert.deepEqual(after.selected,before.selected,'ordinary presentation cannot change SCM selection');
             assert.equal(normal.keyboardReviewActive,false,'ordinary Next must not enter a batch');
@@ -582,7 +581,7 @@ try {
         // A tall pane can already have enough room here: do not demand an unnecessary
         // jump. The following repeated explosion-mode steps must reach its real boundary.
         const after = await until(geometry, testLookaheadTall
-            ? g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220 : hasContext,
+            ? g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220 : isTopAligned,
             'eyes mode leaves ten rows below without an unnecessary jump');
         assert.deepEqual(after.selected,before.selected,'presentation cannot change SCM selection');
         assert.equal(git(roots[1], 'diff', '--cached', '--name-only'),indexBefore,'presentation cannot stage');
@@ -592,8 +591,11 @@ try {
         assert.equal(pointerAfter.pointerX,initialAccessibility.pointerX,'physical pointer X unchanged');
         assert.equal(pointerAfter.pointerY,initialAccessibility.pointerY,'physical pointer Y unchanged');
         await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
+        // Reach the actual near-bottom threshold in either pane height. A fixed twelve
+        // steps can remain entirely above that threshold in a tall, top-aligned viewport.
+        const stepCount=Math.max(12,Math.ceil((after.bottom-after.rowBottom)/after.rowHeight)-8);
         let previous=after, explosionJump;
-        for (let i=0;i<12;i++) {
+        for (let i=0;i<stepCount;i++) {
             await request('command',{command:'better-git-vscode.step-keyboard-review',args:['next']});
             file = `review-${String(26+i).padStart(3,'0')}.txt`;
             const current=await until(geometry,g=>g.rowTop>=g.top && g.bottom-g.rowBottom>=220,'repeated explosion-mode lookahead');
@@ -602,15 +604,15 @@ try {
             if(current.rowTop<previous.rowTop+current.rowHeight-1) explosionJump=current;
             previous=current;
         }
-        // A real jump while the explosion set grows must preserve context too, without
+        // A real jump while the explosion set grows must top-align the current file, without
         // committing the set. Eyes and explosion share one background presentation path.
-        assert.ok(explosionJump && hasContext(explosionJump),'explosion-mode jump preserves context above');
-        if (testLookaheadTall) assert.ok(Math.abs((explosionJump.rowTop-explosionJump.top)/explosionJump.rowHeight-10)<0.1,'tall pane keeps ten complete rows above');
+        assert.ok(explosionJump && isTopAligned(explosionJump),'explosion-mode jump top-aligns the current file');
+        if (testLookaheadTall) assert.ok(Math.abs(explosionJump.rowTop-explosionJump.top)<2,'tall pane top-aligns the current row');
         await capture('lookahead-explosion-after');
         assert.equal(git(roots[1],'diff','--cached','--name-only'),indexBefore,'explosion-mode presentation cannot stage before release');
         await request('command',{command:'better-git-vscode.toggle-keyboard-review',args:['next']});
         await request('command',{command:'better-git-vscode.finish-keyboard-review'});
-        for (let i=25;i<37;i++) { assert.ok(git(roots[1],'diff','--cached','--name-only').includes(`review-${String(i).padStart(3,'0')}.txt`)); }
+        for (let i=25;i<25+stepCount;i++) { assert.ok(git(roots[1],'diff','--cached','--name-only').includes(`review-${String(i).padStart(3,'0')}.txt`)); }
         assert.ok(!git(roots[1],'diff','--cached','--name-only').includes(file),'current eyes preview excluded');
         await request('command',{command:'better-git-vscode.undo-last-stage-and-advance'});
         assert.equal(git(roots[1],'diff','--cached','--name-only'),indexBefore,'one Undo restores the exact batch');

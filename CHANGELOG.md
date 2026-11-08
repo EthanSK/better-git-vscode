@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.164
+
+- Restore the earlier Source Control scroll jump: when the current review file nears the bottom, move it to the top instead of keeping ten rows above it. This applies to ordinary navigation, eyes review and Stage files mode.
+
 ## 1.2.163
 
 - For optional Worktree-link return focus, finish opening the target in Source Control before returning to the origin app once. Keep Editor Front retains its existing app-switching order.
