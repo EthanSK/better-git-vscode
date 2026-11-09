@@ -5690,6 +5690,29 @@ suite('SCM change navigation E2E', () => {
         assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the whole set');
     });
 
+    test('keyboard modifier retry after an empty begin enters eyes without releasing Option', async () => {
+        await openPlainAt('committed/mod_d.txt', 0); await focusIsolatedTestWindow();
+        const sample = (option = false, shift = false) => extensionApi.sampleKeyboardReviewKeys!({option,shift,navigation:false,usedShift:false});
+        const tap = async () => { sample(true,true); sample(true); await extensionApi.whenKeyboardGestureSettled!(); };
+        sample(); sample(true); await tap();
+        assert.strictEqual(extensionApi.isKeyboardReviewActive(), false, 'a clean starting file retires the empty begin');
+        write('kb_retry_a.txt', 'first'); write('kb_retry_b.txt', 'second');
+        await refreshUntil(() => isUntracked('kb_retry_a.txt') && isUntracked('kb_retry_b.txt'), 'keyboard retry files');
+        await openPlainAt('kb_retry_a.txt', 0); // Option stays held across the rejected entry and file switch.
+        await tap();
+        assert.strictEqual(badge('kb_retry_a.txt'), '👀', 'a rejected begin must not advance the next session to explosion');
+        await tap();
+        assert.strictEqual(badge('kb_retry_a.txt'), '💥💥', 'the next real toggle still enters file mode');
+        await tap();
+        await keyboardReview.step('next');
+        sample(); await extensionApi.whenKeyboardGestureSettled!();
+        await extensionApi.whenStageTransactionsSettled();
+        assert.strictEqual(git('diff --cached --name-only'), 'kb_retry_a.txt', 'eyes release stages only the reviewed file');
+        await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+        await extensionApi.whenStageTransactionsSettled();
+        assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the set');
+    });
+
     test('keyboard review file mode release includes current file and the next gesture starts in eyes', async () => {
         const names = ['kb_files_a.txt', 'kb_files_b.txt', 'kb_files_c.txt'];
         for (const name of names) { write(name, name); }

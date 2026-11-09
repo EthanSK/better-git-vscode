@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.165
+
+- Keep the keyboard modifier reader alive when VS Code becomes idle or active without losing focus, so those notifications cannot discard an Option–Shift tap or pending review set.
+- Start in eyes mode when retrying a keyboard review that could not begin or was retired. Existing eyes/file toggles, release staging and immediate Shift shortcuts keep their behavior.
+- Add quiet debug-log receipts for modifier-reader startup and its first sample, without recording typed keys or logging each navigation step.
+
 ## 1.2.164
 
 - Restore the earlier Source Control scroll jump: when the current review file nears the bottom, move it to the top instead of keeping ten rows above it. This applies to ordinary navigation, eyes review and Stage files mode.

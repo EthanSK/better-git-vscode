@@ -18,7 +18,8 @@ export class KeyboardReviewGesture {
     private collecting = false;
 
     constructor(private readonly cycle: (mode: KeyboardReviewMode) => void,
-        private readonly release: () => void) {}
+        private readonly release: () => void,
+        private readonly currentReviewMode?: () => KeyboardReviewMode) {}
 
     // Legacy Option+Shift+Next/Previous owns that entire chord, including repeats and its eventual release.
     consumeStageShortcut(): void { this.consumed = true; this.shiftTap = false; this.collecting = false; this.mode = "normal"; }
@@ -46,7 +47,10 @@ export class KeyboardReviewGesture {
         if (state.navigation || state.usedShift) { this.shiftTap = false; }
         if (previous.shift && !state.shift) {
             if (state.option && this.shiftTap && !this.consumed) {
-                this.mode = this.mode === "changes" ? "files" : "changes";
+                // The real review owns its mode. A rejected/retired begin must not leave this interpreter
+                // one tap ahead and make a fresh review enter explosion instead of Ethan's default eyes.
+                const currentMode = this.currentReviewMode?.() ?? this.mode;
+                this.mode = currentMode === "changes" ? "files" : "changes";
                 this.collecting = true;
                 this.cycle(this.mode);
             }

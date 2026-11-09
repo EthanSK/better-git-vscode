@@ -2314,7 +2314,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     };
     const keyboardGesture = new KeyboardReviewGesture(
         mode => trackKeyboardGesture(setKeyboardReviewMode(mode)),
-        () => trackKeyboardGesture(finishKeyboardReview())
+        () => trackKeyboardGesture(finishKeyboardReview()),
+        () => liveKeyboardReview(keyboardReviewHolds())?.keyboardReviewMode ?? "normal"
     );
     const observeKeyboardState = (state: ReviewKeyState): void => {
         if (state.navigationKeys === undefined) { keyboardNavigationRepeats.reset(); }

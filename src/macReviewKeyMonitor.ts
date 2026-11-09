@@ -57,6 +57,10 @@ export class MacReviewKeyMonitor {
         private readonly options: { platform?: string; spawn?: (script: string) => MonitorProcess } = {}) {}
 
     focus(focused: boolean): void {
+        // VS Code also emits window-state events for activity/idle changes with the same focused value.
+        // Restarting here used to lose the first Option–Shift tap after idle or cancel an unfinished set.
+        // Preserve a live reader; a reader that exited is absent and can still restart on the next event.
+        if (focused === (this.child !== undefined)) { return; }
         this.stop();
         if (!focused || this.disposed || (this.options.platform ?? process.platform) !== "darwin") { return; }
         let buffer = "";
@@ -67,6 +71,8 @@ export class MacReviewKeyMonitor {
                     { stdio: ["pipe", "pipe", "ignore"] }) as unknown as MonitorProcess;
         } catch { this.log("Keyboard modifier monitor could not start."); return; }
         this.child = child;
+        this.log("Keyboard modifier monitor started.");
+        let receivedSample = false;
         child.stdout?.on("data", (chunk: Buffer | string) => {
             if (this.child !== child) { return; }
             buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
@@ -76,6 +82,8 @@ export class MacReviewKeyMonitor {
                 const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
                 const state = parseReviewKeyState(line);
                 if (!state) { this.stop(); this.log("Keyboard modifier monitor rejected invalid output."); return; }
+                // One liveness receipt per child, never per key/ratchet and never typed key contents.
+                if (!receivedSample) { receivedSample = true; this.log("Keyboard modifier monitor received its first sample."); }
                 this.sample(state);
             }
         });
