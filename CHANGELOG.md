@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.166
+
+- Speed up Next and Previous Change in unstaged text diffs by reading the current file's diff instead of diffing the entire worktree. Preserve partially staged changes and rename handling.
+
 ## 1.2.165
 
 - Keep the keyboard modifier reader alive when VS Code becomes idle or active without losing focus, so those notifications cannot discard an Option–Shift tap or pending review set.

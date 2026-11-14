@@ -4806,19 +4806,11 @@ const hunkStagingConfig = (visLines: number) => {
 //                       working lines. This is the SAME diff git.openChange DISPLAYS for the unstaged side.
 //   • staged  side   -> modified doc is the git: index blob; diffIndexWithHEAD's +lines are index lines.
 //
-// BUG 6 FIX (v1.2.9): the unstaged side previously parsed repo.diffWithHEAD (working-tree-vs-HEAD), but the
-// editor shows working-tree-vs-INDEX. For a PARTIALLY-staged file those diffs DIFFER: regions already staged
-// appear as '+' hunks in HEAD-vs-working but are NOT change regions in the shown index-vs-working editor. The
-// old comment claimed "tall-hunk detection stays correct" — WRONG: the +line NUMBERS share the working-doc
-// coordinate space, but the SET and EXTENT of hunks differ, and stepping depends on exactly those. So the
-// caret could sit inside a "phantom" tall hunk over content that looks unchanged in the shown diff, or two
-// adjacent staged+unstaged edits could merge into one over-long run, over-estimating height. Fully-unstaged
-// files (index==HEAD) were unaffected; only partially-staged files broke. Fix: parse the SAME working-vs-index
-// diff the editor displays. The vscode.git API has no per-PATH working-vs-index string method (diff(cached=false)
-// returns the WHOLE-repo `git diff`), so we fetch the full diff once and extract just this file's section
-// (extractFileDiffSection) before feeding it to the unchanged parser — routing only the SOURCE, not forking
-// the parser. Any failure (git API not ready, method missing, unreadable diff, file not in the diff) returns
-// [] so callers defer to plain navigation.
+// Partially staged files must use working tree vs index. A HEAD comparison would create phantom hunks over
+// already staged lines and can skip real changes. Despite its name, VS Code Git's diffWithHEAD(path) uses
+// `git diff -- <path>` with no HEAD argument (verified in VS Code 1.83 and the current built-in extension).
+// Read that one file per request so navigation and overview markers never diff unrelated files in the worktree.
+// Keep the read fresh because a partial stage can change the comparison without changing the editor text.
 
 
 interface ModifiedHunkGeometry {
@@ -4839,18 +4831,24 @@ const getModifiedSideHunkGeometry = async (
         if (!repo) {
             return emptyModifiedHunkGeometry(); // no owning repo (or git not ready) -> defer to built-in navigation
         }
-        // Ask git for THIS file's unified diff on the correct side (BUG 6 FIX — see the big comment above):
-        //   • staged   -> diffIndexWithHEAD(path): index-vs-HEAD, matching the shown staged diff. Per-path.
-        //   • unstaged -> working-tree-vs-INDEX, matching the shown unstaged diff. The API has no per-path
-        //                 form (diff(cached=false) is whole-repo), so we get the full diff and extract this
-        //                 file's section — parsing HEAD-vs-working here would mis-detect partially-staged files.
         let diffText: string;
         if (staged) {
             diffText = await repo.diffIndexWithHEAD(fileUri.fsPath); // staged diff (index vs HEAD)
         } else {
-            const fullWorkingVsIndex: string = await repo.diff(false); // `git diff` — working tree vs index, whole repo
-            const relativePath = path.relative(repo.rootUri.fsPath, fileUri.fsPath).split(path.sep).join("/");
-            diffText = extractFileDiffSection(fullWorkingVsIndex, relativePath);
+            const relativePath = path.relative(repo.rootUri.fsPath, fileUri.fsPath);
+            const gitPath = relativePath.split(path.sep).join("/");
+            // The Git API normalizes backslashes to slashes even on POSIX. Keep exact section extraction
+            // for those filenames and for paths whose spelling is not relative to the API's repo root.
+            const canScopeDiff = !!gitPath && gitPath !== ".." && !gitPath.startsWith("../")
+                && !path.isAbsolute(relativePath) && !gitPath.includes("\\");
+            const scopedDiff: string | undefined = canScopeDiff
+                ? await repo.diffWithHEAD(`:(literal)${gitPath}`) : undefined;
+            // A one-sided add or delete can be half of an unstaged rename. The whole diff is needed
+            // only then, so Git can pair it with the other path before we extract this file's hunks.
+            const needsRenameContext = scopedDiff !== undefined && /^(?:new|deleted) file mode /m.test(scopedDiff);
+            diffText = extractFileDiffSection(
+                scopedDiff !== undefined && !needsRenameContext ? scopedDiff : await repo.diff(false), gitPath,
+            );
         }
         if (!diffText) {
             return emptyModifiedHunkGeometry();

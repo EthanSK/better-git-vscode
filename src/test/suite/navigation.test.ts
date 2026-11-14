@@ -2138,8 +2138,14 @@ suite('SCM change navigation E2E', () => {
 		content.splice(10, 240, ...Array.from({ length: 1000 }, (_, i) => `changed row ${i}`));
 		write(rel, content.join('\n'));
 		await refreshUntil(() => inWorkingTree(rel, 5), 'working diff spam fixture');
-		const editor = await openWorkingDiffAt(rel, 30);
+		const editor = await openWorkingDiffAt(rel, 0);
 		await vscode.commands.executeCommand('workbench.view.scm');
+		// The first Better Git press anchors to the visible viewport, so reach line 30 through real
+		// navigation before counting the burst. Setting the caret to 30 leaves the viewport at another line.
+		for (const line of [10, 20, 30]) {
+			await nextChange();
+			await expectCursorAt(rel, line);
+		}
 		const down = await viewportTopsDuring(editor, () => Promise.all(Array.from({ length: 30 }, () => nextChange())));
 		await expectCursorAt(rel, 330);
 		assertViewportMonotonic(down, 'down', '30 working-diff Next presses');
@@ -2158,11 +2164,11 @@ suite('SCM change navigation E2E', () => {
 		await refreshUntil(() => inWorkingTree(rel, 5) && isUntracked('spam_other.txt'), 'switch spam fixtures');
 		let editor = await openWorkingDiffAt(rel, 50);
 		const repositoryPrototype = Object.getPrototypeOf(repo);
-		const originalDiff = repositoryPrototype.diff;
+		const originalDiff = repositoryPrototype.diffWithHEAD;
 		let release!: () => void;
 		let started = false;
 		const gate = new Promise<void>(resolve => { release = resolve; });
-		repositoryPrototype.diff = async function (...args: unknown[]) {
+		repositoryPrototype.diffWithHEAD = async function (...args: unknown[]) {
 			started = true;
 			await gate;
 			return originalDiff.apply(this, args);
@@ -2193,7 +2199,7 @@ suite('SCM change navigation E2E', () => {
 		} finally {
 			release();
 			await burst;
-			repositoryPrototype.diff = originalDiff;
+			repositoryPrototype.diffWithHEAD = originalDiff;
 			if (editor.document.isDirty) { await editor.document.save(); }
 		}
 	});
@@ -2216,9 +2222,11 @@ suite('SCM change navigation E2E', () => {
 			const nativeTops = await viewportTopsDuring(editor, () => vscode.commands.executeCommand('workbench.action.compareEditor.nextChange'));
 			assert.ok(nativeTops.some((top, index) => index > 0 && top < nativeTops[index - 1]),
 				`fixture must reproduce native recentering backwards: ${nativeTops.join(' -> ')}`);
-			await openWorkingDiffAt('committed/tall_e.txt', 219);
-			await sleep(100);
+			await openWorkingDiffAt('committed/tall_e.txt', 0);
 			await vscode.commands.executeCommand('workbench.view.scm');
+			// Start the burst at a Better Git-owned hunk edge, not a manually positioned caret.
+			for (let step = 0; step < 22; step++) { await nextChange(); }
+			await expectCursorAt('committed/tall_e.txt', 219);
 			const tops = await viewportTopsDuring(editor, () => Promise.all(Array.from({ length: 3 }, () => nextChange())));
 			await expectCursorAt('committed/tall_e.txt', 233);
 			assertViewportMonotonic(tops, 'down', 'rapid mixed-hunk Next');
@@ -2303,20 +2311,40 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
-	test('MODIFIED tall hunk: filenames with spaces and non-ASCII characters keep intermediate steps', async () => {
-		const rel = 'committed/tall é file.txt';
+	test('MODIFIED tall hunk: literal filenames with spaces, non-ASCII and Git glob characters keep intermediate steps', async () => {
+		const rel = 'committed/tall é [a] file.txt';
+		const peer = 'committed/tall é a file.txt';
 		write(rel, lines(260, 'quoted'));
+		write(peer, lines(260, 'peer'));
 		git('add .');
 		git('commit -m "quoted filename fixture"');
 		const content = lines(260, 'quoted').split('\n');
 		for (let i = 10; i <= 229; i++) { content[i] = `quoted EDITED line ${i + 1}`; }
 		write(rel, content.join('\n'));
-		await refreshUntil(() => inWorkingTree(rel, 5), 'quoted file to appear as MODIFIED');
+		const peerContent = lines(260, 'peer').split('\n');
+		peerContent[3] = 'unrelated change matched by a Git glob';
+		write(peer, peerContent.join('\n'));
+		await refreshUntil(() => inWorkingTree(rel, 5) && inWorkingTree(peer, 5), 'both quoted files to appear as MODIFIED');
 		await openWorkingDiffAt(rel, 0);
-		await nextChange();
-		await expectCursorVisibleAt(rel, 10);
-		await nextChange();
-		await expectCursorVisibleAt(rel, 20);
+		const repositoryPrototype = Object.getPrototypeOf(repo);
+		const originalDiff = repositoryPrototype.diff;
+		let fullDiffReads = 0;
+		repositoryPrototype.diff = function (...args: unknown[]) {
+			fullDiffReads++;
+			return originalDiff.apply(this, args);
+		};
+		try {
+			await nextChange();
+			await expectCursorVisibleAt(rel, 10);
+			await nextChange();
+			await expectCursorVisibleAt(rel, 20);
+			await previousChange();
+			await expectCursorVisibleAt(rel, 10);
+			await extensionApi.whenCurrentHunkOverviewMarkerSettled();
+			assert.strictEqual(fullDiffReads, 0, 'ordinary unstaged hunk navigation must not diff the worktree');
+		} finally {
+			repositoryPrototype.diff = originalDiff;
+		}
 	});
 
 	test('MODIFIED tall hunk: repeated/rapid next scrolls down and previous scrolls back up', async () => {
