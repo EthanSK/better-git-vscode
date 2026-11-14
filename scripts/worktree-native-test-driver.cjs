@@ -4,6 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 exports.run = async () => {
  const root = process.env.BGV_SWITCH_ROOT;
+ const linkReceipts = [];
+ if (process.env.BGV_LINK_RECEIPT_TEST === '1') {
+  const showInformationMessage = vscode.window.showInformationMessage;
+  fs.writeFileSync(path.join(root, 'link-receipts.json'), '[]');
+  // Observe the actual notification API and leave its unresolved dismissal promise intact.
+  vscode.window.showInformationMessage = function(message, ...args) {
+   if (message.startsWith('Better Git: Worktree link received (#')) {
+    linkReceipts.push(message);
+    fs.writeFileSync(path.join(root, 'link-receipts.json'), JSON.stringify(linkReceipts));
+   }
+   return showInformationMessage.call(this, message, ...args);
+  };
+ }
  const usageEvents = [];
  const createOutputChannel = vscode.window.createOutputChannel;
  if (process.env.BGV_WORKTREE_USAGE_TEST === '1') vscode.window.createOutputChannel = (...args) => {

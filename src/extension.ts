@@ -1313,7 +1313,14 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         const generation = ++worktreeLinkGeneration;
         const receivedAt = Date.now();
         const presentationExpiresAt = performance.now() + WORKTREE_PRESENTATION_MAX_AGE_MS;
-        debugLog("worktree-link", `Received #${generation} for ${root?.fsPath ?? "selected worktree"}.`);
+        debugLog("worktree-link", `Received #${generation} for ${root?.fsPath ?? "selected worktree"}; focused=${vscode.window.state.focused}, host=${process.pid}, Code=${process.env.VSCODE_PID ?? "unknown"}.`);
+        // Ethan wants to distinguish a delivered link from interrupted SCM expansion. Report receipt
+        // before queued loading/focus work, with a distinct number for repeat clicks. Never await the
+        // toast's dismissal, and do not notify for palette opens or mouse/wand review commands.
+        if (sourceLink && vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("worktreeLinkNotifications", false)) {
+            void vscode.window.showInformationMessage(`Better Git: Worktree link received (#${generation}).`)
+                .then(undefined, error => debugLog("worktree-link", `Receipt notification unavailable: ${String(error)}`));
+        }
         const isCurrent = () => generation === worktreeLinkGeneration;
         const next = worktreeLinkQueue.then(async () => {
             if (!isCurrent()) {
@@ -1358,8 +1365,10 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                         const editorProcessId = Number(process.env.VSCODE_PID);
                         if (keepEditorFront) {
                             debugLog("worktree-focus", `Starting Keep Editor Front handoff for #${generation} before repository loading.`);
-                            await returnToApp(destination, process.platform, undefined, editorBundleId, editorProcessId);
-                            debugLog("worktree-focus", `Finished Keep Editor Front handoff for #${generation} before repository loading.`);
+                            const acknowledged = await returnToApp(destination, process.platform, undefined, editorBundleId, editorProcessId);
+                            // App activation and this particular window's focus are separate. A completed
+                            // helper call alone must not be logged as proof that SCM can take list focus.
+                            debugLog("worktree-focus", `Finished Keep Editor Front handoff for #${generation} before repository loading; editorActive=${acknowledged === "editor-active"}, windowFocused=${vscode.window.state.focused}.`);
                         } else if (Number.isSafeInteger(editorProcessId)
                             && editorProcessId > 0 && editorProcessId <= 0x7fffffff) {
                             originAfterPresentation = { destination, editorProcessId, focusLossGeneration: worktreeFocusLossGeneration };

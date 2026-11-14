@@ -19,7 +19,8 @@ const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { enco
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const testLinkBackground = process.argv.includes('--link-background');
 const testEarlyHandoff = process.argv.includes('--early-app-handoff');
-const testLinkStayBackground = testEarlyHandoff || process.argv.includes('--link-stay-background');
+const testLinkReceipt = process.argv.includes('--link-receipt');
+const testLinkStayBackground = testEarlyHandoff || testLinkReceipt || process.argv.includes('--link-stay-background');
 const testReturnApp = process.argv.includes('--return-app');
 const testKeyboardRepeat = process.argv.includes('--keyboard-repeat');
 const testHeldClick = process.argv.includes('--held-click');
@@ -103,7 +104,7 @@ const log = fs.openSync(path.join(evidence, 'native-worktree.log'), 'w');
 const child = spawn(executable, [workspace, `--user-data-dir=${profile}`, `--extensions-dir=${path.join(root, 'extensions')}`,
     `--extensionDevelopmentPath=${extensionRoot}`, `--extensionTestsPath=${path.join(extensionRoot, 'scripts/worktree-native-test-driver.cjs')}`,
     `--remote-debugging-port=${port}`, '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-telemetry'],
-{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_WORKTREE_USAGE_TEST: testUsage ? '1' : '', BGV_SCM_FOCUS_TRACE_TEST: testBackgroundPeers ? '1' : '', BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '', BGV_PREORDERED_API_TEST: testPreorderedApi ? '1' : '' }, stdio: ['ignore', log, log] });
+{ env: { ...process.env, BGV_SWITCH_ROOT: root, BGV_LINK_RECEIPT_TEST: testLinkReceipt ? '1' : '', BGV_WORKTREE_USAGE_TEST: testUsage ? '1' : '', BGV_SCM_FOCUS_TRACE_TEST: testBackgroundPeers ? '1' : '', BGV_NATIVE_SINGLE: testSingleRepository ? '1' : '', BGV_EARLY_HANDOFF_TEST: testEarlyHandoff ? '1' : '', BGV_PREORDERED_API_TEST: testPreorderedApi ? '1' : '' }, stdio: ['ignore', log, log] });
 let socket;
 let activationMonitor;
 let nextRequest = 0;
@@ -231,7 +232,37 @@ try {
         await send('Page.bringToFront');
         await until(() => request('state'), state => state.focused, 'native window focus');
     }
-    if (testStagedGroupGuard) {
+    if (testLinkReceipt) {
+        const baseline = roots.map(repo => git(repo, 'status', '--porcelain=v1'));
+        const receipts = () => JSON.parse(fs.readFileSync(path.join(root, 'link-receipts.json'), 'utf8'));
+        const open = repo => request('uri', {uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}`});
+        await request('config', {settings:{worktreeLinkReturnFocus:false,worktreeLinkNotifications:true}});
+        await request('hold-status', {repo:1});
+        const opening = open(1);
+        try {
+            await until(receipts, rows => rows.length === 1, 'receipt before blocked repository loading');
+            await until(() => JSON.parse(fs.readFileSync(path.join(root, 'handoff-events.json'), 'utf8')),
+                events => events.includes('status-start'), 'real Git status remains blocked');
+            await until(() => evaluate(`document.querySelector('.notifications-toasts')?.textContent ?? ''`),
+                text => text.includes(receipts()[0]), 'actual receipt notification rendered');
+            await capture('link-receipt-before-loading');
+        } finally { fs.writeFileSync(path.join(root, 'release-status'), 'release'); }
+        await opening; // A visible notification must not hold the URI handler until dismissal.
+        await open(1);
+        assert.equal(receipts().length, 2);
+        assert.notEqual(receipts()[0], receipts()[1], 'repeat links have distinct visible receipt numbers');
+        await request('config', {settings:{worktreeLinkNotifications:false}});
+        await open(2);
+        assert.equal(receipts().length, 2, 'disabled receipt notifications stay silent');
+        await request('config', {settings:{worktreeLinkNotifications:true}});
+        await request('open', {repo:3});
+        assert.equal(receipts().length, 2, 'palette commands are not external link deliveries');
+        await request('uri', {uri:'vscode://ethansk.better-git-vscode/open-worktree?path=%2Fdoes-not-exist-bgv'});
+        assert.equal(receipts().length, 3, 'received link is acknowledged even when its filesystem path fails');
+        assert.deepEqual(roots.map(repo => git(repo, 'status', '--porcelain=v1')), baseline, 'diagnostics never change Git');
+        fs.writeFileSync(path.join(evidence, 'link-receipts.json'), JSON.stringify(receipts(), null, 2));
+        console.log('BETTER_GIT_LINK_RECEIPT_VERIFIED checks=7 early,rendered,nonblocking,repeat,disabled,palette,path-failure');
+    } else if (testStagedGroupGuard) {
         // Keep the empty native group alive so a link can fold it before the first stage.
         // This tests the supported personal setting, not a production background recollapse.
         await request('git-config', {settings:{alwaysShowStagedChangesResourceGroup:true}});
