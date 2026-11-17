@@ -28,7 +28,10 @@ const profile = path.join(root, 'profile');
 fs.mkdirSync(path.join(profile, 'User'), { recursive: true });
 fs.writeFileSync(path.join(profile, 'User/settings.json'), JSON.stringify({
     'editor.accessibilitySupport': 'off', 'workbench.startupEditor': 'none',
+    // The Mini's narrow test window otherwise switches to inline, leaving
+    // the original Monaco pane in the DOM but under the modified editor.
     'editor.minimap.enabled': false, 'diffEditor.renderSideBySide': true,
+    'diffEditor.useInlineViewWhenSpaceIsLimited': false,
     'update.mode': 'none', 'extensions.autoUpdate': false
 }));
 const reservation = net.createServer();
@@ -83,18 +86,32 @@ try {
         client.on('end', () => resolve(JSON.parse(result)));
     });
     assert.equal(await query(Date.now()), null, 'No highlight must return null');
-    async function highlight(label, selectedPrefix = 'AgentFlow selected code') {
+    async function highlight(label, selectedPrefix = 'AgentFlow selected code', diffSide) {
         const prefix = JSON.stringify(selectedPrefix);
-        const box = await until(() => evaluate(`(()=>{const lines=[...document.querySelectorAll('.monaco-editor .view-line')].filter(e=>e.textContent.replaceAll('\\u00a0',' ').includes(${prefix}));const e=lines.at(-1);if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})()`), b => b?.width > 0, label);
+        const editorClass = JSON.stringify(diffSide ? `.${diffSide}-in-monaco-diff-editor` : '.monaco-editor');
+        const box = await until(() => evaluate(`(() => {
+            const lines = [...document.querySelectorAll('.monaco-editor .view-line')];
+            for (const line of lines) {
+                const editor = line.closest(${editorClass});
+                if (!editor || !line.textContent.replaceAll('\u00a0', ' ').includes(${prefix})) continue;
+                const rect = line.getBoundingClientRect(), y = rect.top + rect.height / 2;
+                if (document.elementFromPoint(rect.left + 1, y)?.closest(${editorClass}) === editor) {
+                    return { x: rect.left, y, right: editor.getBoundingClientRect().right };
+                }
+            }
+            return null;
+        })()`), b => b && b.right > b.x + 8, label);
         const since = Date.now();
-        const y = box.y + box.height / 2;
+        const y = box.y;
+        const endX = Math.min(box.x + 180, box.right - 4);
         await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: box.x + 1, y, button: 'left', clickCount: 1 });
-        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x + 180, y, button: 'left', buttons: 1 });
-        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x + 180, y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: endX, y, button: 'left', buttons: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: endX, y, button: 'left', clickCount: 1 });
         const captured = await until(() => query(since), r => r?.text?.startsWith(selectedPrefix), label + ' bridge');
         const state = await command('state');
         assert.equal(captured.text, state.text, 'Bridge must match the actual selected range');
         assert.deepEqual(captured.location, state.editorLocation, 'Live selection includes the exact editor location');
+        if (diffSide) assert.equal(captured.location.diffSide, diffSide);
         // Exercise the production Swift socket client too, not just a JS stand-in.
         if (process.env.AGENTFLOW_SELECTION_PROBE) {
             const actual = JSON.parse(execFileSync(process.env.AGENTFLOW_SELECTION_PROBE,
@@ -140,9 +157,9 @@ try {
     await pause(100);
     assert.equal(await query(Date.now() - 500), null, 'Programmatic selection must not become context');
     await command('diff');
-    await highlight('original diff side', 'Original code');
+    await highlight('original diff side', 'Original code', 'original');
     await preselected('editor', (await command('state')).text);
-    await highlight('modified diff side');
+    await highlight('modified diff side', undefined, 'modified');
     await preselected('editor', (await command('state')).text);
     await command('terminal');
     const terminalBox = await until(() => evaluate(`(() => {
