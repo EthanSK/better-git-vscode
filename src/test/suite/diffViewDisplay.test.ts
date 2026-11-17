@@ -1,4 +1,7 @@
 import * as assert from "assert";
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
 import { probeDisplays } from "../../diffViewDisplay";
 
@@ -103,4 +106,60 @@ suite("Display-aware diff view E2E", () => {
                 vscode.ConfigurationTarget.Global);
         }
     });
+
+    for (const mode of ["sideBySide", "inline"] as const) {
+        test(`keeps a native ${mode} choice through polling, another diff and a display change`, async () => {
+            const display = (await probeDisplays()).find((candidate) => !candidate.builtIn);
+            assert.ok(display, "Mini must have an external display");
+            const absent = { uuid: "00000000-0000-0000-0000-000000000000", width: 1, height: 1 };
+            const config = vscode.workspace.getConfiguration();
+            const update = (key: string, value: unknown) => config.update(key, value, vscode.ConfigurationTarget.Global);
+            const originals = [
+                "better-git-vscode.inlineDiffOnDisplay", "better-git-vscode.zoomLevelOnDisplay",
+                "diffEditor.renderSideBySide", "diffEditor.useInlineViewWhenSpaceIsLimited",
+                "diffEditor.renderSideBySideInlineBreakpoint", "window.zoomLevel",
+            ].map(key => ({ key, value: config.inspect(key)?.globalValue }));
+            const folder = await fs.mkdtemp(path.join(os.tmpdir(), "bgv-display-diff-"));
+            const openDiff = async (name: string) => {
+                const before = path.join(folder, `${name}-before.txt`);
+                const after = path.join(folder, `${name}-after.txt`);
+                await fs.writeFile(before, "before\n");
+                await fs.writeFile(after, "after\n");
+                await vscode.commands.executeCommand("vscode.diff", vscode.Uri.file(before), vscode.Uri.file(after));
+            };
+            const sideBySide = mode === "sideBySide";
+            const assertLayout = async () => {
+                assert.strictEqual(vscode.workspace.getConfiguration("diffEditor").get("renderSideBySide"), sideBySide);
+                assert.strictEqual(vscode.workspace.getConfiguration("diffEditor").get("useInlineViewWhenSpaceIsLimited"),
+                    !sideBySide, "explicit Side by Side must disable the narrow-editor fallback");
+            };
+            try {
+                await update("diffEditor.renderSideBySideInlineBreakpoint", 10_000);
+                await update("better-git-vscode.zoomLevelOnDisplay", { connected: 1, disconnected: -1 });
+                await update("better-git-vscode.inlineDiffOnDisplay", sideBySide ? display : absent);
+                await waitForSetting("renderSideBySide", !sideBySide);
+                await waitForSetting("useInlineViewWhenSpaceIsLimited", true);
+                await waitForZoom(sideBySide ? 1 : -1);
+                await openDiff("first");
+                await vscode.commands.executeCommand(`diffEditor.setViewMode.${mode}`);
+                await assertLayout();
+                await openDiff("second");
+                await new Promise(resolve => setTimeout(resolve, 5500)); // Cross a real five-second reconciliation.
+                await assertLayout();
+
+                await update("better-git-vscode.inlineDiffOnDisplay", sideBySide ? absent : display);
+                await waitForZoom(sideBySide ? -1 : 1);
+                await assertLayout();
+                // Zoom proves the check ran. Returning to the original display would undo an unlatched choice.
+                await update("better-git-vscode.inlineDiffOnDisplay", sideBySide ? display : absent);
+                await waitForZoom(sideBySide ? 1 : -1);
+                await assertLayout();
+            } finally {
+                await update("better-git-vscode.inlineDiffOnDisplay", {});
+                for (const { key, value } of originals.slice(1)) { await update(key, value); }
+                await update(originals[0].key, originals[0].value);
+                await fs.rm(folder, { recursive: true, force: true });
+            }
+        });
+    }
 });

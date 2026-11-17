@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.172
+
+- Keep a manually selected diff layout across files and monitor changes until its VS Code window reloads. Side by Side stays side by side in narrow editors.
+- When switching apps while holding a keyboard review batch, stage the earlier reviewed files and leave the current preview unstaged. One Undo restores the batch.
+
 ## 1.2.166
 
 - Speed up Next and Previous Change in unstaged text diffs by reading the current file's diff instead of diffing the entire worktree. Preserve partially staged changes and rename handling.
