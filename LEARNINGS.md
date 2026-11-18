@@ -8,6 +8,10 @@ The Mini's two-window regression routed the raw URI to the primary host on 1.2.1
 
 The 1.2.175 archive passed the same two-window check. The existing native suite also passed its 14 repository, origin handoff and Stage/Undo checks on the Mini. The minimum supported VS Code 1.83 does not register the newer Focus Window command. Version 1.2.176 checks for the command before cross-window forwarding or leaving the editor in origin-only mode. Older hosts retain the original app-level return. Keep the exact window command out of the legacy path, or Keep Editor Front can leave the origin frontmost.
 
+The exact 1.2.176 archive also passed Next Change, Previous Change, Stage and Next, and Undo in the second VS Code window after switching diff layouts. Focus stayed with that worktree. Stage and Next staged only its intended file, and Undo restored both the diff and the original staged set. TypeScript, all 260 non-GUI checks and focused lint passed.
+
+Version 1.2.176 passed the exact Marketplace gate with VSIX SHA-256 `da4a5e6d322c942724ddd058acb762e65c9981b158ad7ed4aa1bc48a04212fdb`. The unversioned Gallery upgrade matched all ten packaged files, including production JavaScript `7f103cc817601e721f6ee16c43630d9f3518c720ab46f38880f3ff3bfdb1bfac`. The Marketplace identifier and automatic updates remained enabled without a version pin. After confirming Agent Flow and keyboard input were idle and delivering the heads-up, native Restart Extensions activated 1.2.176 at 02:28:43 UTC. The one open window returned to its existing Source Control view and diff, and the staged index matched before and after. No MacBook E2E ran.
+
 ## Agent Flow editor selection locations
 
 Return the location from the same focused editor snapshot used for text. Both live and startup pulls share that extraction. The location identifies a local file or Git snapshot and the actual side of a text diff when VS Code can prove it. Use VS Code's UTF-16 coordinates, including the end of the text actually transferred after clipping. Do not copy arbitrary virtual-document URIs or attach editor coordinates to a terminal reply.

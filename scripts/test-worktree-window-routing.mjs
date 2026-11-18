@@ -60,8 +60,10 @@ try {
     await fs.mkdir(path.dirname(settingsFile), { recursive: true });
     await fs.writeFile(settingsFile, JSON.stringify(settings, null, 2));
     await fs.writeFile(path.join(profile, 'User/keybindings.json'), JSON.stringify([
-        ['f7', 'workbench.action.focusWindow'], ['f8', 'diffEditor.setViewMode.sideBySide'],
-        ['f9', 'diffEditor.setViewMode.inline'],
+        ['f6', 'better-git-vscode.undo-last-stage-and-advance'], ['f7', 'workbench.action.focusWindow'],
+        ['f8', 'diffEditor.setViewMode.sideBySide'], ['f9', 'diffEditor.setViewMode.inline'],
+        ['f10', 'better-git-vscode.next-changed-file'], ['f11', 'better-git-vscode.previous-changed-file'],
+        ['f12', 'better-git-vscode.stage-and-next-changed-file'],
     ].map(([key, command]) => ({ key: `ctrl+alt+${key}`, command }))));
     await fs.mkdir(primary);
     await git('init', '-b', 'main');
@@ -69,12 +71,14 @@ try {
     await git('config', 'user.email', 'fixture@local.invalid');
     await git('config', 'commit.gpgsign', 'false');
     await fs.writeFile(path.join(primary, 'a.txt'), 'base\n');
-    await git('add', 'a.txt');
+    await fs.writeFile(path.join(primary, 'b.txt'), 'base\n');
+    await git('add', 'a.txt', 'b.txt');
     await git('commit', '-m', 'base');
     await git('worktree', 'add', '--detach', review);
     await git('worktree', 'add', '--detach', unopened);
     for (const folder of [primary, review, unopened]) {
         await fs.writeFile(path.join(folder, 'a.txt'), `working changes in ${path.basename(folder)}\n`);
+        await fs.writeFile(path.join(folder, 'b.txt'), `more changes in ${path.basename(folder)}\n`);
         await fs.writeFile(path.join(folder, 'staged.txt'), 'existing staged file\n');
         await execute('git', ['-C', folder, 'add', 'staged.txt']);
     }
@@ -129,6 +133,9 @@ try {
     const openLink = (folder, origin) => code('--open-url', 'vscode://ethansk.better-git-vscode/open-worktree?path='
         + encodeURIComponent(folder) + (origin ? `&returnTo=${encodeURIComponent(origin)}` : ''));
     const diff = page => run(page, '!!document.querySelector(".monaco-diff-editor")');
+    const reviewFile = async name => (await run(reviewPage, 'document.querySelector(".tabs-container .tab.active")?.innerText'))
+        ?.includes(name) && await focused(reviewPage) && !await focused(primaryPage);
+    const cachedPaths = async () => (await execute('git', ['-C', review, 'diff', '--cached', '--name-only'])).stdout.trim();
     await focusPrimary();
     // Both extension hosts must have started before testing a fresh click into the main window.
     await until('both Better Git extension hosts activated', async () => (await logContents())
@@ -147,6 +154,19 @@ try {
         });
         assert.strictEqual(await focused(primaryPage), false);
     }
+
+    // The ordinary review commands must leave the owning window focused too.
+    await until('review starts on a.txt', () => reviewFile('a.txt'));
+    await press(reviewPage, 10);
+    await until('Next Change opens b.txt in the review window', () => reviewFile('b.txt'));
+    await press(reviewPage, 11);
+    await until('Previous Change returns to a.txt in the review window', () => reviewFile('a.txt'));
+    await press(reviewPage, 12);
+    await until('Stage and Next stages only a.txt and stays in the review window',
+        async () => await reviewFile('b.txt') && await cachedPaths() === 'a.txt\nstaged.txt');
+    await press(reviewPage, 6);
+    await until('Undo restores a.txt and the original staged set in the review window',
+        async () => await reviewFile('a.txt') && await cachedPaths() === 'staged.txt');
 
     await fs.writeFile(settingsFile, JSON.stringify({ ...JSON.parse(await fs.readFile(settingsFile, 'utf8')),
         'better-git-vscode.worktreeLinkReturnFocus': true, 'better-git-vscode.worktreeLinkKeepEditorFront': true }, null, 2));
