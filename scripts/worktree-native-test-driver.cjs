@@ -117,6 +117,10 @@ exports.run = async () => {
      prototype.status=async function(...args) {
       if(this.rootUri.fsPath===roots[request.repo]) {
        prototype.status=original; event('status-start');
+       if(request.idleClear) {
+        await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear','corsair');
+        event('idle-clear');
+       }
        await new Promise((resolve,reject)=>{ const started=Date.now(); const timer=setInterval(()=>{
         if(fs.existsSync(releaseFile)) {clearInterval(timer);resolve();}
         else if(Date.now()-started>10000) {clearInterval(timer);reject(new Error('Status gate timed out'));}

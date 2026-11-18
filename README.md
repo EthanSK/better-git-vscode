@@ -127,7 +127,7 @@ A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolut
 
 If VS Code is behind another app, a recent link gets one focus retry. That retry must start its tree work within ten seconds of the click; once started, it can finish opening the target instead of timing out halfway through collapse. Switching review files, starting review navigation or opening a newer link still cancels the old request. Ordinary later app switches do not repeat it.
 
-To confirm link delivery, enable `better-git-vscode.worktreeLinkNotifications` in User settings. Each received link puts the target worktree name first, with `#N` to distinguish repeat clicks. Expand the notification to see its full path. It appears before repository loading. This confirms receipt, not completed Source Control expansion, and never waits for you to dismiss the notification. Off by default; ordinary commands and mouse/wand review do not show it.
+Enable `better-git-vscode.worktreeLinkNotifications` in User settings for feedback when you click a Worktree link. The notification shows the worktree name and request number. Expand it for the full path. The status bar shows what Better Git is doing and how long the link has been open, including when it is waiting for the VS Code window. The result stays visible briefly. This setting is off by default.
 
 Worktree links can optionally return focus to another already-running app. Better Git finishes collapsing the other worktrees, opening the target and collapsing Staged Changes, then returns to the origin once. It does not activate the origin before this work or bounce back through VS Code. This feature is **macOS only and off by default**. In your VS Code User settings:
 

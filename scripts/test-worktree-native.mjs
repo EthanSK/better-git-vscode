@@ -231,9 +231,34 @@ try {
                 `ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${child.pid}).activateWithOptions(2);`]);
         }
         await send('Page.bringToFront');
+        if (process.argv.includes('--link-idle-clear')) {
+            await request('command', {command:'workbench.action.focusWindow'});
+        }
         await until(() => request('state'), state => state.focused, 'native window focus');
     }
-    if (testLinkReceipt) {
+    if (process.argv.includes('--link-idle-clear')) {
+        const repo = roots.length - 1;
+        const baseline = git(roots[repo], 'status', '--porcelain=v1');
+        await request('config', {settings:{worktreeLinkNotifications:true}});
+        await request('hold-status', {repo, idleClear:true});
+        const opening = request('uri', {uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}`});
+        try {
+            await until(() => JSON.parse(fs.readFileSync(path.join(root, 'handoff-events.json'), 'utf8')),
+                events => events.includes('idle-clear'), 'idle Corsair cleanup during worktree loading');
+            await until(() => evaluate(`document.querySelector('.part.statusbar')?.textContent ?? ''`),
+                text => text.includes(path.basename(roots[repo])) && /Reading Git status · [1-9]\d*s/.test(text),
+                'elapsed time and current step visible during slow Git status');
+        } finally { fs.writeFileSync(path.join(root, 'release-status'), 'release'); }
+        await opening;
+        assert.ok((await request('state')).active.includes(roots[repo] + '/a.txt'), 'idle cleanup cancelled the first unstaged file');
+        if (testLinkStayBackground) {
+            assert.equal((await request('state')).focused, false, 'background link leaves the other app in front');
+        } else {
+            await check(repo, 'idle-clear-during-link');
+        }
+        assert.equal(git(roots[repo], 'status', '--porcelain=v1'), baseline);
+        console.log('BETTER_GIT_LINK_IDLE_CLEAR_VERIFIED');
+    } else if (testLinkReceipt) {
         const baseline = roots.map(repo => git(repo, 'status', '--porcelain=v1'));
         const receipts = () => JSON.parse(fs.readFileSync(path.join(root, 'link-receipts.json'), 'utf8'));
         const open = repo => request('uri', {uri:`vscode://ethansk.better-git-vscode/open-worktree?path=${encodeURIComponent(roots[repo])}`});

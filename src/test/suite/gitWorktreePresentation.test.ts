@@ -11,6 +11,17 @@ suite('Deferred Worktree presentation', () => {
         assert.strictEqual(current(), false);
         assert.strictEqual(scheduler.checkpoint()(), true);
     });
+    test('a waiting window expires and clears its feedback even if no focus event arrives', async () => {
+        const reasons: string[] = [];
+        let disposed = false;
+        const scheduler = new DeferredWorktreePresentation(() => ({ dispose() { disposed = true; } }),
+            () => false, () => performance.now(), reason => reasons.push(reason));
+        scheduler.schedule(() => true, () => assert.fail('a background window must not present'), performance.now() + 10);
+        await new Promise(resolve => setTimeout(resolve, 30));
+        assert.deepStrictEqual(reasons, ['expired']);
+        assert.ok(disposed);
+        scheduler.dispose();
+    });
     test('reports expiry and explicit cancellation once without extending the link deadline', () => {
         let now = 0;
         const listeners = new Set<() => void>(), reasons: string[] = [];

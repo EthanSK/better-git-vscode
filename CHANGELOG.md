@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.178
+
+- Keep opening the requested worktree when a mouse sends a cleanup with no active hold.
+- Show the current step and elapsed time in the status bar when Worktree link notifications are enabled.
+
 ## 1.2.176
 
 - Preserve the app handoff on older VS Code versions that lack the native Focus Window command.

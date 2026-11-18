@@ -20,6 +20,8 @@ export type WorktreePresentationEndReason = "cancelled" | "newer-link" | "cursor
 export class DeferredWorktreePresentation implements Disposable {
     private listener?: Disposable;
     private generation = 0;
+    private expiryTimer?: NodeJS.Timeout;
+    lastInterruption?: WorktreePresentationEndReason;
     constructor(private readonly subscribe: (listener: () => void) => Disposable,
         private readonly isFocused: () => boolean,
         private readonly now: () => number = () => performance.now(),
@@ -42,8 +44,15 @@ export class DeferredWorktreePresentation implements Disposable {
         const isScheduled = () => generation === this.generation && (presenting || this.now() < expiresAt);
         const beginPresentation = () => {
             if (!isScheduled() || !this.isFocused() || !isOwned()) { return false; }
+            clearTimeout(this.expiryTimer);
             presenting = true;
             return true;
+        };
+        const armDeadline = () => {
+            clearTimeout(this.expiryTimer);
+            this.expiryTimer = setTimeout(() => {
+                if (generation === this.generation && !presenting) { this.dispose("expired"); }
+            }, Math.ceil(Math.max(0, expiresAt - this.now())));
         };
         let running = false;
         let focusRevision = 0;
@@ -65,22 +74,26 @@ export class DeferredWorktreePresentation implements Disposable {
                 if (!isScheduled()) { this.clearListener("expired"); return; }
                 if (!isOwned()) { this.clearListener("not-owned"); return; }
                 // A queued/running pass can lose focus. Keep the same intent alive;
-                // do not spin or add a timer. A focus event during that pass is
+                // retry only on focus. The timer only removes expired requests. A focus event during that pass is
                 // also admitted once after it finishes, if the window is back.
+                armDeadline();
                 if (focusRevision !== startedRevision && this.isFocused()) { onFocus(); }
             }, () => { if (generation === this.generation) { this.clearListener("failed"); } });
         };
         this.listener = this.subscribe(onFocus);
+        armDeadline();
         // Focus may have arrived between the caller's check and subscription.
         onFocus();
     }
 
     dispose(reason: WorktreePresentationEndReason = "cancelled"): void {
+        this.lastInterruption = reason;
         this.generation++;
         this.clearListener(reason);
     }
 
     private clearListener(reason: WorktreePresentationEndReason): void {
+        clearTimeout(this.expiryTimer);
         const hadListener = !!this.listener;
         this.listener?.dispose();
         this.listener = undefined;

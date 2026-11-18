@@ -57,6 +57,7 @@ Before changing an owner, read its comments and the linked neighboring cases. Pr
 
 | Reports / decisions | Contract and owner | Relevant coverage |
 | --- | --- | --- |
+| November 18: opening a Worktree link raises Code but leaves the previous diff open | An idle `stage-hold-clear` from Agentic Mouse is cleanup. Keep it out of the navigation queue that cancels Worktree presentation. An actual short release still takes precedence. | Native `--link-idle-clear` and deferred-presentation tests. |
 | September: invalid path after browser redirect | `gitWorktreeLink.ts`: preserve both outer encoding layers, decode the received `path` once, require an absolute validated root. Microsoft's additional `url` parameter is not the filesystem path. | `gitWorktreeLink.test.ts` |
 | September: click should select the top unstaged change; staged-only roots must still expand | `openWorktreeInSourceControl`: use the same sorted repository-local entries as review. Clean/staged-only roots still expand with Staged collapsed; do not open a staged file just to trigger Auto Reveal. | `worktreeLink.test.ts` |
 | September–November: other roots or Staged remain open / target opens then collapses | `revealCollapsedWorktree`: global toolbar-equivalent collapse, bounded settle, verified requested-root identity, expand target, focus/collapse Staged after optional Merge. Await actual Git status; native expansion/group-focus commands return before renderer work. Never expand every root or use repeated sweeping loops. | Worktree-link cases, `gitWorktreePresentation.test.ts` |

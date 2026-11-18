@@ -1,3 +1,11 @@
+## 2026-11-18 — Idle mouse cleanup must not cancel a Worktree link
+
+A normal-workspace trace recorded a Worktree receipt, a Corsair feedback clear with no hold, then a successful window handoff followed immediately by an incomplete open. The clear had already entered `serializeChangeNavigation`, which invalidates the current Worktree presentation on admission. A replay using the original command, queue and Worktree open functions reproduced the cancellation before repository status. Skipping queue admission for idle clears let the first unstaged file open. A genuine short release still advanced and superseded the link.
+
+In an isolated VS Code workbench on the M1 Max, the same no-hold cleanup during a deliberately paused status read reproduced the missing first file on 1.2.176. With the fix, the real status bar showed the target and an increasing elapsed time, the diff opened, and Git status matched its initial contents. This check ran with Code in the background. The existing ten receipt checks also passed.
+
+Keep the explicit-link diagnostics tied to that one request. A receipt identifies delivery, a status-bar phase shows what is being awaited, and a pending window-focus retry expires even when the user leaves Code in the background. The idle cleanup correction adds no wait and grants no permission to ignore real navigation or edits.
+
 ## 2026-11-18 — Worktree links belong to the VS Code window that owns the worktree
 
 The 01:32 AI Wallpaper click arrived in the primary workspace's host even though the worktree was open in a second window. The optional Keep Editor Front handoff could only confirm the Code process. Both windows share that PID. VS Code's native extension URI router selects the active workbench for a link with no window ID. Compare exact canonical paths in the already-open workspace folders and Git repositories before any status refresh, fold or app handoff. The dedicated folder window wins over a workspace that also contains it. Keep the receiving window when there is no unique better owner.
