@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.175
+
+- Open Worktree links in the existing macOS VS Code window that owns the requested worktree. Keep Editor Front returns to that same window.
+
 ## 1.2.172
 
 - Keep a manually selected diff layout across files and monitor changes until its VS Code window reloads. Side by Side stays side by side in narrow editors.

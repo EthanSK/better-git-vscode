@@ -18,6 +18,7 @@ import { createReviewHostCapability } from "./reviewHostCapability";
 import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp, frontmostAppBundleId } from "./gitWorktreeFocus";
+import { GitWorktreeWindowRouter, worktreeWindowRank } from "./gitWorktreeWindow";
 import { WorktreeUsage } from "./gitWorktreeUsage";
 import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS, WORKTREE_TREE_SETTLE_MS } from "./gitWorktreePresentation";
 import { repositoriesInScmRegistrationOrder } from "./gitScmDiscoveryOrder";
@@ -1290,6 +1291,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     let worktreeLinkQueue: Promise<void> = Promise.resolve();
     let worktreeLinkGeneration = 0;
     let worktreeFocusLossGeneration = 0;
+    let worktreeWindowFocused = vscode.window.state.focused;
     const worktreePresentation = new DeferredWorktreePresentation(
         listener => vscode.window.onDidChangeWindowState(listener),
         () => vscode.window.state.focused, undefined,
@@ -1297,11 +1299,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
     context.subscriptions.push(worktreePresentation);
     pendingWorktreePresentation = worktreePresentation;
     context.subscriptions.push(vscode.window.onDidChangeWindowState(state => {
-        if (!state.focused) { worktreeFocusLossGeneration++; }
+        if (worktreeWindowFocused && !state.focused) { worktreeFocusLossGeneration++; }
+        worktreeWindowFocused = state.focused;
         worktreeUsage?.focusChanged(state.focused);
     }),
         { dispose: () => { worktreeUsage?.dispose(); worktreeUsage = undefined; } });
-    const openWorktree = (root?: vscode.Uri, sourceLink?: vscode.Uri): Promise<void> => {
+    let worktreeWindows: GitWorktreeWindowRouter | undefined;
+    const openWorktree = (root?: vscode.Uri, sourceLink?: vscode.Uri, forwarded = false): Promise<void> => {
         worktreeUsage?.finish("newer-link");
         // Env Worktree clicks only; palette opens and automatic diff reveals are not human review evidence.
         worktreeUsage = sourceLink && root?.scheme === "file" && debugLoggingEnabled()
@@ -1320,7 +1324,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         // Ethan (2026-11-15): include the target, not just an opaque request number. Use the
         // decoded request path directly, so names/paths are visible even before Git can load it.
         // Put the name first: VS Code clips compact toasts, with the full path in the expanded message.
-        if (sourceLink && vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("worktreeLinkNotifications", false)) {
+        if (sourceLink && !forwarded && vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("worktreeLinkNotifications", false)) {
             const targetPath = root?.fsPath;
             const targetName = targetPath ? path.basename(targetPath) || targetPath : "selected worktree";
             const receipt = `Better Git: ${targetName} — Worktree link received (#${generation}).`
@@ -1329,6 +1333,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 .then(undefined, error => debugLog("worktree-link", `Receipt notification unavailable: ${String(error)}`));
         }
         const isCurrent = () => generation === worktreeLinkGeneration;
+        const ownsPresentation = () => isCurrent() && initialPresentationIsCurrent();
         const next = worktreeLinkQueue.then(async () => {
             if (!isCurrent()) {
                 debugLog("worktree-link", `Skipped superseded #${generation}.`);
@@ -1355,7 +1360,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 // fold until its recent-link deadline expires; that is a focus failure, not slow Git.
                 // Keep Editor Front retains its separately requested origin -> Code Cmd-Tab ordering.
                 // Return mode does no app activation here: the URL receiver already owns the window.
-                if (!sourceLink || !isCurrent()) { return; }
+                if (!sourceLink || !ownsPresentation()) { return; }
                 let automaticOriginReturn = false;
                 try {
                     // Read after path validation so disabling the setting during a queued open wins.
@@ -1364,20 +1369,29 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     const destination = worktreeLinkReturnApp(sourceLink,
                         config.get<boolean>("worktreeLinkReturnFocus", false),
                         config.get<string>("worktreeLinkReturnApp", ""));
-                    if (!destination) { return; }
                     const keepEditorFront = config.get<boolean>("worktreeLinkKeepEditorFront", false);
                     const editorBundleId = ({ vscode: "com.microsoft.VSCode", "vscode-insiders": "com.microsoft.VSCodeInsiders" } as Record<string, string>)[vscode.env.uriScheme];
                     automaticOriginReturn = destination === "com.openai.codex" && !keepEditorFront;
                     try {
                         const editorProcessId = Number(process.env.VSCODE_PID);
-                        if (keepEditorFront) {
+                        if (destination && keepEditorFront && editorBundleId && destination !== editorBundleId) {
                             debugLog("worktree-focus", `Starting Keep Editor Front handoff for #${generation} before repository loading.`);
-                            const acknowledged = await returnToApp(destination, process.platform, undefined, editorBundleId, editorProcessId);
-                            // App activation and this particular window's focus are separate. A completed
-                            // helper call alone must not be logged as proof that SCM can take list focus.
-                            debugLog("worktree-focus", `Finished Keep Editor Front handoff for #${generation} before repository loading; editorActive=${acknowledged === "editor-active"}, windowFocused=${vscode.window.state.focused}.`);
-                        } else if (Number.isSafeInteger(editorProcessId)
-                            && editorProcessId > 0 && editorProcessId <= 0x7fffffff) {
+                            const originActive = await returnToApp(destination, process.platform, undefined, editorBundleId, editorProcessId);
+                            if (originActive && ownsPresentation()) {
+                                await vscode.commands.executeCommand("workbench.action.focusWindow");
+                            } else if (forwarded && ownsPresentation() && await frontmostAppBundleId() === editorBundleId) {
+                                // An unavailable origin must not strand a valid link in its old Code window.
+                                if (ownsPresentation()) { await vscode.commands.executeCommand("workbench.action.focusWindow"); }
+                            }
+                            debugLog("worktree-focus", `Finished Keep Editor Front handoff for #${generation} before repository loading; originActive=${!!originActive}, windowFocused=${vscode.window.state.focused}.`);
+                        } else {
+                            if (forwarded && !vscode.window.state.focused) {
+                                // This command runs in the owner, so VS Code raises that window,
+                                // even when the originally receiving window shares its app PID.
+                                await vscode.commands.executeCommand("workbench.action.focusWindow");
+                            }
+                            if (!destination || keepEditorFront || !Number.isSafeInteger(editorProcessId)
+                                || editorProcessId <= 0 || editorProcessId > 0x7fffffff) { return; }
                             originAfterPresentation = { destination, editorProcessId, focusLossGeneration: worktreeFocusLossGeneration };
                             debugLog("worktree-focus", `Origin return for #${generation} waits until native presentation completes.`);
                         }
@@ -1389,8 +1403,25 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 }
             };
             let deferredRoot: vscode.Uri | undefined;
-            const revealed = await openWorktreeInSourceControl(root,
-                () => isCurrent() && initialPresentationIsCurrent(), value => { deferredRoot = value; }, handoff);
+            let sentToOwner = false;
+            const revealed = await openWorktreeInSourceControl(root, ownsPresentation, value => { deferredRoot = value; }, async canonicalRoot => {
+                if (sourceLink && !forwarded && worktreeWindows) {
+                    // A user switch during peer discovery wins over an automatic raise.
+                    // VS Code also emits activity events with unchanged focus, which must not cancel a link.
+                    const focusGeneration = worktreeFocusLossGeneration;
+                    const mayRoute = () => ownsPresentation() && focusGeneration === worktreeFocusLossGeneration;
+                    sentToOwner = await worktreeWindows.forward(canonicalRoot, sourceLink.toString(), mayRoute);
+                    if (sentToOwner || !mayRoute()) { return false; }
+                }
+                if (!ownsPresentation()) { return false; }
+                await handoff();
+                return true;
+            });
+            if (sentToOwner) {
+                debugLog("worktree-link", `Sent #${generation} to the window that already owns the worktree.`);
+                usage?.finish("routed-to-window");
+                return;
+            }
             debugLog("worktree-link", `Finished #${generation}: loaded=${revealed}, nativePending=${!!deferredRoot}, current=${isCurrent()}, elapsed=${Date.now() - receivedAt}ms.`);
             // If Code did not keep focus, a later manual return may finish this one recent fold but
             // must not bounce Ethan out again. This also covers a link delivered while already behind
@@ -1435,6 +1466,27 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         worktreeLinkQueue = next.catch(() => undefined);
         return next;
     };
+    const editorProcessId = Number(process.env.VSCODE_PID);
+    if (process.platform === "darwin" && !vscode.env.remoteName && process.getuid
+        && Number.isSafeInteger(editorProcessId) && editorProcessId > 0) {
+        worktreeWindows = new GitWorktreeWindowRouter(`/tmp/bgv-worktree-${process.getuid()}`, context.globalStorageUri.fsPath,
+            editorProcessId, root => {
+                const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === "file");
+                return worktreeWindowRank(root, folders.map(folder => folder.uri.fsPath), () => {
+                    const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+                    return (git?.repositories ?? []).filter((repo: any) => repo.rootUri.scheme === "file")
+                        .map((repo: any) => repo.rootUri.fsPath);
+                }, !vscode.workspace.workspaceFile && folders.length === 1);
+            }, async (root, link, isLive) => {
+                const uri = vscode.Uri.parse(link);
+                const requested = parseWorktreeLink(uri);
+                if (uri.scheme !== vscode.env.uriScheme || !requested || await fs.promises.realpath(requested) !== root
+                    || !isLive()) { return false; }
+                void openWorktree(vscode.Uri.file(root), uri, true).catch(error => debugLog("worktree-link", String(error)));
+                return true;
+            }, message => debugLog("worktree-link", message));
+        context.subscriptions.push(worktreeWindows);
+    }
     const worktreeLinkCommand = vscode.commands.registerCommand(
         "better-git-vscode.open-worktree-in-source-control",
         (...targets: unknown[]) => openWorktree(targets.find(target => target instanceof vscode.Uri) as vscode.Uri | undefined ?? findWorktreeRootUri(targets))
@@ -3388,7 +3440,7 @@ const revealCollapsedWorktree = async (
 };
 
 const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent: () => boolean = () => true,
-    onDeferred?: (root: vscode.Uri) => void, beforeLoad?: () => Promise<void>,
+    onDeferred?: (root: vscode.Uri) => void, beforeLoad?: (root: string) => Promise<boolean>,
     beginPresentation?: () => boolean): Promise<boolean> => {
     let root = requestedRoot;
     try {
@@ -3421,7 +3473,7 @@ const openWorktreeInSourceControl = async (requestedRoot?: vscode.Uri, isCurrent
         if (!isCurrent()) { return false; }
         // Complete optional origin/editor activation before repository discovery,
         // status and native SCM settling. Never refocus after this loading work.
-        await beforeLoad?.();
+        if (beforeLoad && !await beforeLoad(canonicalRoot)) { return false; }
         if (!isCurrent()) { return false; }
         let repository = git.getRepository(root);
         if (!repository || await fs.promises.realpath(repository.rootUri.fsPath) !== canonicalRoot) {

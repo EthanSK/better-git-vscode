@@ -123,7 +123,7 @@ Exact mixed-state restoration remains paused until VS Code provides a dependable
 
 ## Open a worktree from a link
 
-A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolute%2Fworktree` opens Source Control in the VS Code window receiving the link and opens one change from that exact worktree. Percent-encode the entire absolute path so spaces, plus signs, percent signs and other URL characters survive. VS Code can ask permission before handing the link to Better Git.
+A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolute%2Fworktree` opens Source Control and shows the first unstaged change in that worktree. On macOS, it uses the existing local VS Code window that owns the worktree, preferring its dedicated folder window if it is also open elsewhere. If there is no clear match, it uses the window that received the link. Percent-encode the entire absolute path so spaces, plus signs, percent signs and other URL characters survive. VS Code can ask permission before handing the link to Better Git.
 
 If VS Code is behind another app, a recent link gets one focus retry. That retry must start its tree work within ten seconds of the click; once started, it can finish opening the target instead of timing out halfway through collapse. Switching review files, starting review navigation or opening a newer link still cancels the old request. Ordinary later app switches do not repeat it.
 
@@ -142,7 +142,7 @@ Returning focus never launches an app. Invalid or duplicate destinations, missin
 
 Switching apps or starting a review while the link is opening takes priority: Better Git does not switch you back to the origin after that intervention, even if you later return to VS Code to finish the tree expansion. Disabling the return setting or turning on Keep Editor Front during loading also cancels the final return.
 
-To finish in VS Code with the origin app next in macOS app switching, also enable `better-git-vscode.worktreeLinkKeepEditorFront`. Better Git waits for the origin's activation, then for the same VS Code app to acknowledge its return to front. This handoff finishes before repository loading, so you can switch back to the origin immediately while loading continues in the background. Native Source Control folding completes when the receiving window regains focus. This setting is off by default and requires Worktree Link Return Focus. It uses the same configurable origin and existing links.
+To finish in VS Code with the origin app next in macOS app switching, also enable `better-git-vscode.worktreeLinkKeepEditorFront`. Better Git waits for the origin's activation, then asks the worktree's VS Code window to come forward. This handoff runs before repository loading. Native Source Control folding completes when that window has focus. This setting is off by default and requires Worktree Link Return Focus. It uses the same configurable origin and existing links.
 
 
 For chat clients that require HTTPS, encode the complete URI twice as the `url` value of `https://vscode.dev/redirect?url=...`. Microsoft's redirect forwards it to VS Code; the copied link uses this form.
