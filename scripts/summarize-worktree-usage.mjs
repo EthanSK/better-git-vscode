@@ -13,6 +13,9 @@ for (const input of inputs.length ? inputs : [0]) {
         if (typeof event?.id !== 'string') { continue; }
         const session = sessions.get(event.id) ?? { clicked: false };
         if (event.event === 'click') { session.clicked = true; }
+        // The owning window records the actual review. The receiving host's
+        // routing receipt is part of that same click, not a second attempt.
+        if (event.event === 'outcome' && event.reason === 'routed-to-window') { session.forwarded = true; }
         if (event.event === 'outcome' && ['review-input-first', 'codex-return-first', 'automatic-return-configured', 'unknown'].includes(event.outcome)) {
             session.outcome ??= event.outcome;
         }
@@ -21,6 +24,7 @@ for (const input of inputs.length ? inputs : [0]) {
 }
 const counts = { clicks: 0, reviewInputFirst: 0, codexReturnFirst: 0, automaticReturnsConfigured: 0, unknown: 0, pending: 0, outcomesMissingClick: 0 };
 for (const session of sessions.values()) {
+    if (session.forwarded) { continue; }
     if (!session.clicked) { counts.outcomesMissingClick++; continue; }
     counts.clicks++;
     switch (session.outcome) {

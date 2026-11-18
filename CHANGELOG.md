@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.176
+
+- Preserve the app handoff on older VS Code versions that lack the native Focus Window command.
+
 ## 1.2.175
 
 - Open Worktree links in the existing macOS VS Code window that owns the requested worktree. Keep Editor Front returns to that same window.

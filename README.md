@@ -123,7 +123,7 @@ Exact mixed-state restoration remains paused until VS Code provides a dependable
 
 ## Open a worktree from a link
 
-A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolute%2Fworktree` opens Source Control and shows the first unstaged change in that worktree. On macOS, it uses the existing local VS Code window that owns the worktree, preferring its dedicated folder window if it is also open elsewhere. If there is no clear match, it uses the window that received the link. Percent-encode the entire absolute path so spaces, plus signs, percent signs and other URL characters survive. VS Code can ask permission before handing the link to Better Git.
+A link such as `vscode://ethansk.better-git-vscode/open-worktree?path=%2Fabsolute%2Fworktree` opens Source Control and shows the first unstaged change in that worktree. On macOS with VS Code's **Focus Window** command, it uses the existing local window that owns the worktree, preferring its dedicated folder window if it is also open elsewhere. If there is no clear match or the command is unavailable, it uses the window that received the link. Percent-encode the entire absolute path so spaces, plus signs, percent signs and other URL characters survive. VS Code can ask permission before handing the link to Better Git.
 
 If VS Code is behind another app, a recent link gets one focus retry. That retry must start its tree work within ten seconds of the click; once started, it can finish opening the target instead of timing out halfway through collapse. Switching review files, starting review navigation or opening a newer link still cancels the old request. Ordinary later app switches do not repeat it.
 

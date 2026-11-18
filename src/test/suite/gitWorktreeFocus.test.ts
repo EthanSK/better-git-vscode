@@ -44,7 +44,7 @@ suite('Git worktree focus', () => {
                 if (immediate) { current = origin; }
                 return mode !== 'activation-failed';
             } };
-            const result = runInNewContext(RETURN_TO_APP_SCRIPT + '\nrun([destination, editorId, editorPid]);', {
+            const result = runInNewContext(RETURN_TO_APP_SCRIPT + '\nrun([destination, editorId, editorPid, undefined, "window"]);', {
                 destination: origin.bundleIdentifier, editorId,
                 editorPid: ['explicit-editor', 'stale-editor-pid'].includes(mode) ? '10' : undefined,
                 ObjC: { import: () => {}, unwrap: (value: unknown) => value },
@@ -72,6 +72,22 @@ suite('Git worktree focus', () => {
             if (mode === 'user-switch') { assert.strictEqual(samples, 1); }
         }
     });
+    test('legacy Code returns to the editor application without requiring a window command', () => {
+        const events: string[] = [];
+        let current: { bundleIdentifier: string; processIdentifier: number };
+        const editor = { bundleIdentifier: 'com.microsoft.VSCode', processIdentifier: 10,
+            activateWithOptions: () => { events.push('Code'); current = editor; return true; } };
+        const origin = { bundleIdentifier: 'com.openai.codex', processIdentifier: 20,
+            activateWithOptions: () => { events.push('origin'); current = origin; return true; } };
+        current = editor;
+        const result = runInNewContext(RETURN_TO_APP_SCRIPT + '\nrun(["com.openai.codex", "com.microsoft.VSCode"]);', {
+            ObjC: { import: () => {}, unwrap: (value: unknown) => value },
+            $: { NSWorkspace: { sharedWorkspace: { get frontmostApplication() { return current; } } },
+                NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => ({ count: 1, objectAtIndex: () => origin }) } },
+        });
+        assert.strictEqual(result, 'editor-active');
+        assert.deepStrictEqual(events, ['origin', 'Code']);
+    });
     test('an origin restore refuses a newer frontmost process inside the native call', () => {
         for (const pid of [10,11]) {
             let calls=0;
@@ -85,10 +101,10 @@ suite('Git worktree focus', () => {
     });
     test('passes exact editor identity and the final frontmost-process guard as data', async () => {
         const acknowledged=(async(_file:string,args:string[])=>{
-            assert.deepStrictEqual(args.slice(4),['com.openai.codex','com.microsoft.VSCode','123']);
+            assert.deepStrictEqual(args.slice(4),['com.openai.codex','com.microsoft.VSCode','123','','window']);
             return {stdout:'origin-active\n'};
         }) as any;
-        assert.strictEqual(await returnToApp('com.openai.codex','darwin',acknowledged,'com.microsoft.VSCode',123),'origin-active');
+        assert.strictEqual(await returnToApp('com.openai.codex','darwin',acknowledged,'com.microsoft.VSCode',123,undefined,true),'origin-active');
         const restore=(async(_file:string,args:string[])=>{
             assert.deepStrictEqual(args.slice(4),['com.openai.codex','','','123']); return {stdout:''};
         }) as any;

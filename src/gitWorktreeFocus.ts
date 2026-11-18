@@ -27,6 +27,7 @@ const destination = argv[0];
 const editorId = argv[1];
 const editorPid = Number(argv[2]);
 const expectedFrontPid = Number(argv[3]);
+const focusExactWindow = argv[4] === 'window';
 const front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
 if (Number.isInteger(expectedFrontPid) && expectedFrontPid > 0
     && (!front || Number(front.processIdentifier) !== expectedFrontPid)) { return; }
@@ -62,7 +63,20 @@ if (front && allowed.includes(ObjC.unwrap(front.bundleIdentifier)) && Number(tar
         if (!current) { return; }
         // AppKit can confirm an app, but it cannot choose between Code windows
         // in the same process. The caller uses VS Code's own Focus Window.
-        if (Number(current.processIdentifier) === Number(target.processIdentifier)) { return 'origin-active'; }
+        if (Number(current.processIdentifier) === Number(target.processIdentifier)) {
+            if (focusExactWindow) { return 'origin-active'; }
+            // Older VS Code versions do not expose Focus Window. Preserve their
+            // existing app handoff so the origin cannot strand them out of Code.
+            if (!editor.activateWithOptions(2)) { return; }
+            for (let editorAttempt = 0; editorAttempt < 50; editorAttempt++) {
+                const editorFront = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+                if (!editorFront) { return; }
+                if (Number(editorFront.processIdentifier) === Number(editor.processIdentifier)) { return 'editor-active'; }
+                if (Number(editorFront.processIdentifier) !== Number(target.processIdentifier)) { return; }
+                $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.01));
+            }
+            return;
+        }
         // A deliberate switch to any other process wins, even another browser.
         if (Number(current.processIdentifier) !== Number(front.processIdentifier)) { return; }
         $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.01));
@@ -77,23 +91,29 @@ export async function returnToApp(
     run: typeof runFile = runFile,
     editorBundleId?: string,
     editorProcessId?: number,
-    expectedFrontProcessId?: number
-): Promise<"origin-active" | undefined> {
+    expectedFrontProcessId?: number,
+    focusExactWindow = false
+): Promise<"origin-active" | "editor-active" | undefined> {
     const bundleId = normalizeReturnApp(destination);
     if (platform !== "darwin" || !bundleId) { return; }
     // Best effort: a focus failure must not undo or misreport a successful reveal.
     const args = ["-l", "JavaScript", "-e", RETURN_TO_APP_SCRIPT, bundleId];
     const editorId = editorBundleId === "com.microsoft.VSCode" || editorBundleId === "com.microsoft.VSCodeInsiders"
         ? editorBundleId : undefined;
+    const useWindowCommand = focusExactWindow && editorId !== undefined;
     const validPid = (value: number | undefined): value is number => typeof value === "number"
         && Number.isSafeInteger(value) && value > 0 && value <= 0x7fffffff;
     if (editorId || validPid(expectedFrontProcessId)) { args.push(editorId ?? ""); }
-    if ((editorId !== undefined && validPid(editorProcessId)) || validPid(expectedFrontProcessId)) {
+    if ((editorId !== undefined && validPid(editorProcessId)) || validPid(expectedFrontProcessId) || useWindowCommand) {
         args.push(editorId && validPid(editorProcessId) ? String(editorProcessId) : "");
     }
-    if (validPid(expectedFrontProcessId)) { args.push(String(expectedFrontProcessId)); }
+    if (validPid(expectedFrontProcessId) || useWindowCommand) {
+        args.push(validPid(expectedFrontProcessId) ? String(expectedFrontProcessId) : "");
+    }
+    if (useWindowCommand) { args.push("window"); }
     const result = await run("/usr/bin/osascript", args, { timeout: 5000 });
     // Normal one-way return has no acknowledgement. Keep Editor Front returns
     // once the origin is visible and delegates exact window focus to VS Code.
-    return result?.stdout?.toString().trim() === "origin-active" ? "origin-active" : undefined;
+    const acknowledged = result?.stdout?.toString().trim();
+    return acknowledged === "origin-active" || acknowledged === "editor-active" ? acknowledged : undefined;
 }

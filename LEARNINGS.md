@@ -6,6 +6,8 @@ Worktree hosts ask their siblings only for an explicit link. The private Unix so
 
 The Mini's two-window regression routed the raw URI to the primary host on 1.2.173 and timed out waiting for the review window. With the 1.2.174 candidate the same link focused the existing dedicated worktree, left the primary editor alone and kept exactly two windows. Native Side by Side, Inline and Side by Side again retained focus in the second window and rendered at the requested layout. The optional origin handoff acknowledged Finder and returned to the same window. An unopened worktree still opened in the receiving window. The test compared the staged index entries before and after. TypeScript and 259 non-GUI checks passed. No live MacBook test or extra navigation wait was required.
 
+The 1.2.175 archive passed the same two-window check. The existing native suite also passed its 14 repository, origin handoff and Stage/Undo checks on the Mini. The minimum supported VS Code 1.83 does not register the newer Focus Window command. Version 1.2.176 checks for the command before cross-window forwarding or leaving the editor in origin-only mode. Older hosts retain the original app-level return. Keep the exact window command out of the legacy path, or Keep Editor Front can leave the origin frontmost.
+
 ## Agent Flow editor selection locations
 
 Return the location from the same focused editor snapshot used for text. Both live and startup pulls share that extraction. The location identifies a local file or Git snapshot and the actual side of a text diff when VS Code can prove it. Use VS Code's UTF-16 coordinates, including the end of the text actually transferred after clipping. Do not copy arbitrary virtual-document URIs or attach editor coordinates to a terminal reply.
