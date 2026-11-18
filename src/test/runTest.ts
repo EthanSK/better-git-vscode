@@ -1,4 +1,4 @@
-// Launch isolated real-Git/VS Code fixtures; focused Better Git E2Es run on the Mini, not Ethan's work Mac.
+// Launch isolated real-Git/VS Code fixtures on the Mini or in a managed Fleet desktop job.
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';

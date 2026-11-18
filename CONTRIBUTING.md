@@ -30,11 +30,13 @@ BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/
 BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm run test:e2e -- --grep 'mouse spam'
 ```
 
-The smoke set covers basic diff navigation, interrupted queues, duplicated editors, repeated Undo, and extension identity. It skips unrelated linked-worktree and fake-AI fixture setup. The wrapper compiles tests and the production bundle once before launching one isolated host. macOS E2E entry points refuse a non-Mini host before building or creating fixtures.
+The smoke set covers basic diff navigation, interrupted queues, duplicated editors, repeated Undo, and extension identity. It skips unrelated linked-worktree and fake-AI fixture setup. The wrapper compiles tests and the production bundle once before launching one isolated host.
 
-The exhaustive suite remains available as `npm run test:e2e:all` on the Mini. Use it when cross-cutting risk warrants it, not after every edit. A focused regression plus existing relevant coverage is the routine check; retain the previous full-run evidence rather than automatically repeating it.
+If the Mini is unavailable, use the same commands in a managed Fleet job on a fallback ship with the test's required GUI session and native capabilities. Request `requires.guiSession: true` for the desktop claim and use the ship's installed VS Code. The launcher requires the job's own source directory and rejects direct launches on a MacBook before building or creating fixtures.
 
-The older native-menu and Source Control restart harnesses are separate opt-in diagnostics, not routine release requirements. They also refuse MacBook execution. Their display-specific capture/placement helpers must be adapted to the Mini's verified test display before using them there; never work around this by launching on the MacBook. The commands are:
+Use `npm run test:e2e:all` when cross-cutting risk warrants it. A focused regression plus existing relevant coverage is the routine check.
+
+The older native-menu and Source Control restart harnesses are separate opt-in diagnostics. Their capture and placement helpers require a verified test display on the chosen ship. Keep direct launches off the working MacBook. The commands are:
 
 ```sh
 BGV_VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm run test:scm-state

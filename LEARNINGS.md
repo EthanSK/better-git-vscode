@@ -6,6 +6,8 @@ In an isolated VS Code workbench on the M1 Max, the same no-hold cleanup during 
 
 Keep the explicit-link diagnostics tied to that one request. A receipt identifies delivery, a status-bar phase shows what is being awaited, and a pending window-focus retry expires even when the user leaves Code in the background. The idle cleanup correction adds no wait and grants no permission to ignore real navigation or edits.
 
+The Mini remains the preferred test ship. The launcher also accepts the verified source directory of a managed Fleet job, so a capable fallback can use the normal E2E entry point without opening VS Code on the working Mac. On the M1 Max the managed desktop job passed both queued diff navigation cases, including switching away and back. A foreground Worktree test still needs its own verified native launch route.
+
 ## 2026-11-18 — Worktree links belong to the VS Code window that owns the worktree
 
 The 01:32 AI Wallpaper click arrived in the primary workspace's host even though the worktree was open in a second window. The optional Keep Editor Front handoff could only confirm the Code process. Both windows share that PID. VS Code's native extension URI router selects the active workbench for a link with no window ID. Compare exact canonical paths in the already-open workspace folders and Git repositories before any status refresh, fold or app handoff. The dedicated folder window wins over a workspace that also contains it. Keep the receiving window when there is no unique better owner.

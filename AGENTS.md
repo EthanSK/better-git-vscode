@@ -4,8 +4,8 @@ Read `LEARNINGS.md` before changing behavior, packaging, or release handling. Pr
 
 ## Test location and responsiveness
 
-- If you want to run Better Git VS Code E2Es, coordinate over Agent Bridge on the Mini and run them there. Do not run E2Es or Extension Development Hosts on Ethan's MacBook Pro; they make his working VS Code laggy.
-- Keep the default test command short and non-GUI. Run focused E2Es on the Mini for the changed behavior; the exhaustive suite is opt-in, not something to rerun after every edit.
+- Prefer the Mini for Better Git VS Code E2Es. If it is unavailable, use a managed Fleet desktop job on a capable fallback like the M1 Max without asking Ethan. Check that the ship has the display, permissions and foreground behaviour the exact test needs. Do not run E2Es or Extension Development Hosts on Ethan's working MacBook Pro.
+- Keep the default test command short and non-GUI. Run focused E2Es for the changed behaviour. The exhaustive suite is opt-in.
 - Do not affect app responsiveness. Better Git must support rapid repeated mouse presses without an added debounce, arbitrary input delay, or dropping valid presses; preserve navigation order and exact staging/Undo safety.
 
 ## Mini readiness and setup stop rule
