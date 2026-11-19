@@ -1,3 +1,7 @@
+## 2026-11-19 — Restart Extensions with a debugger attached
+
+VS Code 1.147.0 on macOS exposes the Extensions sidebar control, **Restart Extensions** and the debug-session confirmation **Restart Anyway** through Accessibility. Pressing those controls with `AXPress` in the existing workbench completed the update without another foreground request. The sidebar label could contain the same Extensions title twice, so match its role and the restart status. The renderer recorded the debug-session veto before confirmation, then replaced extension host 38157 with 46740. Better Git 1.2.185 logged fresh activation in that same working window at 15:39:52 UTC.
+
 ## 2026-11-19 — Fast held wheel input and deliberate mouse buttons
 
 The 1.2.183 release path retained every admitted navigation step, as specified by the 1 October held-wheel tests. A live Corsair release was followed by three more hunk movements before staging started 587 ms later. In a separate Mini test, 24 commands sent together and immediately followed by release advanced 24 files and staged them after the first file was still visible at the finish call. One Undo recovered the index.
