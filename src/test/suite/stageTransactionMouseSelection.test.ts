@@ -183,6 +183,22 @@ suite("Mouse stage selection", () => {
         assert.deepStrictEqual(held.items, frozen, "the earlier snapshot stays immutable");
     });
 
+    for (const direction of ["next", "previous"] as const) {
+        test(`a previously marked file moving across the cursor cannot hide the next file (${direction})`, () => {
+            const forward = direction === "next";
+            const inOrder = (values: string[]) => forward ? values : values.reverse();
+            const delta = forward ? 1 : -1;
+            const initial = inOrder(["z", "a", "c"]);
+            const held = moveMouseStageSelection(createMouseStageSelection(initial, initial.indexOf("z"), direction)!, delta);
+            const fresh = reconcileMouseStageSelection(held, held.cursorIndex, direction, inOrder(["a", "b", "c", "z"]), same);
+            assert.deepStrictEqual(fresh.selection.items, inOrder(["z", "a", "b", "c"]));
+            assert.deepStrictEqual(selectedMouseStageItems(fresh.selection), inOrder(["z", "a"]));
+            const fileStep = moveMouseStageSelection(fresh.selection, delta);
+            assert.strictEqual(fileStep.items[fileStep.cursorIndex], "b");
+            assert.strictEqual(planMouseStagePreviewBoundary(fresh.selection, fresh.fromIndex, direction)?.target, "b");
+        });
+    }
+
     test("the marked set and everything behind the cursor survive a refresh unchanged", () => {
         let held = createMouseStageSelection(["a", "b", "c", "d"], 0)!;
         held = moveMouseStageSelection(moveMouseStageSelection(held, 1), 1); // a, b, c marked; cursor on c

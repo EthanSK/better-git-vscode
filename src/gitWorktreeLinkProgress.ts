@@ -4,9 +4,10 @@ import * as vscode from "vscode";
 import { performance } from "perf_hooks";
 import { WorktreePresentationEndReason } from "./gitWorktreePresentation";
 
-export function worktreeStopMessage(reason?: WorktreePresentationEndReason): string {
+function worktreeStopMessage(reason: WorktreePresentationEndReason | undefined, phase: string): string {
     switch (reason) {
-        case "expired": return "Timed out waiting for the VS Code window";
+        case "expired": return phase === "Waiting for the VS Code window"
+            ? "Timed out waiting for the VS Code window" : `Worktree link timed out · ${phase}`;
         case "cursor-move": return "Stopped after the cursor moved";
         case "document-edit": return "Stopped after the file was edited";
         case "review-navigation": return "Stopped after review navigation";
@@ -17,14 +18,17 @@ export function worktreeStopMessage(reason?: WorktreePresentationEndReason): str
 }
 
 export class WorktreeLinkProgress {
-    private readonly started = performance.now();
+    private readonly started: number;
     private readonly item?: vscode.StatusBarItem;
     private timer?: NodeJS.Timeout;
     private hideTimer?: NodeJS.Timeout;
     private ended = false;
     private phase = "Waiting to open";
+    private phaseAtDeadline?: string;
 
-    constructor(private readonly target: string, visible: boolean, private readonly log: (message: string) => void) {
+    constructor(private readonly target: string, visible: boolean, private readonly expiresAt: number,
+        private readonly log: (message: string) => void, private readonly now: () => number = () => performance.now()) {
+        this.started = now();
         if (visible) {
             this.item = vscode.window.createStatusBarItem("worktreeLink", vscode.StatusBarAlignment.Left, 10000);
             this.item.name = "Better Git Worktree link";
@@ -36,16 +40,24 @@ export class WorktreeLinkProgress {
 
     private render(): void {
         if (this.item) {
-            const seconds = Math.floor((performance.now() - this.started) / 1000);
+            const seconds = Math.floor((this.now() - this.started) / 1000);
             this.item.text = `${this.ended ? "$(git-branch)" : "$(sync~spin)"} ${this.target} · ${this.phase} · ${seconds}s`;
         }
     }
 
     update(phase: string): void {
         if (this.ended || this.phase === phase) { return; }
+        // Git status and window focus share one deadline. Remember which step was running
+        // when it passed, even if the host only reports expiry several steps later.
+        const now = this.now();
+        if (now >= this.expiresAt) { this.phaseAtDeadline ??= this.phase; }
         this.phase = phase;
-        this.log(`${phase} (${Math.round(performance.now() - this.started)}ms)`);
+        this.log(`${phase} (${Math.round(now - this.started)}ms)`);
         this.render();
+    }
+
+    stop(reason?: WorktreePresentationEndReason): void {
+        this.finish(worktreeStopMessage(reason, this.phaseAtDeadline ?? this.phase));
     }
 
     finish(message: string): void {

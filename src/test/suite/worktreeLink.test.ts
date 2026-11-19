@@ -4,6 +4,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import * as vscode from 'vscode';
 import { runWithTransientGitIndexRetry } from '../../gitIndexRetry';
+import { WorktreeLinkProgress } from '../../gitWorktreeLinkProgress';
 
 suite('Worktree link E2E', () => {
     let root: string;
@@ -35,6 +36,22 @@ suite('Worktree link E2E', () => {
         git = (await vscode.extensions.getExtension<any>('vscode.git')!.activate()).getAPI(1);
         api = await vscode.extensions.getExtension('EthanSK.better-git-vscode')!.activate();
         console.log(`Worktree link host: VS Code ${vscode.version}`);
+    });
+    test('expiry identifies the phase running at the shared link deadline', () => {
+        for (const slowPhase of ['Reading Git status', 'Waiting for the VS Code window']) {
+            let now = 0;
+            const messages: string[] = [];
+            const progress = new WorktreeLinkProgress('target', false, 10000, text => messages.push(text), () => now);
+            progress.update(slowPhase);
+            now = 14000;
+            progress.update('Opening Source Control');
+            progress.update('Waiting for the VS Code window');
+            progress.stop('expired');
+            const expected = slowPhase === 'Reading Git status'
+                ? 'Worktree link timed out · Reading Git status' : 'Timed out waiting for the VS Code window';
+            assert.strictEqual(messages[messages.length - 1], expected + ' (14000ms)');
+            progress.dispose();
+        }
     });
     test('opens the exact outside worktree without replacing workspace folders or modifying Git', async () => {
         const folders = vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString());

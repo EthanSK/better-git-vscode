@@ -27,9 +27,8 @@ suite("Worktree window routing", () => {
         const note: string[] = [];
         const create = (id: string, rank: () => WorktreeWindowRank, profile = "profile", pid = 123) => {
             const router = new GitWorktreeWindowRouter(directory, profile, pid,
-                async value => value === root ? rank() : 0, async (_root, link) => {
+                async value => value === root ? rank() : 0, async (_root, link) => () => {
                     accepted.push(`${id}:${link}`);
-                    return true;
                 }, message => note.push(message));
             routers.push(router);
             return router;
@@ -62,6 +61,28 @@ suite("Worktree window routing", () => {
         }
     });
 
+    test("a cancelled link cannot open after the owning window finishes its checks", async function () {
+        if (process.platform === "win32") { this.skip(); }
+        const directory = await fs.mkdtemp("/tmp/bgv-windows-");
+        let current = true;
+        let opened = 0;
+        const sender = new GitWorktreeWindowRouter(directory, "profile", 123, async () => 1, async () => undefined, () => {});
+        const owner = new GitWorktreeWindowRouter(directory, "profile", 123, async () => 3, async () => {
+            current = false;
+            return () => { opened++; };
+        }, () => {});
+        try {
+            // A no-op forward in the owner first waits for its listener to be ready.
+            await owner.forward(directory, "setup", () => false);
+            assert.strictEqual(await sender.forward(directory, "cancelled", () => current), false);
+            assert.strictEqual(current, false, "the owner reached its final validation");
+            assert.strictEqual(opened, 0);
+        } finally {
+            sender.dispose(); owner.dispose();
+            await fs.rm(directory, { recursive: true, force: true });
+        }
+    });
+
     // 1.2.175-1.2.179: the receiver treated a missing reply as "sent" while the owner refused because the
     // receiver's socket had already timed out, so the link opened in neither window. — Claude Fable 5.2
     test("an owner that cannot answer the open request in time leaves the link with the receiver", async function () {
@@ -71,15 +92,13 @@ suite("Worktree window routing", () => {
         const root = await fs.realpath(directory);
         const accepted: string[] = [];
         let ownerRankCalls = 0;
-        const local = new GitWorktreeWindowRouter(directory, "profile", 123, async () => 1, async () => true, () => undefined);
+        const local = new GitWorktreeWindowRouter(directory, "profile", 123, async () => 1, async () => undefined, () => undefined);
         const owner = new GitWorktreeWindowRouter(directory, "profile", 123, async value => {
             // Answer the rank probe at once, then stall on the open request past the 1 s socket timeout.
             if (++ownerRankCalls > 1) { await new Promise(resolve => setTimeout(resolve, 1500)); }
             return value === root ? 3 : 0;
-        }, async (_root, link, isLive) => {
-            if (!isLive()) { return false; }
+        }, async (_root, link) => () => {
             accepted.push(link);
-            return true;
         }, () => undefined);
         try {
             const deadline = Date.now() + 1000;

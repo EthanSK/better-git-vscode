@@ -19,7 +19,7 @@ import { performance } from "perf_hooks";
 import { createWorktreeLink, parseWorktreeLink, worktreeLinkReturnApp } from "./gitWorktreeLink";
 import { returnToApp, frontmostAppBundleId } from "./gitWorktreeFocus";
 import { GitWorktreeWindowRouter, worktreeWindowRank } from "./gitWorktreeWindow";
-import { WorktreeLinkProgress, worktreeStopMessage } from "./gitWorktreeLinkProgress";
+import { WorktreeLinkProgress } from "./gitWorktreeLinkProgress";
 import { WorktreeUsage } from "./gitWorktreeUsage";
 import { DeferredWorktreePresentation, WORKTREE_PRESENTATION_MAX_AGE_MS, WORKTREE_TREE_SETTLE_MS } from "./gitWorktreePresentation";
 import { repositoriesInScmRegistrationOrder } from "./gitScmDiscoveryOrder";
@@ -1301,7 +1301,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         () => vscode.window.state.focused, undefined,
         reason => {
             debugLog("worktree-link", `Deferred native presentation ended: ${reason}.`);
-            if (reason !== "completed") { linkProgress?.finish(worktreeStopMessage(reason)); }
+            if (reason !== "completed") { linkProgress?.stop(reason); }
         });
     context.subscriptions.push(worktreePresentation);
     pendingWorktreePresentation = worktreePresentation;
@@ -1340,7 +1340,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         const targetName = targetPath ? path.basename(targetPath) || targetPath : "selected worktree";
         const showLinkProgress = vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("worktreeLinkNotifications", false);
         linkProgress?.dispose();
-        const progress = linkProgress = sourceLink ? new WorktreeLinkProgress(targetName, showLinkProgress,
+        const progress = linkProgress = sourceLink ? new WorktreeLinkProgress(targetName, showLinkProgress, presentationExpiresAt,
             message => debugLog("worktree-link", `#${generation} ${message}`)) : undefined;
         if (sourceLink && !forwarded && showLinkProgress) {
             const receipt = `Better Git: ${targetName} — Worktree link received (#${generation}).`
@@ -1486,8 +1486,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             if (deferredRoot) { originAfterPresentation = undefined; }
             if (!revealed) {
                 usage?.finish("open-incomplete");
-                progress?.finish(ownsPresentation() ? "Could not finish opening Source Control"
-                    : worktreeStopMessage(worktreePresentation.lastInterruption));
+                if (ownsPresentation()) { progress?.finish("Could not finish opening Source Control"); }
+                else { progress?.stop(worktreePresentation.lastInterruption); }
             } else if (!deferredRoot) { progress?.finish("Source Control opened"); }
             if (revealed && !deferredRoot) { await restoreOrigin(() => isCurrent() && initialPresentationIsCurrent()); }
             if (revealed && deferredRoot && isCurrent()) {
@@ -1504,7 +1504,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 worktreePresentation.schedule(stillOwned, (isScheduled, beginPresentation) => {
                     const presentation = worktreeLinkQueue.then(async () => {
                         if (!isScheduled() || !stillOwned()) {
-                            progress?.finish(worktreeStopMessage(isScheduled() ? "not-owned" : "expired"));
+                            progress?.stop(isScheduled() ? "not-owned" : "expired");
                             return true;
                         }
                         if (!vscode.window.state.focused) { return false; }
@@ -1545,13 +1545,13 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     return (git?.repositories ?? []).filter((repo: any) => repo.rootUri.scheme === "file")
                         .map((repo: any) => repo.rootUri.fsPath);
                 }, !vscode.workspace.workspaceFile && folders.length === 1);
-            }, async (root, link, isLive) => {
+            }, async (root, link) => {
                 const uri = vscode.Uri.parse(link);
                 const requested = parseWorktreeLink(uri);
-                if (uri.scheme !== vscode.env.uriScheme || !requested || await fs.promises.realpath(requested) !== root
-                    || !isLive()) { return false; }
-                void openWorktree(vscode.Uri.file(root), uri, true).catch(error => debugLog("worktree-link", String(error)));
-                return true;
+                if (uri.scheme !== vscode.env.uriScheme || !requested || await fs.promises.realpath(requested) !== root) {
+                    return undefined;
+                }
+                return () => { void openWorktree(vscode.Uri.file(root), uri, true).catch(error => debugLog("worktree-link", String(error))); };
             }, message => debugLog("worktree-link", message));
         context.subscriptions.push(worktreeWindows);
     }

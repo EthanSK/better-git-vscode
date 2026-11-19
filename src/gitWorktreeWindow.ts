@@ -29,7 +29,7 @@ export class GitWorktreeWindowRouter {
 
     constructor(private readonly directory: string, profile: string, editorPid: number,
         private readonly rank: (root: string) => Promise<WorktreeWindowRank>,
-        private readonly open: (root: string, link: string, isLive: () => boolean) => Promise<boolean>,
+        private readonly prepareOpen: (root: string, link: string) => Promise<(() => void) | undefined>,
         private readonly log: (message: string) => void) {
         const profileKey = createHash("sha256").update(profile).digest("hex").slice(0, 16);
         this.prefix = `${editorPid}-${profileKey}-`;
@@ -57,7 +57,8 @@ export class GitWorktreeWindowRouter {
             // Ambiguous live owners do not justify changing windows. Prefer the
             // receiver if it already owns the worktree, as before this feature.
             if (!isCurrent() || best <= localRank || winners.length !== 1) { return false; }
-            const result = await callWindow(winners[0].endpoint, { root, link, rank: best });
+            const result = await callWindow(winners[0].endpoint, { root, prepareLink: link, rank: best },
+                () => !this.disposed && isCurrent());
             // Only an explicit "opened" means the owner took the link. 1.2.175-1.2.179 treated a missing
             // reply as taken, but the owner refuses once this socket is gone (see `reply`), so an owner that
             // needed more than the one-second socket timeout left the link open in NEITHER window. A lost
@@ -113,19 +114,34 @@ export class GitWorktreeWindowRouter {
     }
 
     private async reply(input: string, socket: net.Socket): Promise<string> {
-        const request = JSON.parse(input) as { root?: unknown; link?: unknown; rank?: unknown } | null;
+        const request = JSON.parse(input) as { root?: unknown; link?: unknown; prepareLink?: unknown; rank?: unknown } | null;
         const root = request?.root;
         if (typeof root !== "string" || !path.isAbsolute(root) || /[\0\r\n]/.test(root)) { return "0"; }
         const rank = await this.rank(root);
-        if (request?.link === undefined) { return String(rank); }
-        if (this.disposed || socket.destroyed || typeof request.link !== "string" || !rank || rank !== request.rank) {
+        // An older sender understands an explicit refusal and will open the link locally.
+        // An older recipient sees prepareLink as a rank probe, so it cannot open an unconfirmed link.
+        if (request?.link !== undefined) { return "0"; }
+        if (request?.prepareLink === undefined) { return String(rank); }
+        if (this.disposed || socket.destroyed || typeof request.prepareLink !== "string" || !rank || rank !== request.rank) {
             return "0";
         }
-        return await this.open(root, request.link, () => !this.disposed && !socket.destroyed) ? "opened" : "0";
+        const open = await this.prepareOpen(root, request.prepareLink);
+        if (!open || this.disposed || socket.destroyed) { return "0"; }
+        // One byte each way on the same connection. Only the sender knows whether the user
+        // cancelled during validation. Its final go-ahead is the handoff point.
+        const approved = await new Promise<boolean>(resolve => {
+            socket.once("close", () => resolve(false));
+            socket.once("data", answer => resolve(answer.toString() === "1"));
+            socket.write("?");
+        });
+        if (!approved || this.disposed || socket.destroyed) { return "0"; }
+        open();
+        return "opened";
     }
 }
 
-function callWindow(endpoint: string, request: { root: string; link?: string; rank?: number }): Promise<string | undefined> {
+function callWindow(endpoint: string, request: { root: string; prepareLink?: string; rank?: number },
+    isCurrent?: () => boolean): Promise<string | undefined> {
     return new Promise(resolve => {
         const socket = net.createConnection(endpoint);
         let response = "";
@@ -138,6 +154,10 @@ function callWindow(endpoint: string, request: { root: string; link?: string; ra
             socket.write(`${JSON.stringify(request)}\n`);
         });
         socket.on("data", chunk => {
+            if (chunk.toString() === "?" && isCurrent) {
+                socket.write(isCurrent() ? "1" : "0");
+                return;
+            }
             response += chunk;
             if (response.length > 16) { socket.destroy(); }
         });

@@ -121,12 +121,15 @@ export const reconcileMouseStageSelection = <T>(
     const oldAhead = forward ? items.slice(fromIndex + 1) : items.slice(0, fromIndex).reverse();
     const live = forward ? liveItems : [...liveItems].reverse();
     const fixedKeys = new Set(fixed.map(key));
-    // "Ahead" in the live list starts just past the furthest fixed file Git still lists. If the current
-    // file itself has left the list, a new neighbour cannot be placed exactly; treating it as ahead means
-    // it is visited instead of skipped.
-    let aheadStart = 0;
-    live.forEach((item, index) => { if (fixedKeys.has(key(item))) { aheadStart = index + 1; } });
-    const ahead = live.slice(aheadStart);
+    // A resolved conflict may move from Merge Changes to Changes and sort below the file on screen.
+    // Start at the displayed file, or the nearest surviving predecessor if that file left the list.
+    const liveIndices = new Map(live.map((item, index) => [key(item), index]));
+    let anchor: number | undefined;
+    for (let i = fromIndex; i >= 0 && i < items.length; i += forward ? -1 : 1) {
+        anchor = liveIndices.get(key(items[i]));
+        if (anchor !== undefined) { break; }
+    }
+    const ahead = live.slice((anchor ?? -1) + 1).filter(item => !fixedKeys.has(key(item)));
     const aheadKeys = new Set(ahead.map(key));
     const markedKeys = new Set(selection.selectedIndices.map(index => key(items[index])));
     // A marked file ahead that Git no longer lists keeps its place next to its old neighbours.

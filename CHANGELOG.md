@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.182
+
+- Keep reviewing the files ahead of you when a previously reviewed conflict moves into Changes.
+- Check that a Worktree link is still current before another VS Code window opens it. Windows running different versions fall back to the one that received the link.
+- If a Worktree link times out, show which step was running when its time ran out.
+
 ## 1.2.181
 
 - A single edit in the open file stops a Worktree link that is still opening again. In 1.2.180 only a second edit did.
