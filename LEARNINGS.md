@@ -6,6 +6,8 @@ Better Git’s experimental staged-row highlighting briefly activated a working 
 
 The Mini passed nine focused navigation tests, including fast/slow transitions, reversal, overlap, late input, deliberate presses, release and Undo. In a separate native SCM tree with the retired preference set to true, navigating a staged diff kept Staged Changes collapsed after staging in place, advancing or finishing a batch. Manual expansion persisted in all three cases. Local and release packages used identical production JavaScript and native helper bytes.
 
+Release 1.2.187 passed the authenticated publisher, public Gallery and byte-comparison gate (VSIX SHA-256 `3473c9f8d4a940136ab5a22357ea3416986c4d75a446e18b53411c44e424b8b8`). Working window 1 logged activation at 17:20:31 UTC. All ten installed files matched. The unversioned Gallery install kept the local trial’s pin until Better Git’s own Auto Update checkbox was enabled. The final install reports Gallery source, the original UUID, no version pin and effective per-extension updates.
+
 ## 2026-11-19 — Restart Extensions with a debugger attached
 
 VS Code 1.147.0 on macOS exposes the Extensions sidebar control, **Restart Extensions** and the debug-session confirmation **Restart Anyway** through Accessibility. Pressing those controls with `AXPress` in the existing workbench completed the update without another foreground request. The sidebar label could contain the same Extensions title twice, so match its role and the restart status. The renderer recorded the debug-session veto before confirmation, then replaced extension host 38157 with 46740. Better Git 1.2.185 logged fresh activation in that same working window at 15:39:52 UTC.
