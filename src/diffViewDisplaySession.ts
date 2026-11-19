@@ -105,7 +105,11 @@ export class DiffViewDisplaySession {
             const directory = path.join(this.directory, name);
             try { process.kill(pid, 0); }
             catch (error) {
-                if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+                // ESRCH: that window is gone. EPERM: its PID now belongs to another user's process, which
+                // cannot be a window of this profile. Rethrowing EPERM made every window lose the election
+                // and log a failure every five seconds after an unclean exit. — Claude Fable 5.2
+                const code = (error as NodeJS.ErrnoException).code;
+                if (code === "ESRCH" || code === "EPERM") {
                     await fs.rm(directory, { recursive: true, force: true });
                     return undefined;
                 }

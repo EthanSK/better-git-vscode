@@ -50,4 +50,24 @@ suite("Display layout session", () => {
             await fs.rm(directory, { recursive: true, force: true });
         }
     });
+
+    // 1.2.172-1.2.179 rethrew EPERM, so one leftover registration disabled automatic layout in every
+    // window of the profile and logged a failure every five seconds. — Claude Fable 5.2
+    test("a leftover registration whose PID now belongs to another user is discarded", async function () {
+        // PID 1 is launchd/init: signalling it as an ordinary user fails with EPERM. Root would succeed.
+        if (process.platform === "win32" || process.getuid?.() === 0) { this.skip(); }
+        const directory = await fs.mkdtemp(path.join(os.tmpdir(), "bgv-layout-session-"));
+        const leftover = path.join(directory, "window-1-00000000-0000-4000-8000-000000000000");
+        const window = new DiffViewDisplaySession(directory);
+        try {
+            await fs.mkdir(leftover);
+            await window.join(true);
+            assert.deepStrictEqual(await window.state(), { writer: true, manual: false },
+                "the only real window must still be elected");
+            await assert.rejects(fs.stat(leftover), "the stale registration is removed");
+        } finally {
+            await window.dispose();
+            await fs.rm(directory, { recursive: true, force: true });
+        }
+    });
 });

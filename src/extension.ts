@@ -1396,13 +1396,34 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                             if (!ownsPresentation()) { return; }
                             const acknowledged = await returnToApp(destination, process.platform, undefined, editorBundleId,
                                 editorProcessId, undefined, exactWindow);
-                            if (acknowledged === "origin-active" && ownsPresentation()) {
+                            if (acknowledged === "origin-active") {
+                                // This handoff itself put the origin app in front, so it must always bring
+                                // Code back, as the AppKit script did before 1.2.175. Requiring this link to
+                                // still own its presentation left Codex frontmost whenever navigation, a
+                                // cursor move, an edit or a newer link landed during the handoff. A deliberate
+                                // switch to a third app never reaches here: the script then reports nothing.
+                                // — Claude Fable 5.2
                                 await vscode.commands.executeCommand(focusWindowCommand);
                             } else if (forwarded && ownsPresentation() && await frontmostAppBundleId() === editorBundleId) {
                                 // An unavailable origin must not strand a valid link in its old Code window.
                                 if (ownsPresentation()) { await vscode.commands.executeCommand(focusWindowCommand); }
                             }
                             debugLog("worktree-focus", `Finished Keep Editor Front handoff for #${generation} before repository loading; originActive=${!!acknowledged}, windowFocused=${vscode.window.state.focused}.`);
+                            if (acknowledged === "origin-active" && !vscode.window.state.focused && debugLoggingEnabled()) {
+                                // EVIDENCE ONLY, no behaviour change. On 1.2.178, 7 of Ethan's 13 Worktree links
+                                // ended "Timed out waiting for the VS Code window"; in 3 of them Code was still
+                                // unfocused right here and never became focused. The log could not say whether
+                                // Focus Window was refused by macOS or he was still working in the origin app.
+                                // One second later, record whether focus arrived and which app is in front, so
+                                // the next occurrence answers that. Debug logging only; never awaited, so it
+                                // adds no wait to the link. — Claude Fable 5.2
+                                const followUp = setTimeout(() => {
+                                    void frontmostAppBundleId().then(front => debugLog("worktree-focus",
+                                        `Focus Window follow-up for #${generation}: windowFocused=${vscode.window.state.focused}, frontmost=${front ?? "unknown"}.`),
+                                    () => undefined);
+                                }, 1000);
+                                followUp.unref?.();
+                            }
                         } else {
                             if (forwarded && !vscode.window.state.focused) {
                                 // This command runs in the owner, so VS Code raises that window,
@@ -1432,7 +1453,20 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                     const focusGeneration = worktreeFocusLossGeneration;
                     const mayRoute = () => ownsPresentation() && focusGeneration === worktreeFocusLossGeneration;
                     sentToOwner = await worktreeWindows.forward(canonicalRoot, sourceLink.toString(), mayRoute);
-                    if (sentToOwner || !mayRoute()) { return false; }
+                    if (sentToOwner) { return false; }
+                    // He switched apps while the other windows were being asked. That cancels the automatic
+                    // raise and origin handoff only. 1.2.175-1.2.179 also abandoned the link here; keep
+                    // loading it so the existing deferred presentation can finish if he returns in time.
+                    // — Claude Fable 5.2
+                    if (!mayRoute()) {
+                        if (!ownsPresentation()) { return false; }
+                        // handoff() is skipped on this path, and its `finally` is the only place that arms
+                        // the usage record for this click. Arm it here, or the record would sit unfinished
+                        // until its observation window closed. arm() itself records "unfocused" when Code
+                        // is still behind the other app. Diagnostics only; no focus or navigation effect.
+                        usage?.arm();
+                        return true;
+                    }
                 }
                 if (!ownsPresentation()) { return false; }
                 if (sourceLink) { report("Opening the VS Code window"); }
@@ -2902,8 +2936,19 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         }),
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
-                worktreeUsage?.reviewInput("document-edit", currentReviewFileUri()?.fsPath);
-                worktreePresentation.dispose("document-edit");
+                // Only HIS edit is review input that may stop a Worktree link. Until 1.2.179 every content
+                // change of the visible document counted, including two that are not him typing:
+                //   - Git refreshing the `git:` side of the open diff after a commit, stage or reset, and
+                //   - VS Code reloading the file because an agent rewrote it on disk.
+                // An instrumented Mini run (2026-11-19) showed exactly that: `review.txt`, scheme `git`,
+                // not dirty, 57 ms after the link was received, ending it as "document-edit" with the
+                // target never opened. A real edit makes the document dirty; a refresh or reload never
+                // does. The hunk coordinates below are stale either way, so that reset stays unconditional.
+                // — Claude Fable 5.2
+                if (event.document.isDirty) {
+                    worktreeUsage?.reviewInput("document-edit", currentReviewFileUri()?.fsPath);
+                    worktreePresentation.dispose("document-edit");
+                }
                 invalidateChangeNavigation(true, "reviewed document changed"); // Git hunk coordinates no longer describe the displayed revision.
                 clearCurrentHunkOverviewMarker();
             }

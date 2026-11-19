@@ -61,4 +61,40 @@ suite("Worktree window routing", () => {
             await fs.rm(directory, { recursive: true, force: true });
         }
     });
+
+    // 1.2.175-1.2.179: the receiver treated a missing reply as "sent" while the owner refused because the
+    // receiver's socket had already timed out, so the link opened in neither window. — Claude Fable 5.2
+    test("an owner that cannot answer the open request in time leaves the link with the receiver", async function () {
+        if (process.platform === "win32") { this.skip(); }
+        this.timeout(10_000);
+        const directory = await fs.mkdtemp("/tmp/bgv-windows-");
+        const root = await fs.realpath(directory);
+        const accepted: string[] = [];
+        let ownerRankCalls = 0;
+        const local = new GitWorktreeWindowRouter(directory, "profile", 123, async () => 1, async () => true, () => undefined);
+        const owner = new GitWorktreeWindowRouter(directory, "profile", 123, async value => {
+            // Answer the rank probe at once, then stall on the open request past the 1 s socket timeout.
+            if (++ownerRankCalls > 1) { await new Promise(resolve => setTimeout(resolve, 1500)); }
+            return value === root ? 3 : 0;
+        }, async (_root, link, isLive) => {
+            if (!isLive()) { return false; }
+            accepted.push(link);
+            return true;
+        }, () => undefined);
+        try {
+            const deadline = Date.now() + 1000;
+            while ((await fs.readdir(directory)).length !== 2) {
+                assert.ok(Date.now() < deadline, "window sockets did not start");
+                await new Promise(resolve => setImmediate(resolve));
+            }
+            assert.strictEqual(await local.forward(root, "slow-owner-link", () => true), false,
+                "an unanswered open request must fall back to the receiving window");
+            await new Promise(resolve => setTimeout(resolve, 800));
+            assert.deepStrictEqual(accepted, [], "the owner must not also open a link whose sender gave up");
+        } finally {
+            local.dispose();
+            owner.dispose();
+            await fs.rm(directory, { recursive: true, force: true });
+        }
+    });
 });

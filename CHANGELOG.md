@@ -1,5 +1,13 @@
 # Change Log
 
+## 1.2.180
+
+- A Worktree link is no longer lost when the VS Code window that owns the worktree is slow to answer. The window that received the link opens it instead.
+- Keep Editor Front always brings VS Code back after showing the origin app, including when you navigate or click during the handoff.
+- If you switch apps while a Worktree link is finding its window, the link still loads and finishes when you return in time.
+- A leftover diff-layout registration from a window that closed uncleanly no longer stops automatic layout switching.
+- A Worktree link is no longer stopped when Git refreshes the diff you have open or another tool rewrites that file. Only your own edit stops it.
+
 ## 1.2.179
 
 - A held review now follows the live Changes list. A file that becomes changed while you hold is your next stop instead of being skipped, and a file with nothing left to review no longer takes or blocks a step. Files you already marked stay in the pending set.

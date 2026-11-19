@@ -58,9 +58,12 @@ export class GitWorktreeWindowRouter {
             // receiver if it already owns the worktree, as before this feature.
             if (!isCurrent() || best <= localRank || winners.length !== 1) { return false; }
             const result = await callWindow(winners[0].endpoint, { root, link, rank: best });
-            // A peer can have accepted the link before its reply was lost.
-            // Only an explicit refusal or failed connection can fall back locally.
-            return result !== "0";
+            // Only an explicit "opened" means the owner took the link. 1.2.175-1.2.179 treated a missing
+            // reply as taken, but the owner refuses once this socket is gone (see `reply`), so an owner that
+            // needed more than the one-second socket timeout left the link open in NEITHER window. A lost
+            // click is worse than the rare double presentation when a reply is lost after acceptance.
+            // — Claude Fable 5.2
+            return result === "opened";
         } catch (error) {
             this.log(`Could not match the worktree to another window: ${String(error)}`);
             return false;
