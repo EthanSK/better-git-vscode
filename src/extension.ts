@@ -2935,20 +2935,28 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             rememberUnstagedReviewPosition(event.textEditor);
         }),
         vscode.workspace.onDidChangeTextDocument(event => {
-            if (event.contentChanges.length && event.document === visibleEditorForActiveTab()?.document) {
-                // Only HIS edit is review input that may stop a Worktree link. Until 1.2.179 every content
-                // change of the visible document counted, including two that are not him typing:
-                //   - Git refreshing the `git:` side of the open diff after a commit, stage or reset, and
-                //   - VS Code reloading the file because an agent rewrote it on disk.
-                // An instrumented Mini run (2026-11-19) showed exactly that: `review.txt`, scheme `git`,
-                // not dirty, 57 ms after the link was received, ending it as "document-edit" with the
-                // target never opened. A real edit makes the document dirty; a refresh or reload never
-                // does. The hunk coordinates below are stale either way, so that reset stays unconditional.
-                // — Claude Fable 5.2
-                if (event.document.isDirty) {
-                    worktreeUsage?.reviewInput("document-edit", currentReviewFileUri()?.fsPath);
-                    worktreePresentation.dispose("document-edit");
-                }
+            if (event.document !== visibleEditorForActiveTab()?.document) { return; }
+            // Only HIS edit is review input that may stop a Worktree link. Until 1.2.179 every content
+            // change of the visible document counted, including two that are not him typing:
+            //   - Git refreshing the `git:` side of the open diff after a commit, stage or reset, and
+            //   - VS Code reloading the file because an agent rewrote it on disk.
+            // An instrumented Mini run (2026-11-19) showed exactly that: `review.txt`, scheme `git`,
+            // not dirty, 57 ms after the link was received, ending it as "document-edit" with the
+            // target never opened.
+            //
+            // His edit is recognised by the document being DIRTY at one of these events. VS Code reports
+            // the first edit of a saved file as a content change that is not dirty yet, then, about a
+            // millisecond later, a second event with no content changes once the document is dirty
+            // (measured on the Mini: changes=1 dirty=false, then changes=0 dirty=true). 1.2.180 looked
+            // only at content changes, so a single edit never stopped the link. Check both kinds of
+            // event. A refresh or a disk reload sends one content change and the document stays clean.
+            // — Claude Fable 5.2
+            if (event.document.isDirty) {
+                worktreeUsage?.reviewInput("document-edit", currentReviewFileUri()?.fsPath);
+                worktreePresentation.dispose("document-edit");
+            }
+            // Stale hunk coordinates follow any content change, whoever made it.
+            if (event.contentChanges.length) {
                 invalidateChangeNavigation(true, "reviewed document changed"); // Git hunk coordinates no longer describe the displayed revision.
                 clearCurrentHunkOverviewMarker();
             }

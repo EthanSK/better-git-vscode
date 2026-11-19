@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.181
+
+- A single edit in the open file stops a Worktree link that is still opening again. In 1.2.180 only a second edit did.
+
 ## 1.2.180
 
 - A Worktree link is no longer lost when the VS Code window that owns the worktree is slow to answer. The window that received the link opens it instead.

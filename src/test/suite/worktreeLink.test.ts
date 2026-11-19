@@ -319,6 +319,58 @@ suite('Worktree link E2E', () => {
         assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab, tab);
         assert.strictEqual(runGit(target, 'diff', '--cached', '--binary'), before);
     });
+    // Ethan's own typing is review input that stops a Worktree link. Git refreshing the open diff, or another
+    // tool rewriting the open file, is not (1.2.180). Until then every content change of the visible document
+    // ended the link, which made the tests on either side of these two fail intermittently on every version.
+    // — Claude Fable 5.2
+    test('typing in the open file stops a link that is still opening', async () => {
+        await resetTarget();
+        runGit(target, 'clean', '-fd');
+        fs.writeFileSync(path.join(target, 'review.txt'), 'review change\n');
+        fs.writeFileSync(path.join(target, '00-first.txt'), 'the link would open this\n');
+        const review = vscode.Uri.file(path.join(target, 'review.txt'));
+        const editor = await vscode.window.showTextDocument(review, { preview: false });
+        const before = runGit(target, 'status', '--porcelain=v1');
+        try {
+            // Not awaited: the edit has to arrive while the link is still opening.
+            const opening = vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+            assert.ok(await editor.edit(edit => edit.insert(new vscode.Position(0, 0), 'typed ')), 'the edit was applied');
+            assert.ok(editor.document.isDirty, 'typing leaves the document dirty');
+            await opening;
+            assert.strictEqual(activePath(), review.fsPath, 'his edit wins: the link must not replace the file he is typing in');
+            assert.strictEqual(runGit(target, 'status', '--porcelain=v1'), before);
+        } finally {
+            // Discard the test's typing so no later test sees a dirty document.
+            await vscode.window.showTextDocument(review, { preview: false });
+            await vscode.commands.executeCommand('workbench.action.files.revert');
+        }
+    });
+    test('another tool rewriting the open file does not stop a link', async () => {
+        await resetTarget();
+        runGit(target, 'clean', '-fd');
+        fs.writeFileSync(path.join(target, 'review.txt'), 'review change\n');
+        fs.writeFileSync(path.join(target, '00-first.txt'), 'the link opens this\n');
+        const review = vscode.Uri.file(path.join(target, 'review.txt'));
+        const editor = await vscode.window.showTextDocument(review, { preview: false });
+        const reloads: boolean[] = [];
+        const listener = vscode.workspace.onDidChangeTextDocument(event => {
+            if (event.contentChanges.length && event.document === editor.document) { reloads.push(event.document.isDirty); }
+        });
+        try {
+            fs.writeFileSync(review.fsPath, 'rewritten on disk by another tool\n');
+            // Not awaited: the reload has to arrive while the link is still opening. The file watcher's own
+            // timing is unpredictable, so ask VS Code to reload the clean document from disk right now. That
+            // is the same event a watcher reload sends: one content change, and the document stays clean.
+            const opening = vscode.commands.executeCommand('better-git-vscode.open-worktree-in-source-control', vscode.Uri.file(target));
+            await vscode.commands.executeCommand('workbench.action.files.revert');
+            assert.strictEqual(editor.document.getText(), 'rewritten on disk by another tool\n', 'the open document was reloaded from disk');
+            assert.ok(reloads.length > 0 && reloads.every(dirty => !dirty), 'the reload reached the extension as a clean content change');
+            await opening;
+            await api.whenReviewDecorationSettled();
+            assert.strictEqual(api.getCurrentReviewUri(), vscode.Uri.file(path.join(target, '00-first.txt')).toString(),
+                'a disk reload is not his edit: the link still opens its first file');
+        } finally { listener.dispose(); }
+    });
     for (const treeView of [false, true]) {
         for (const kind of ['modified', 'untracked', 'deleted']) {
             test(`the link opens the top unstaged ${kind} in ${treeView ? 'tree' : 'list'} review order and staging advances`, async () => {
