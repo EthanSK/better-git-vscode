@@ -1,3 +1,11 @@
+## 2026-11-19 — A native Source Control refresh can fold an expanded worktree after Unstage Changes
+
+An inline unstage in VS Code 1.147.0 with Better Git 1.2.183 completed successfully. The recording showed the repository header folding with other staged and unstaged files still present. The first of nine `TreeError [SCM Tree Repo] Invalid tree location` errors followed the Git reset by 222 ms. Its renderer stack included `setCollapsed`, `collapse` and `doRefreshNode`. In that build, the native tree attempts to collapse a node when refreshing its children throws. Better Git had issued its last collapse command over a minute earlier while presenting a Worktree link. That link had expired by the time of the unstage.
+
+For a similar report, compare the recording, Git reset, renderer stack and Better Git tree-command trace from the same window. A refresh stack can identify who issued a fold while leaving the event that first invalidated the tree unknown. The partly staged file in this incident was new to Git, so unstaging it removed its index entry and left the working file untracked.
+
+Three fresh profiles on the Mini used the same signed VS Code 1.147.0 build, 15 worktrees, 33 staged files and six working changes. Each opened the working diff and clicked the staged copy’s inline Unstage Changes action. Without Better Git, with 1.2.181, and with 1.2.183, the new file became untracked, the worktree stayed expanded and the renderer logged zero matching errors. The isolated setup did not reproduce the original invalidation.
+
 ## 2026-11-19 — Held review, cancelled window handoffs and link expiry in 1.2.182
 
 The held review uses the displayed path as its anchor in both directions. If that path has disappeared, the closest surviving path behind it in the original order supplies the anchor. Excluding retained paths from the remaining live list keeps a resolved conflict from duplicating a mark or hiding new files.
