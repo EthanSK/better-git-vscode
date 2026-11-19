@@ -8,6 +8,8 @@ Link progress uses the same deadline as deferred presentation and retains the ph
 
 All 274 non-GUI tests and eight focused held-navigation workbench tests passed. The packaged two-window test on the Mini passed routing, all three layout changes, next/previous, staging, exact Undo, returning focus and the unopened-worktree fallback. The first attempt stopped at the previously observed Side by Side harness timeout after successfully routing the link. The passing diagnostic rerun retained the same assertions and tested the same VSIX.
 
+Separate Mini runs passed 36 Worktree link tests and 58 broader review tests. The Marketplace verified the public 1.2.182 package against SHA-256 `6b2826df41f62e785a060c9404dd7e793a7cb9d984d2d30f0dd920d1db40e053`. On VS Code 1.147, the unversioned forced Gallery install of the same version returned “already installed” and kept the local VSIX source and pin. As in 1.2.169, 1.2.183 supplies a version-only update for the normal Gallery upgrade path.
+
 ## 2026-11-19 — Follow-up review of 1.2.181
 
 - A new file inserted ahead of the current file is picked up in both file and hunk review under ordinary stable ordering. There is a separate regression when an earlier path moves to a later position. With the held order `z, a, c`, the cursor on `a`, and the live order `a, b, c, z`, 1.2.178 still offered `c`, while 1.2.179 and 1.2.181 reported the end and approved `a` in hunk review. A conflict leaving Merge Changes and reappearing in Changes after a further working-tree edit can produce that order. The reconciliation code starts after the last *previously visited* path still listed. Anchor at the displayed path when it is available and exclude the other retained paths by identity.
