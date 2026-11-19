@@ -3889,6 +3889,55 @@ suite('SCM change navigation E2E', () => {
 		}
 	});
 
+    for (const [source, route, mode] of [
+        ['corsair', 'mouse-stage-preview/next', 'changes'],
+        ['razer', 'mouse-stage-selection/down', 'files'],
+    ] as const) {
+        test(`fast held wheel ignores late ticks and keeps deliberate presses exact in ${mode} mode`, async () => {
+            const config = vscode.workspace.getConfiguration('extensions');
+            const review = vscode.workspace.getConfiguration('better-git-vscode');
+            const oldEntry = review.inspect<boolean>('experimentalMouseHoldNavigateOnButtonDown')?.globalValue;
+            const oldDebug = review.inspect<boolean>('debugLogging')?.globalValue;
+            await review.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+            await review.update('debugLogging', true, vscode.ConfigurationTarget.Global);
+            const previous = config.inspect<string[]>('confirmedUriHandlerExtensionIds')?.globalValue;
+            await config.update('confirmedUriHandlerExtensionIds', ['ethansk.better-git-vscode'], vscode.ConfigurationTarget.Global);
+            try {
+                const names = ['wheel_a.txt', 'wheel_b.txt', 'wheel_c.txt', 'wheel_d.txt'];
+                for (const name of names) { write(name, name); }
+                await refreshUntil(() => names.every(isUntracked), 'wheel fixture files');
+                await openPlainAt(names[0], 0);
+                await focusIsolatedTestWindow();
+                await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', {source, direction: 'next', initialMode: mode});
+                await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+                assert.strictEqual(activeTabPath(), wsUri(names[0]).path);
+                if (mode === 'changes') { assert.strictEqual(extensionApi.getReviewDecorationBadge(wsUri(names[0])), '👀'); }
+                extensionApi.clearMouseDebugTrace();
+                await new Promise(resolve => setTimeout(resolve, 10));
+                const query = `source=${source}&wheelAtMs=${Date.now()}`;
+                await deliverMouseUri(route, source, query);
+                await poll(() => activeTabPath() === wsUri(names[1]).path, 'first physical wheel step');
+                // These were produced in the same spin, but reach the handler after its first preview.
+                await deliverMouseUri(route, source, query);
+                await deliverMouseUri(route, source, query);
+                // One untagged deliberate button step is a fence behind those deliveries.
+                await deliverMouseUri(route, source);
+                await poll(() => activeTabPath() === wsUri(names[2]).path, 'a deliberate step after stale ticks');
+                await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', {source, direction: 'next'});
+                assert.deepStrictEqual(git('diff --cached --name-only').split('\n'), names.slice(0, mode === 'changes' ? 2 : 3));
+                await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+                assert.strictEqual(git('diff --cached --name-only'), '');
+            } catch (error) {
+                console.log('Held wheel trace', extensionApi.getMouseDebugTrace());
+                throw error;
+            } finally {
+                await review.update('debugLogging', oldDebug, vscode.ConfigurationTarget.Global);
+                await review.update('experimentalMouseHoldNavigateOnButtonDown', oldEntry, vscode.ConfigurationTarget.Global);
+                await config.update('confirmedUriHandlerExtensionIds', previous, vscode.ConfigurationTarget.Global);
+            }
+        });
+    }
+
 	test('rapid held preview ratchets finish before release stages their accumulated batch', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);

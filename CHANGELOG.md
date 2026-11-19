@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.185
+
+- Fast scrolling with an Agentic Mouse stage button held now stops at the change being shown. Deliberate Next and Previous button presses still count individually. Requires the companion mouse update.
+
 ## 1.2.182
 
 - Keep reviewing the files ahead of you when a previously reviewed conflict moves into Changes.

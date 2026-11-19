@@ -1635,25 +1635,24 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 return;
             }
             const selectionMatch = /^\/mouse-stage-selection\/(up|down)$/.exec(uri.path);
-            if (selectionMatch) {
-                const source = new URLSearchParams(uri.query).get("source");
-                if (isMouseReviewSource(source)) {
-                    await adjustStageHoldSelectionRequest(source, selectionMatch[1] as "up" | "down");
-                } else {
-                    mouseDebug("Stage selection wheel ignored, unknown mouse source.");
-                }
-                return;
-            }
             const previewMatch = /^\/mouse-stage-preview\/(next|previous)$/.exec(uri.path);
-            if (previewMatch) {
-                const source = new URLSearchParams(uri.query).get("source");
-                if (isMouseReviewSource(source)) {
-                    await navigateStageHoldPreviewRequest(
-                        source,
-                        previewMatch[1] as "next" | "previous"
-                    );
-                } else {
-                    mouseDebug("Stage preview navigation ignored, unknown mouse source.");
+            if (selectionMatch || previewMatch) {
+                const query = new URLSearchParams(uri.query);
+                const source = query.get("source");
+                if (!isMouseReviewSource(source)) { mouseDebug("Stage navigation ignored, unknown mouse source."); return; }
+                // A held physical wheel may outrun the editor. A button uses the same path without a
+                // timestamp and keeps its exact input order. Never enqueue a wheel tick from a busy
+                // interval, even if macOS only delivers its URL after that interval or hold is over.
+                const timestamp = query.get("wheelAtMs");
+                if (timestamp !== null && (source === "corsair" || source === "razer")) {
+                    const wheelAt = Number(timestamp);
+                    if (queuedNavigationOperations !== 0 || !Number.isSafeInteger(wheelAt) || wheelAt <= 0
+                        || (!vscode.env.remoteName && (wheelAt <= navigationSettledAtMs || wheelAt > Date.now()))) { return; }
+                }
+                if (selectionMatch) {
+                    await adjustStageHoldSelectionRequest(source, selectionMatch[1] as "up" | "down");
+                } else if (previewMatch) {
+                    await navigateStageHoldPreviewRequest(source, previewMatch[1] as "next" | "previous");
                 }
                 return;
             }
@@ -5696,6 +5695,7 @@ let navigationGroup: vscode.TabGroup | undefined;
 let navigationOwnTabChange = false;
 let ownedMouseStagePreview: { request: MouseHoldRequest; uri: string } | undefined;
 let queuedNavigationOperations = 0;
+let navigationSettledAtMs = 0;
 const navigatedReviewEditors = new WeakSet<vscode.TextEditor>();
 const reviewViewportState = new WeakMap<vscode.TextEditor, {
     top: number;
@@ -5923,6 +5923,7 @@ const serializeChangeNavigation = (
         } finally {
             if (label) { debugLog("stage-flow", `${label} settled; elapsed=${Math.round(performance.now() - queuedAt)}ms`); }
             queuedNavigationOperations--;
+            navigationSettledAtMs = Date.now();
         }
     };
     const run = changeNavigationTail.then(execute, execute);

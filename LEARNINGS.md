@@ -1,3 +1,9 @@
+## 2026-11-19 — Fast held wheel input and deliberate mouse buttons
+
+The 1.2.183 release path retained every admitted navigation step, as specified by the 1 October held-wheel tests. A live Corsair release was followed by three more hunk movements before staging started 587 ms later. In a separate Mini test, 24 commands sent together and immediately followed by release advanced 24 files and staged them after the first file was still visible at the finish call. One Undo recovered the index.
+
+Agentic Mouse tags physical held-wheel URLs with the event time. A deliberate adjacent-button press retains the original URL. Better Git checks tagged wheel input before enqueueing either a hunk step or a file step. Compare event time with completion of navigation on the same machine, since macOS may deliver the URL after the editor becomes idle. In the isolated Mini the two wheel modes skipped late ticks, the button still advanced once, the expected file set staged and one Undo restored it. The separate direct-command burst and keyboard cases retained their ordering. Set the fixture’s button-down navigation to the shipping default before checking the eyes endpoint.
+
 ## 2026-11-19 — A native Source Control refresh can fold an expanded worktree after Unstage Changes
 
 An inline unstage in VS Code 1.147.0 with Better Git 1.2.183 completed successfully. The recording showed the repository header folding with other staged and unstaged files still present. The first of nine `TreeError [SCM Tree Repo] Invalid tree location` errors followed the Git reset by 222 ms. Its renderer stack included `setCollapsed`, `collapse` and `doRefreshNode`. In that build, the native tree attempts to collapse a node when refreshing its children throws. Better Git had issued its last collapse command over a minute earlier while presenting a Worktree link. That link had expired by the time of the unstage.
