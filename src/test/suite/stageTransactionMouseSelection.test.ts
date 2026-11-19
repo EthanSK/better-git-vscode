@@ -4,6 +4,7 @@ import {
     createMouseStageSelection,
     moveMouseStageSelection,
     planMouseStagePreviewBoundary,
+    reconcileMouseStageSelection,
     selectedMouseStageItems,
 } from "../../mouseStageSelection";
 
@@ -162,5 +163,106 @@ suite("Mouse stage selection", () => {
         const end = planMouseStagePreviewBoundary(start, 3, "next")!;
         assert.strictEqual(end.selection.cursorIndex, 3);
         assert.deepStrictEqual(selectedMouseStageItems(end.selection, true), ["a", "d"]);
+    });
+
+    // Ethan (2026-11-19): "sometimes BetterGit is skipping ... file as I go down". The held list used to be
+    // frozen at the hold threshold; these cases pin the live-list refresh that replaced it. — Claude Fable 5.2
+    const same = (item: string) => item;
+
+    test("a file that becomes changed during the hold is the next stop instead of being skipped", () => {
+        // His log: comments-filter-bar.component.html was reviewed, then the walk jumped to comments-list
+        // because another agent had only just changed comments-filter-bar.component.ts.
+        const frozen = ["filter-bar.html", "list.html", "list.ts"];
+        const held = createMouseStageSelection(frozen, 0)!;
+        const live = ["filter-bar.html", "filter-bar.ts", "list.html", "list.ts"];
+        const fresh = reconcileMouseStageSelection(held, held.cursorIndex, "next", live, same);
+        assert.deepStrictEqual(fresh.selection.items, live);
+        const moved = moveMouseStageSelection(fresh.selection, 1);
+        assert.strictEqual(moved.items[moved.cursorIndex], "filter-bar.ts");
+        assert.deepStrictEqual(selectedMouseStageItems(moved), ["filter-bar.html", "filter-bar.ts"]);
+        assert.deepStrictEqual(held.items, frozen, "the earlier snapshot stays immutable");
+    });
+
+    test("the marked set and everything behind the cursor survive a refresh unchanged", () => {
+        let held = createMouseStageSelection(["a", "b", "c", "d"], 0)!;
+        held = moveMouseStageSelection(moveMouseStageSelection(held, 1), 1); // a, b, c marked; cursor on c
+        // "a" was staged elsewhere, "b2" appeared behind the cursor, "c2" appeared ahead and "d" was reverted.
+        const fresh = reconcileMouseStageSelection(held, held.cursorIndex, "next", ["b", "b2", "c", "c2", "e"], same);
+        assert.deepStrictEqual(fresh.selection.items, ["a", "b", "c", "c2", "e"], "only the road ahead follows the live list");
+        assert.strictEqual(fresh.fromIndex, 2);
+        assert.strictEqual(fresh.selection.cursorIndex, 2);
+        assert.deepStrictEqual(selectedMouseStageItems(fresh.selection), ["a", "b", "c"], "membership is never edited by a refresh");
+        const moved = moveMouseStageSelection(fresh.selection, 1);
+        assert.deepStrictEqual(selectedMouseStageItems(moved), ["a", "b", "c", "c2"]);
+    });
+
+    test("an unmarked file with nothing left to review is dropped from the road ahead", () => {
+        const held = createMouseStageSelection(["a", "b", "c"], 0)!;
+        const fresh = reconcileMouseStageSelection(held, 0, "next", ["a", "c"], same);
+        const moved = moveMouseStageSelection(fresh.selection, 1);
+        assert.strictEqual(moved.items[moved.cursorIndex], "c");
+        assert.deepStrictEqual(selectedMouseStageItems(moved), ["a", "c"]);
+    });
+
+    test("travelling up refreshes the files above and keeps every marked file", () => {
+        let held = createMouseStageSelection(["a", "c", "d"], 2, "previous")!;
+        held = moveMouseStageSelection(held, -1); // c, d marked; cursor on c
+        const fresh = reconcileMouseStageSelection(held, held.cursorIndex, "previous", ["a", "b", "c", "d"], same);
+        assert.deepStrictEqual(fresh.selection.items, ["a", "b", "c", "d"]);
+        assert.strictEqual(fresh.fromIndex, 2, "indices shift when a file is added above");
+        assert.strictEqual(fresh.selection.cursorIndex, 2);
+        assert.deepStrictEqual(selectedMouseStageItems(fresh.selection), ["c", "d"]);
+        const moved = moveMouseStageSelection(fresh.selection, -1);
+        assert.strictEqual(moved.items[moved.cursorIndex], "b");
+        assert.deepStrictEqual(selectedMouseStageItems(moved), ["b", "c", "d"]);
+    });
+
+    test("a marked file ahead that Git no longer lists keeps its place and its membership", () => {
+        // Built upward from d, so b, c and d are marked; walking back down has marked files ahead.
+        let held = createMouseStageSelection(["a", "b", "c", "d", "e"], 3, "previous")!;
+        held = moveMouseStageSelection(moveMouseStageSelection(held, -1), -1); // cursor on b
+        const fresh = reconcileMouseStageSelection(held, held.cursorIndex, "next", ["a", "b", "b2", "d", "e"], same);
+        assert.deepStrictEqual(fresh.selection.items, ["a", "b", "b2", "c", "d", "e"]);
+        assert.deepStrictEqual(selectedMouseStageItems(fresh.selection), ["b", "c", "d"]);
+    });
+
+    test("nothing changing ahead returns the very same selection", () => {
+        const held = moveMouseStageSelection(createMouseStageSelection(["a", "b", "c"], 0)!, 1);
+        // "a0" is new but behind the cursor: it is not part of this step's road.
+        assert.strictEqual(reconcileMouseStageSelection(held, held.cursorIndex, "next", ["a0", "a", "b", "c"], same).selection, held);
+        assert.strictEqual(reconcileMouseStageSelection(held, held.cursorIndex, "previous", ["a", "b", "c", "d"], same).selection, held);
+        assert.strictEqual(reconcileMouseStageSelection(held, -1, "next", ["x"], same).selection, held);
+        assert.strictEqual(reconcileMouseStageSelection(held, 3, "next", ["x"], same).selection, held);
+    });
+
+    test("a new neighbour is visited even when the current file itself left the live list", () => {
+        const held = moveMouseStageSelection(createMouseStageSelection(["a", "b", "c"], 0)!, 1); // cursor on b
+        const fresh = reconcileMouseStageSelection(held, held.cursorIndex, "next", ["a", "b2", "c"], same);
+        assert.deepStrictEqual(fresh.selection.items, ["a", "b", "b2", "c"]);
+        assert.deepStrictEqual(selectedMouseStageItems(fresh.selection), ["a", "b"]);
+    });
+
+    test("an eyes boundary planned on the refreshed list previews the new file and keeps a finished endpoint", () => {
+        const start = createMouseStageSelection(["a", "c"], 0)!;
+        const fresh = reconcileMouseStageSelection(start, 0, "next", ["a", "b", "c"], same);
+        const plan = planMouseStagePreviewBoundary(fresh.selection, fresh.fromIndex, "next")!;
+        assert.strictEqual(plan.target, "b");
+        assert.deepStrictEqual(selectedMouseStageItems(plan.selection, true), ["a"], "the new eyes preview stays unstaged on release");
+        // A file appearing after the explicitly finished last file reopens the road without losing that approval.
+        const last = createMouseStageSelection(["a", "b"], 1)!;
+        const finished = planMouseStagePreviewBoundary(last, 1, "next")!.selection;
+        assert.deepStrictEqual(selectedMouseStageItems(finished, true), ["b"]);
+        const grown = reconcileMouseStageSelection(finished, 1, "next", ["a", "b", "c"], same);
+        assert.strictEqual(grown.selection.reviewedEndpoint, 1);
+        const onward = planMouseStagePreviewBoundary(grown.selection, grown.fromIndex, "next")!;
+        assert.strictEqual(onward.target, "c");
+        assert.deepStrictEqual(selectedMouseStageItems(onward.selection, true), ["b"]);
+        // Travelling up shifts the finished endpoint with its file.
+        const first = createMouseStageSelection(["b", "c"], 0, "previous")!;
+        const top = planMouseStagePreviewBoundary(first, 0, "previous")!.selection;
+        const above = reconcileMouseStageSelection(top, 0, "previous", ["a", "b", "c"], same);
+        assert.strictEqual(above.fromIndex, 1);
+        assert.strictEqual(above.selection.reviewedEndpoint, 1);
+        assert.strictEqual(above.selection.items[above.selection.cursorIndex], "b");
     });
 });

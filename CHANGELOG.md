@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.179
+
+- A held review now follows the live Changes list. A file that becomes changed while you hold is your next stop instead of being skipped, and a file with nothing left to review no longer takes or blocks a step. Files you already marked stay in the pending set.
+
 ## 1.2.178
 
 - Keep opening the requested worktree when a mouse sends a cleanup with no active hold.

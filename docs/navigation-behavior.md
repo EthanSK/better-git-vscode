@@ -30,6 +30,10 @@ When the next or previous added/replaced run is already fully visible, Better Gi
 
 Within a file, reversing direction without a separate scroll continues from the current caret: Previous does not reset to the bottom, and Next does not restart from the top. On forward file rollover, Next starts at the destination's first reviewable position. Previous into another file restores a remembered position, or uses the last reviewable position on a first visit.
 
+## Held review follows the live Changes list
+
+A held mouse, wand or keyboard review captures its starting file at the hold threshold, but the files ahead of the cursor are re-read from the Git extension's in-memory Changes list before every file step. A file that becomes changed during the hold is the next stop; an unmarked file that no longer has changes is passed over. The pending set, the cursor and everything behind it are only ever changed by Ethan's own movement, release or cancel. Before 1.2.179 the whole list was frozen at the threshold, so a file another agent changed during a long hold was silently stepped over.
+
 ## Late mouse staging
 
 For Agentic Mouse's one-second follow-up gesture, capture the exact unstaged file inside the navigation queue before moving. Measure the deadline from command arrival, not from asynchronous Git or renderer completion. A rapid follow-up enters that same queue, so it cannot overtake capture. A new navigation replaces only the same mouse's origin; ordinary keyboard navigation and window focus loss clear it. Consume the origin once, and refuse expired, absent, ambiguous, staged-only, or no-longer-unstaged files without substituting the current selection.

@@ -3126,6 +3126,51 @@ suite('SCM change navigation E2E', () => {
 		});
 	}
 
+	// Ethan (2026-11-19): "sometimes BetterGit is skipping ... file as I go down". Another agent changed a file
+	// further down the Changes list while he held a six-minute review; the held list had been frozen at the
+	// hold threshold, so the walk stepped over it and the release left it behind. — Claude Fable 5.2
+	for (const eyes of [false, true]) {
+		test(`a file changed during a held ${eyes ? 'eyes' : 'file'} review is visited instead of skipped`, async () => {
+			const config = vscode.workspace.getConfiguration('better-git-vscode');
+			await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);
+			try {
+				for (const name of ['live_a.txt', 'live_b.txt', 'live_d.txt', 'live_e.txt']) { write(name, name); }
+				await refreshUntil(() => ['live_a.txt', 'live_b.txt', 'live_d.txt', 'live_e.txt'].every(isUntracked), 'held live-list files');
+				await openPlainAt('live_a.txt', 0);
+				await focusIsolatedTestWindow();
+				await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', 'corsair');
+				// Like the backtracking case above: reach the second file in file mode, then review in the mode under test.
+				await vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+				assert.strictEqual(activeTabPath(), wsUri('live_b.txt').path);
+				if (eyes) { await vscode.commands.executeCommand('better-git-vscode.set-mouse-stage-preview-mode', 'corsair', true); }
+				const step = () => eyes
+					? vscode.commands.executeCommand('better-git-vscode.navigate-mouse-stage-preview', 'corsair', 'next')
+					: vscode.commands.executeCommand('better-git-vscode.adjust-mouse-stage-selection', 'corsair', 'down');
+				// Mid-hold, "another agent" creates a file ahead of the cursor and one behind it, and reverts
+				// the next unreviewed file so it has nothing left to review.
+				write('live_c.txt', 'changed during the hold');
+				write('live_aa.txt', 'changed behind the cursor');
+				fs.unlinkSync(wsUri('live_d.txt').fsPath);
+				await refreshUntil(() => isUntracked('live_c.txt') && isUntracked('live_aa.txt') && !isUntracked('live_d.txt'), 'mid-hold list changes');
+				await step();
+				assert.strictEqual(activeTabPath(), wsUri('live_c.txt').path, 'the newly changed file must be the next stop');
+				await step();
+				assert.strictEqual(activeTabPath(), wsUri('live_e.txt').path, 'a file with nothing left to review must not take or block a step');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'walking must never change the index');
+				await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', { source: 'corsair', direction: 'next' });
+				assert.strictEqual(git('diff --cached --name-only'),
+					eyes ? 'live_a.txt\nlive_b.txt\nlive_c.txt' : 'live_a.txt\nlive_b.txt\nlive_c.txt\nlive_e.txt',
+					'release stages exactly the files he walked, never the one that appeared behind him');
+				await vscode.commands.executeCommand('better-git-vscode.undo-last-stage-and-advance');
+				assert.strictEqual(git('diff --cached --name-only'), '', 'one Undo restores the whole batch');
+			} finally {
+				await vscode.commands.executeCommand('better-git-vscode.stage-hold-clear', 'corsair');
+				await config.update('experimentalMouseHoldNavigateOnButtonDown', true, vscode.ConfigurationTarget.Global);
+			}
+		});
+	}
+
 	test('released batch commits despite a simultaneous editor switch and does not steal focus', async () => {
 		const config = vscode.workspace.getConfiguration('better-git-vscode');
 		await config.update('experimentalMouseHoldNavigateOnButtonDown', false, vscode.ConfigurationTarget.Global);

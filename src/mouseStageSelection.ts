@@ -85,3 +85,76 @@ export const planMouseStagePreviewBoundary = <T>(
         target: hasTarget ? selection.items[cursorIndex] : undefined,
     };
 };
+
+// Ethan (2026-11-19): "sometimes BetterGit is skipping ... file as I go down". His live log showed a
+// six-minute hold whose file list had been captured at the hold threshold. Another agent then changed
+// a file further down that list (it became newly unstaged ninety seconds into the hold), so the walk
+// stepped straight over it and the release left it behind. The pending SET must stay exactly what he
+// built, but the road AHEAD of him has to follow the live Changes list, like ordinary Next already does.
+//
+// Call this just before a step. It rebuilds ONLY the files strictly beyond `fromIndex` in the direction
+// of travel, in the live list's order:
+//   - a file that has become changed since the snapshot is added, so the next step lands on it;
+//   - an unmarked file that is no longer changed is dropped, so a step is not spent on (or, in eyes mode,
+//     blocked by) a file with nothing left to review;
+//   - every MARKED file, the cursor and everything at or behind `fromIndex` are kept untouched, even when
+//     Git no longer lists them. Membership is Ethan's decision; only release, cancel or his own reverse
+//     movement may change it.
+// Matching is by `key` (the file URI), never by index, because adding or dropping a file shifts indices.
+// Returns the SAME selection object when nothing ahead changed, so identity checks by callers still hold.
+// Pure and synchronous: no Git process, no wait, no I/O on the press path. — Claude Fable 5.2
+export const reconcileMouseStageSelection = <T>(
+    selection: MouseStageSelection<T>,
+    fromIndex: number,
+    direction: "next" | "previous",
+    liveItems: readonly T[],
+    key: (item: T) => string
+): { selection: MouseStageSelection<T>; fromIndex: number } => {
+    const items = selection.items;
+    if (!Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= items.length) {
+        return { selection, fromIndex };
+    }
+    const forward = direction === "next";
+    // Think in travel order for both directions: "fixed" is the current file plus everything already
+    // behind it, "ahead" is what the next steps will reach, nearest first.
+    const fixed = forward ? items.slice(0, fromIndex + 1) : items.slice(fromIndex);
+    const oldAhead = forward ? items.slice(fromIndex + 1) : items.slice(0, fromIndex).reverse();
+    const live = forward ? liveItems : [...liveItems].reverse();
+    const fixedKeys = new Set(fixed.map(key));
+    // "Ahead" in the live list starts just past the furthest fixed file Git still lists. If the current
+    // file itself has left the list, a new neighbour cannot be placed exactly; treating it as ahead means
+    // it is visited instead of skipped.
+    let aheadStart = 0;
+    live.forEach((item, index) => { if (fixedKeys.has(key(item))) { aheadStart = index + 1; } });
+    const ahead = live.slice(aheadStart);
+    const aheadKeys = new Set(ahead.map(key));
+    const markedKeys = new Set(selection.selectedIndices.map(index => key(items[index])));
+    // A marked file ahead that Git no longer lists keeps its place next to its old neighbours.
+    oldAhead.forEach((item, index) => {
+        const itemKey = key(item);
+        if (aheadKeys.has(itemKey) || !markedKeys.has(itemKey)) { return; }
+        const follower = oldAhead.slice(index + 1).find(later => aheadKeys.has(key(later)));
+        const position = follower === undefined ? ahead.length : ahead.findIndex(candidate => key(candidate) === key(follower));
+        ahead.splice(position, 0, item);
+        aheadKeys.add(itemKey);
+    });
+    if (ahead.length === oldAhead.length && ahead.every((item, index) => key(item) === key(oldAhead[index]))) {
+        return { selection, fromIndex };
+    }
+    const nextItems = forward ? [...fixed, ...ahead] : [...ahead.reverse(), ...fixed];
+    const indexByKey = new Map(nextItems.map((item, index) => [key(item), index]));
+    const remap = (index: number): number | undefined => indexByKey.get(key(items[index]));
+    const cursorIndex = remap(selection.cursorIndex);
+    // Unreachable while the cursor stays marked (every mover marks it); never guess a cursor if it is not.
+    if (cursorIndex === undefined) { return { selection, fromIndex }; }
+    return {
+        selection: {
+            ...selection,
+            items: nextItems,
+            cursorIndex,
+            selectedIndices: selection.selectedIndices.map(remap).filter((index): index is number => index !== undefined),
+            reviewedEndpoint: selection.reviewedEndpoint === undefined ? undefined : remap(selection.reviewedEndpoint),
+        },
+        fromIndex: forward ? fromIndex : nextItems.length - fixed.length,
+    };
+};

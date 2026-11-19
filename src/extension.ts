@@ -38,6 +38,7 @@ import {
     mouseStagePreviewIndex,
     moveMouseStageSelection,
     planMouseStagePreviewBoundary,
+    reconcileMouseStageSelection,
     selectedMouseStageItems,
 } from "./mouseStageSelection";
 import { MouseHoldChordState, registerMouseShortRelease, resolveAdjacentMouseChord } from "./mouseHoldChord";
@@ -2050,12 +2051,21 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 return;
             }
             const before = selectionUris(selection);
-            const moved = { ...moveMouseStageSelection(selection, direction === "up" ? -1 : 1), request };
+            // Ethan (2026-11-19) "skipping file as I go down": step along the LIVE Changes list, not the
+            // list frozen when the hold began. Only the unmarked files beyond the cursor are refreshed;
+            // the marked set, the cursor and everything behind it stay exactly as he built them.
+            // Synchronous on purpose: no wait is added between the ratchet and its move.
+            const live = liveUnstagedChangesFor(selection.items[selection.cursorIndex]?.uri);
+            const current = live
+                ? reconcileMouseStageSelection(selection, selection.cursorIndex, direction === "up" ? "previous" : "next", live, fileChangeKey).selection
+                : selection;
+            const moved = { ...moveMouseStageSelection(current, direction === "up" ? -1 : 1), request };
             setActiveStageSelection(source, request, moved);
             const after = selectionUris(moved);
             if (!request.releaseQueued) { reviewDecoEmitter.fire([...before, ...after]); }
             const preview = moved.items[moved.cursorIndex];
-            if (preview && moved.cursorIndex !== selection.cursorIndex) {
+            // Compare with the refreshed list: adding or dropping a file above the cursor shifts indices.
+            if (preview && moved.cursorIndex !== current.cursorIndex) {
                 // Git can replace an initially-opened preview tab shortly after its command promise resolves.
                 // Keep that delayed, same-target transition owned by this live hold so it cannot cancel the
                 // range before the next wheel detent arrives. Other targets supersede only queued navigation.
@@ -2101,14 +2111,24 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 const currentUri = await getActiveFileUri();
                 boundaryCheck();
                 const currentIndex = selection.items.findIndex(change => change.uri.toString() === currentUri?.toString());
-                const plan = planMouseStagePreviewBoundary(selection, currentIndex, direction);
-                if (!plan || (!request.active && !request.releaseQueued) || activeStageSelection(source, request) !== selection) {
+                if (currentIndex < 0 || (!request.active && !request.releaseQueued) || activeStageSelection(source, request) !== selection) {
                     mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, current file is outside the held worktree.`);
                     return;
                 }
-                const live = new Set(distinctUnstagedChanges(await getFileChanges(selection.items[currentIndex].uri))
-                    .map(change => change.uri.toString()));
+                const liveChanges = distinctUnstagedChanges(await getFileChanges(selection.items[currentIndex].uri));
+                const live = new Set(liveChanges.map(change => change.uri.toString()));
                 boundaryCheck();
+                // Ethan (2026-11-19) "skipping file as I go down": plan the boundary on the LIVE Changes
+                // list. A file another agent changed during this hold is now the next stop instead of being
+                // stepped over, and an unmarked file with nothing left to review no longer blocks the step
+                // below. Marked files, the cursor and everything behind the shown file are never changed.
+                const fresh = liveChanges.length
+                    ? reconcileMouseStageSelection(selection, currentIndex, direction, liveChanges, fileChangeKey)
+                    : { selection, fromIndex: currentIndex };
+                const plan = planMouseStagePreviewBoundary(fresh.selection, fresh.fromIndex, direction);
+                // Unreachable for the valid index checked above; the ownership checks stay where they were,
+                // before the live read, so this change adds no new way for a boundary to be ignored.
+                if (!plan) { return; }
                 if (!live.has(selection.items[currentIndex].uri.toString()) || (plan.target && !live.has(plan.target.uri.toString()))) {
                     mouseDebug(`${mouseSourceLabel(source)} stage preview boundary ignored, review file is no longer unstaged.`);
                     return;
@@ -3741,13 +3761,23 @@ const getFileChanges = async (preferredUri?: vscode.Uri): Promise<FileChange[]> 
     if (!activeRepo) {
         return []; // no repositories populated yet / non-git workspace -> no changes, callers no-op gracefully
     }
+    return repositoryFileChanges(activeRepo);
+};
+
+// EXTRACTED from getFileChanges (2026-11-19) with its body unchanged: the ordered {merge, staged, unstaged}
+// list of ONE already-resolved repository, read from the Git extension's in-memory state. It is synchronous
+// on purpose: no Git process and no await, so a held review can re-read the live list on every step without
+// adding a wait to the press path (see liveUnstagedChangesFor). getFileChanges still owns choosing the
+// repository. `includeStaged: false` is the only addition: that held-review read discards staged entries,
+// so it must not pay for sorting a large Staged group on every ratchet. — Claude Fable 5.2
+const repositoryFileChanges = (activeRepo: any, includeStaged = true): FileChange[] => {
     const isTreeView = vscode.workspace.getConfiguration("better-git-vscode").get("treeView");
 
     // Keep the git status alongside the uri for staged entries: openChangeEntry needs it to choose which
     // diff sides exist (a newly-staged INDEX_ADDED file has no HEAD blob; a staged INDEX_DELETED file has no
     // index blob). We sort on the URI just like before, but carry {uri,status} through the sort so the
     // status isn't lost. (Sorting plain uris and re-deriving status later would be fragile across dup paths.)
-    const indexChanges: FileChange[] = activeRepo.state.indexChanges
+    const indexChanges: FileChange[] = !includeStaged ? [] : activeRepo.state.indexChanges
         .filter((file: any) => file.status !== 7)
         .map((file: any) => ({ uri: file.uri as vscode.Uri, status: file.status as number, originalUri: file.originalUri as vscode.Uri | undefined }))
         .sort((a: any, b: any) => (isTreeView ? orderFilesForTreeView : orderFilesForListView)(a.uri, b.uri))
@@ -6367,6 +6397,23 @@ const distinctUnstagedChanges = (changes: readonly FileChange[]): FileChange[] =
         return true;
     });
 };
+
+// The live Changes list of the repository that owns `uri`, in Source Control order, for a held review.
+// Ethan's "skipping file as I go down" (2026-11-19): the held set used to walk a list frozen at the hold
+// threshold, so a file another agent changed during a long hold was stepped over. Undefined when that exact
+// repository is not open or currently lists nothing unstaged: the caller then keeps its existing list
+// rather than emptying the road ahead from a missing or momentarily empty read. Never falls back to another
+// repository, unlike getFileChanges, because a held set belongs to one worktree. — Claude Fable 5.2
+const liveUnstagedChangesFor = (uri: vscode.Uri | undefined): FileChange[] | undefined => {
+    const git = vscode.extensions.getExtension<any>("vscode.git")?.exports?.getAPI(1);
+    const repository = uri ? git?.getRepository(uri) : undefined;
+    if (!repository) { return undefined; }
+    const live = distinctUnstagedChanges(repositoryFileChanges(repository, false));
+    return live.length ? live : undefined;
+};
+
+// One key for matching a held review's files against the live list (see reconcileMouseStageSelection).
+const fileChangeKey = (change: FileChange): string => change.uri.toString();
 
 // Ethan (2026-11-05): Staged Changes must never open unless he opens it. Native SCM Auto Reveal
 // (`scm.autoReveal`) calls expandTo on the group holding the active editor's file: URI. It reruns on
