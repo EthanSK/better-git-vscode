@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.187
+
+- Spin the held Stage wheel in Eyes mode to review several changes already on screen or page through a tall change. The first tick after a pause or reversal advances one change.
+- Open Index diffs directly. The experimental staged-row highlight has been removed because it could expand Staged Changes during navigation.
+
 ## 1.2.185
 
 - Fast scrolling with an Agentic Mouse stage button held now stops at the change being shown. Deliberate Next and Previous button presses still count individually. Requires the companion mouse update.

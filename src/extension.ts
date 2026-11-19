@@ -185,6 +185,7 @@ type MouseReviewSource = PointerReviewSource | "keyboard";
 type MouseHoldRequest = MouseHoldChordState & {
     releaseQueued?: boolean;
     excludePreviewOnRelease?: boolean;
+    eyesWheel?: { at: number; direction: "next" | "previous"; stepped: boolean };
     wandReviewMode?: "changes" | "files";
     // The direction a keyboard review began with; its finish uses the same exact release checks as a mouse.
     keyboardReviewDirection?: "next" | "previous";
@@ -209,7 +210,7 @@ let adjustStageHoldSelectionRequest: (
 let navigateStageHoldPreviewRequest: (
     source: MouseReviewSource, direction: "next" | "previous",
     // Keyboard review only: run in place of an ignored step so the press is kept as ordinary navigation.
-    inactive?: (check: NavigationCheckpoint) => Promise<void>
+    inactive?: (check: NavigationCheckpoint) => Promise<void>, fastWheel?: boolean
 ) => Promise<void> = async () => undefined;
 let takeStageHoldSelectionRequest: (
     source: MouseReviewSource, request: MouseHoldRequest
@@ -812,6 +813,7 @@ interface BetterGitExtensionApi {
     isKeyboardReviewActive(): boolean;
     // Isolated Extension Development Hosts only: feed the same physical state interpreter without OS injection.
     sampleKeyboardReviewKeys?(state: ReviewKeyState): void;
+    sampleReviewUri?(uri: vscode.Uri): Promise<void>;
     getRememberedReviewPosition?(uri: vscode.Uri): ReviewFilePosition | undefined;
     whenWorktreePresentationSettled?(): Promise<void>;
     whenKeyboardGestureSettled?(): Promise<void>;
@@ -1609,8 +1611,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
         }
     };
-    const worktreeLinkHandler = vscode.window.registerUriHandler({
-        async handleUri(uri) {
+    const reviewUriHandler = {
+        async handleUri(uri: vscode.Uri) {
             if(uri.path.startsWith("/wand-review/")){
                 wandReviewQueue=wandReviewQueue.then(()=>handleWandReview(uri)).catch(error=>{mouseDebug(`Magic Wand review failed: ${String(error)}`);return cancelWandReview();});
                 return wandReviewQueue;
@@ -1644,15 +1646,26 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 // timestamp and keeps its exact input order. Never enqueue a wheel tick from a busy
                 // interval, even if macOS only delivers its URL after that interval or hold is over.
                 const timestamp = query.get("wheelAtMs");
+                let fastWheel = false;
+                const hold = mouseHoldRequests.get(source);
                 if (timestamp !== null && (source === "corsair" || source === "razer")) {
                     const wheelAt = Number(timestamp);
-                    if (queuedNavigationOperations !== 0 || !Number.isSafeInteger(wheelAt) || wheelAt <= 0
-                        || (!vscode.env.remoteName && (wheelAt <= navigationSettledAtMs || wheelAt > Date.now()))) { return; }
-                }
+                    if (!Number.isSafeInteger(wheelAt) || wheelAt <= 0 || (!vscode.env.remoteName && wheelAt > Date.now())) { return; }
+                    const admitted = queuedNavigationOperations === 0 && (vscode.env.remoteName !== undefined || wheelAt > navigationSettledAtMs);
+                    if (previewMatch && hold?.active && hold === latestMouseHoldRequest && hold.stageReadyRequested && !hold.releaseQueued) {
+                        const direction = previewMatch[1] as "next" | "previous";
+                        const last = hold.eyesWheel;
+                        if (last && wheelAt <= last.at) { return; }
+                        // Busy detents tell us the wheel is still spinning. Only a fresh, admitted detent can move.
+                        fastWheel = !!last && last.direction === direction && wheelAt - last.at <= 150 && last.stepped;
+                        hold.eyesWheel = { at: wheelAt, direction, stepped: fastWheel || admitted };
+                    } else if (hold) { hold.eyesWheel = undefined; }
+                    if (!admitted) { return; }
+                } else if (hold) { hold.eyesWheel = undefined; }
                 if (selectionMatch) {
                     await adjustStageHoldSelectionRequest(source, selectionMatch[1] as "up" | "down");
                 } else if (previewMatch) {
-                    await navigateStageHoldPreviewRequest(source, previewMatch[1] as "next" | "previous");
+                    await navigateStageHoldPreviewRequest(source, previewMatch[1] as "next" | "previous", undefined, fastWheel);
                 }
                 return;
             }
@@ -1663,7 +1676,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             }
             await openWorktree(vscode.Uri.file(root), uri);
         }
-    });
+    };
+    const worktreeLinkHandler = vscode.window.registerUriHandler(reviewUriHandler);
     const copyWorktreeLinkCommand = vscode.commands.registerCommand(
         "better-git-vscode.copy-worktree-link",
         async (...targets: unknown[]) => {
@@ -2042,10 +2056,12 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
                 return;
             }
             const previous = stagePreviewMode;
+            if (previous?.request !== request) { request.eyesWheel = undefined; }
             stagePreviewMode = { source, request };
             repaintStagePreviewMode(previous ? stageHoldSelections.get(previous.source) : undefined);
             repaintStagePreviewMode(stageHoldSelections.get(source));
         } else if (stagePreviewMode?.source === source && stagePreviewMode.request === request) {
+            stagePreviewMode.request.eyesWheel = undefined;
             const selection = stageHoldSelections.get(source);
             stagePreviewMode = undefined;
             repaintStagePreviewMode(selection);
@@ -2111,7 +2127,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             mouseDebug(`${mouseSourceLabel(source)} stage selection moved ${direction}; ${after.length} ${after.length === 1 ? "file" : "files"} selected${preview ? `, previewing ${path.basename(preview.uri.fsPath)}` : ""}.`);
         });
     };
-    navigateStageHoldPreviewRequest = (source, direction, inactive) => {
+    navigateStageHoldPreviewRequest = (source, direction, inactive, fastWheel = false) => {
         // Admit at input arrival. A normal release may arrive before these queued ratchets execute; they
         // still belong before that release and must finish before it snapshots the files to stage.
         const request = mouseHoldRequests.get(source);
@@ -2186,8 +2202,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
             };
             ownedMouseStagePreview = undefined;
             await (direction === "next"
-                ? goToNextDiffOnce(check, previewAtFileBoundary)
-                : goToPreviousDiffOnce(check, previewAtFileBoundary));
+                ? goToNextDiffOnce(check, previewAtFileBoundary, fastWheel)
+                : goToPreviousDiffOnce(check, previewAtFileBoundary, fastWheel));
             requestCurrentHunkOverviewMarkerRefresh();
             if (activeStageSelection(source, request) === selection) {
                 const count = selectionUris(selection).length;
@@ -3033,7 +3049,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         clearMouseDebugTrace: () => { mouseDebugTrace.length = 0; },
         isKeyboardReviewActive: () => keyboardReviewContext.active,
         ...(context.extensionMode === vscode.ExtensionMode.Development || context.extensionMode === vscode.ExtensionMode.Test
-            ? { sampleKeyboardReviewKeys: observeKeyboardState,
+            ? { sampleKeyboardReviewKeys: observeKeyboardState, sampleReviewUri: reviewUriHandler.handleUri,
                 getRememberedReviewPosition: (uri: vscode.Uri) => reviewFilePositions.get(uri.toString()),
                 whenWorktreePresentationSettled: () => worktreeLinkQueue,
                 whenKeyboardGestureSettled: () => keyboardGestureWork } : {}),
@@ -4026,7 +4042,7 @@ const getEmptyTreeRef = async (uri: vscode.Uri): Promise<string | undefined> => 
 };
 
 // Opens the diff for a single list entry on the correct (staged vs unstaged) side.
-const openChangeEntry = async (entry: FileChange, preserveFocus = false, allowStagedReveal = true): Promise<void> => {
+const openChangeEntry = async (entry: FileChange, preserveFocus = false): Promise<void> => {
     rememberUnstagedReviewPosition(visibleEditorForActiveTab());
     // Capture BEFORE opening: the native first-hunk landing can create a fresh cache entry during open.
     // Treating that new entry as a prior visit would suppress first-visit backward EOF/last-hunk landing.
@@ -4081,24 +4097,8 @@ const openChangeEntry = async (entry: FileChange, preserveFocus = false, allowSt
         restoreRememberedReviewPosition(entry, savedPosition);
         return;
     }
-    // OPT-IN WORKAROUND (better-git-vscode.revealStagedInSourceControl): highlight the staged file in the
-    // Source Control view. VS Code's built-in `scm.autoReveal` can't do this for staged files because the
-    // staged diff opens with a `git:` uri and autoReveal only matches sidebar rows by their `file:` path
-    // (there is NO extension API to select an SCM row directly). Trick: briefly make the plain file the
-    // active editor — autoReveal then finds it (a staged-only file's file: uri lives only in the index
-    // group) and selects/reveals its row — then we open the staged diff over it. autoReveal never CLEARS a
-    // selection on a no-match, so the staged row stays highlighted while the diff is shown. Caveats, which
-    // is why this is off by default: a brief flash of the file before the diff, and for a partially-staged
-    // (dual-state) file autoReveal picks the working-tree row instead (it scans groups back-to-front).
-    const revealStaged = vscode.workspace.getConfiguration("better-git-vscode").get("revealStagedInSourceControl");
-    if (revealStaged && allowStagedReveal) {
-        try {
-            await vscode.window.showTextDocument(entry.uri, { preview: true, preserveFocus }); // fires autoReveal -> selects the staged row
-        } catch {
-            // File can't be opened (e.g. a staged deletion) — skip the reveal, still show the diff below.
-        }
-    }
-
+    // Open the Index side directly. Briefly activating the working file makes native SCM Auto Reveal
+    // expand Staged Changes and select a row, including during ordinary Next/Previous navigation.
     // Staged (index) diff: open HEAD-vs-index explicitly so it works even for a partially-staged file
     // (where git.openChange would otherwise show the working-tree diff). preview:true mirrors single-click
     // SCM behavior so the existing preview-tab handling keeps working. The git-scheme modified side also
@@ -4819,11 +4819,12 @@ const newFileScrollEditor = (): vscode.TextEditor | undefined => {
 // focus-independent reveal waiter below. The active-tab gate already hands us the TextEditor that is actually
 // rendering the tab, and editor-scoped revealRange works without keyboard/OS focus, so keep and operate on that
 // object. Selection still updates; VS Code draws the caret whenever the editor next receives focus.
-const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" | "up", check = noNavigationCheckpoint): Promise<boolean> => {
+const stepThroughNewFile = async (editor: vscode.TextEditor, direction: "down" | "up", check = noNavigationCheckpoint, fastWheel = false): Promise<boolean> => {
     const configured = vscode.workspace.getConfiguration("better-git-vscode").get<number>("newFileNavLineJump", 5);
     // Guard bad user values: 0 / negative / NaN would "step" in place forever — a permanent no-op. Floor
     // fractional values; anything non-usable falls back to the default 5.
-    const step = Number.isFinite(configured) && (configured as number) >= 1 ? Math.floor(configured as number) : 5;
+    const fixedStep = Number.isFinite(configured) && configured >= 1 ? Math.floor(configured) : 5;
+    const step = fastWheel ? eyesPageStep(editor, direction) ?? fixedStep : fixedStep;
 
     const stepEditor = editor;
     const last = Math.max(0, stepEditor.document.lineCount - 1);
@@ -5232,31 +5233,48 @@ const hunkIsFullyPresented = (editor: vscode.TextEditor, hunk: ModifiedHunk): bo
     positionIsVisible(editor, new vscode.Position(hunk.start, 0)) &&
     positionIsVisible(editor, bottomPresentationPosition(editor, hunk.end));
 
+// Eyes-mode fast wheel: retain the configured overlap and never infer a page size across a fold.
+// If the caret starts near the bottom, a downward page begins at the last visible context lines.
+const eyesPageStep = (editor: vscode.TextEditor, direction: "down" | "up"): number | undefined => {
+    const caret = editor.selection.active;
+    const range = editor.visibleRanges.length === 1 ? editor.visibleRanges[0] : undefined;
+    if (!range?.contains(caret)) { return undefined; }
+    const lines = range.end.line - range.start.line + 1;
+    const { overlap } = hunkStagingConfig(lines);
+    return Math.max(1, (direction === "down" ? range.end.line - caret.line + 1 : lines) - Math.max(1, overlap));
+};
+
 // Native next/previousChange always CENTRES its target range, even when that range is already visible.
 // After an AtTop page step this can scroll backwards, followed by a forward scroll on the next press.
 // Keep an entirely visible added/replaced run in place and advance only the caret. Do this BEFORE the
 // native command: restoring the viewport afterwards would retain the visible out-and-back flash.
 // Off-screen changes, deleted-only stops and file boundaries still use native navigation. Git and the
 // editor may group replacements differently; the outer-hunk interposer runs first to retain unread content.
-const selectVisibleHunkWithoutScrolling = (ctx: HunkStageContext, direction: "down" | "up"): boolean => {
+const selectVisibleHunkWithoutScrolling = (ctx: HunkStageContext, direction: "down" | "up", fastWheel = false): boolean => {
     if (ctx.editor.document.isDirty) {
         return false; // Git geometry is on-disk; native navigation owns unsaved editor changes.
     }
     const caret = ctx.editor.selection.active.line;
     const ignoreWhitespace = vscode.workspace.getConfiguration("diffEditor", ctx.editor.document.uri)
         .get<boolean>("ignoreTrimWhitespace", true);
-    const candidates = ctx.hunks.filter(hunk => !(ignoreWhitespace && hunk.whitespaceOnly));
-    const target = direction === "down"
-        ? candidates.find(hunk => hunk.start > caret)
-        : [...candidates].reverse().find(hunk => hunk.start < caret);
-    if (!target || !hunkIsFullyPresented(ctx.editor, target)) {
-        return false;
+    const down = direction === "down";
+    const visibleRun = fastWheel ? ctx.editor.visibleRanges.find(range => range.contains(ctx.editor.selection.active)) : undefined;
+    let target: ModifiedHunk | undefined;
+    for (let i = down ? 0 : ctx.hunks.length - 1; down ? i < ctx.hunks.length : i >= 0; i += down ? 1 : -1) {
+        const hunk = ctx.hunks[i];
+        if ((down ? hunk.start <= caret : hunk.start >= caret) || (ignoreWhitespace && hunk.whitespaceOnly)) { continue; }
+        if (!hunkIsFullyPresented(ctx.editor, hunk)) { break; }
+        // Additional fast-wheel stops must share one rendered range with the caret. Folded lines and
+        // partially presented changes are boundaries, even when another hunk is visible past them.
+        if (fastWheel && (!visibleRun || !visibleRun.contains(new vscode.Position(hunk.start, 0))
+            || !visibleRun.contains(bottomPresentationPosition(ctx.editor, hunk.end)))) { break; }
+        const low = Math.min(target?.start ?? caret, hunk.start);
+        const high = Math.max(target?.start ?? caret, hunk.start);
+        if (ctx.deletionStops.some(line => line >= low && line <= high)) { break; }
+        target = hunk;
+        if (!fastWheel) { break; }
     }
-    const low = Math.min(caret, target.start);
-    const high = Math.max(caret, target.start);
-    if (ctx.deletionStops.some(line => line >= low && line <= high)) {
-        return false; // never jump over a deleted-only native change to reach an added-line run
-    }
+    if (!target) { return false; }
     const position = new vscode.Position(target.start, 0);
     ctx.editor.selection = new vscode.Selection(position, position);
     debugLog("nav", `${direction}: select already-visible hunk L${target.start + 1} without recentering`);
@@ -5445,7 +5463,7 @@ const revealBottomAndPinCursor = async (editor: vscode.TextEditor, bottomLine: n
 // be consumed as an IN-HUNK SCROLL STEP (return true) or fall through to plain hunk-to-hunk navigation
 // (return false). Fully live: reads the viewport + caret fresh, so reversing direction / moving the caret /
 // switching files all "just work" (see the big design note above).
-const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Promise<boolean> => {
+const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up", fastWheel = false): Promise<boolean> => {
     const vp = readViewport(ctx.editor);
     if (!vp) {
         debugLog("tall-hunk", `${direction}: no viewport (editor not laid out) -> defer to plain nav`);
@@ -5461,7 +5479,8 @@ const stepTallHunk = async (ctx: HunkStageContext, direction: "down" | "up"): Pr
         );
         return false; // caret isn't inside a hunk (between changes / moved away) -> plain navigation
     }
-    const { threshold, thresholdOverride, step } = hunkStagingConfig(visLines); // overlap only feeds `step` now (BUG 8 removed TINY_TAIL)
+    const { threshold, thresholdOverride, step: fixedStep } = hunkStagingConfig(visLines);
+    const step = fastWheel ? eyesPageStep(ctx.editor, direction) ?? fixedStep : fixedStep;
     const span = hunk.end - hunk.start + 1;
     const fullyPresented = hunkIsFullyPresented(ctx.editor, hunk);
     // Shared context line for EVERY decision below — 1-based line numbers so it matches the editor's gutter,
@@ -5546,6 +5565,7 @@ interface OuterHunkStep {
 const planOuterHunkStep = (
     ctx: HunkStageContext,
     direction: "down" | "up",
+    fastWheel = false,
 ): OuterHunkStep | undefined => {
     const vp = readViewport(ctx.editor);
     if (!vp) { return undefined; }
@@ -5570,7 +5590,8 @@ const planOuterHunkStep = (
     if (positionIsVisible(ctx.editor, farEdgePosition)) {
         return undefined;
     }
-    const { threshold, thresholdOverride, step } = hunkStagingConfig(vp.visLines);
+    const { threshold, thresholdOverride, step: fixedStep } = hunkStagingConfig(vp.visLines);
+    const step = fastWheel ? eyesPageStep(ctx.editor, direction) ?? fixedStep : fixedStep;
     if (thresholdOverride !== undefined && outerHunk.end - outerHunk.start + 1 <= threshold) {
         return undefined;
     }
@@ -5832,7 +5853,7 @@ const observeNavigationTab = (): void => {
 // Only the actual close/open commands own a tab transition. Git reads and subsequent landing/scroll
 // waits remain cancellable; otherwise a slow diff could consume a manually chosen file as its target.
 const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoint, closeCurrent = false,
-    presentation?: { preserveFocus: boolean; allowStagedReveal: boolean }): Promise<void> => {
+    preserveFocus = false): Promise<void> => {
     check();
     // Explicit file commands are a new user intention, not part of a queued change burst.
     if (check === noNavigationCheckpoint) {
@@ -5844,7 +5865,7 @@ const openNavigationTarget = async (entry: FileChange, check: NavigationCheckpoi
     const previousTab = closeCurrent ? vscode.window.tabGroups.activeTabGroup.activeTab : undefined;
     navigationOwnTabChange = true;
     try {
-        await openChangeEntry(entry, presentation?.preserveFocus, presentation?.allowStagedReveal);
+        await openChangeEntry(entry, preserveFocus);
         if (currentReviewFileUri()?.toString() === entry.uri.toString()) {
             confirmOpenedReview(entry.uri, entry.staged);
         }
@@ -6192,7 +6213,8 @@ const stageReviewHoldOrigin = (
 
 const goToNextDiffOnce = async (
     check: NavigationCheckpoint,
-    onFileBoundary: (check: NavigationCheckpoint) => Promise<void> = check => openNextFile(check, true)
+    onFileBoundary: (check: NavigationCheckpoint) => Promise<void> = check => openNextFile(check, true),
+    fastWheel = false
 ) => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath — avoids the clipboard
@@ -6229,7 +6251,7 @@ const goToNextDiffOnce = async (
     // silently no-op — see the comments on isFullyAddedFile / newFileScrollEditor for the full post-mortem.
     const newFileEditor = newFileScrollEditor();
     if (newFileEditor) {
-        if (await stepThroughNewFile(newFileEditor, "down", check)) {
+        if (await stepThroughNewFile(newFileEditor, "down", check, fastWheel)) {
             return;
         }
         await onFileBoundary(check);
@@ -6243,15 +6265,15 @@ const goToNextDiffOnce = async (
     // nothing else is disturbed. See the big design note above getModifiedSideHunkGeometry.
     const stageCtx = await getHunkStageContext(check);
     check();
-    if (stageCtx && (await stepTallHunk(stageCtx, "down"))) {
+    if (stageCtx && (await stepTallHunk(stageCtx, "down", fastWheel))) {
         return; // press was a within-hunk scroll step
     }
-    const outerStep = stageCtx ? planOuterHunkStep(stageCtx, "down") : undefined;
+    const outerStep = stageCtx ? planOuterHunkStep(stageCtx, "down", fastWheel) : undefined;
     if (stageCtx && outerStep && !outerStep.preferNative) {
         await applyOuterHunkStep(stageCtx, "down", outerStep);
         return; // press was a broader within-@@ step; avoid an oversized built-in jump
     }
-    if (stageCtx && selectVisibleHunkWithoutScrolling(stageCtx, "down")) {
+    if (stageCtx && selectVisibleHunkWithoutScrolling(stageCtx, "down", fastWheel)) {
         return;
     }
 
@@ -6297,7 +6319,8 @@ const goToNextDiffOnce = async (
 
 const goToPreviousDiffOnce = async (
     check: NavigationCheckpoint,
-    onFileBoundary: (check: NavigationCheckpoint) => Promise<void> = openPreviousFile
+    onFileBoundary: (check: NavigationCheckpoint) => Promise<void> = openPreviousFile,
+    fastWheel = false
 ) => {
     var activeEditor = vscode.window.activeTextEditor;
     // BUG 13 (v1.2.9): tab-first "is anything under review?" check via activeNavFilePath (see goToNextDiff).
@@ -6327,7 +6350,7 @@ const goToPreviousDiffOnce = async (
     // previous changed file.
     const newFileEditor = newFileScrollEditor();
     if (newFileEditor) {
-        if (await stepThroughNewFile(newFileEditor, "up", check)) {
+        if (await stepThroughNewFile(newFileEditor, "up", check, fastWheel)) {
             return;
         }
         await onFileBoundary(check);
@@ -6340,15 +6363,15 @@ const goToPreviousDiffOnce = async (
     // through to the unchanged navigation below.
     const stageCtx = await getHunkStageContext(check);
     check();
-    if (stageCtx && (await stepTallHunk(stageCtx, "up"))) {
+    if (stageCtx && (await stepTallHunk(stageCtx, "up", fastWheel))) {
         return; // press was a within-hunk upward scroll step
     }
-    const outerStep = stageCtx ? planOuterHunkStep(stageCtx, "up") : undefined;
+    const outerStep = stageCtx ? planOuterHunkStep(stageCtx, "up", fastWheel) : undefined;
     if (stageCtx && outerStep && !outerStep.preferNative) {
         await applyOuterHunkStep(stageCtx, "up", outerStep);
         return; // press was a broader within-@@ upward step
     }
-    if (stageCtx && selectVisibleHunkWithoutScrolling(stageCtx, "up")) {
+    if (stageCtx && selectVisibleHunkWithoutScrolling(stageCtx, "up", fastWheel)) {
         return;
     }
 
@@ -6496,9 +6519,8 @@ const presentStagedOnlyReview = async (stagedUris: readonly vscode.Uri[], check:
         const staged = rows.length === 1 && rows[0].staged ? rows[0] : undefined;
         if (!staged || vscode.window.tabGroups.activeTabGroup.activeTab !== tab || tab.isDirty) { return; }
         const view = captureActiveStageUndoView();
-        // This automatic side conversion is not a request to reveal Staged, even when a user opted
-        // into row reveal for deliberate staged navigation. Keep SCM/editor focus where it was.
-        await openNavigationTarget(staged, check, !tab.isPreview, { preserveFocus: true, allowStagedReveal: false });
+        // Keep SCM/editor focus where it was during this automatic side conversion.
+        await openNavigationTarget(staged, check, !tab.isPreview, true);
         const editor = visibleEditorForActiveTab();
         if (view && editor && currentReviewFileUri()?.toString() === staged.uri.toString()) {
             check();

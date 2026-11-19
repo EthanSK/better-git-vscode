@@ -128,6 +128,7 @@ suite('SCM change navigation E2E', () => {
 		clearMouseDebugTrace(): void;
 		isKeyboardReviewActive(): boolean;
         getRememberedReviewPosition?(uri: vscode.Uri): ReviewFilePosition | undefined;
+        sampleReviewUri?(uri: vscode.Uri): Promise<void>;
         sampleKeyboardReviewKeys?(state: {option:boolean;shift:boolean;navigation:boolean;usedShift:boolean;navigationKeys?:number}): void;
         whenKeyboardGestureSettled?(): Promise<void>;
 	};
@@ -3888,6 +3889,79 @@ suite('SCM change navigation E2E', () => {
 			await extensionConfig.update('confirmedUriHandlerExtensionIds', previousHandlers, vscode.ConfigurationTarget.Global);
 		}
 	});
+
+    test('two-speed Eyes wheel pages a tall new file with visible overlap', async () => {
+        const rel = 'wheel_page.txt';
+        write(rel, lines(450, 'wheel page'));
+        await refreshUntil(() => isUntracked(rel), 'long untracked file');
+        await openPlainAt(rel, 0);
+        const editor = visibleEditorFor(wsUri(rel))!;
+        await focusIsolatedTestWindow();
+        const source = 'corsair';
+        await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold',
+            {source, direction:'next', initialMode:'changes', navigateOnButtonDown:false});
+        await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+        const tick = () => extensionApi.sampleReviewUri!(vscode.Uri.parse(
+            `vscode://ethansk.better-git-vscode/mouse-stage-preview/next?source=${source}&wheelAtMs=${Date.now()}`));
+        await sleep(4);
+        const first = tick();
+        const busy = setInterval(() => { void tick(); }, 30);
+        try { await first; } finally { clearInterval(busy); }
+        const precise = editor.selection.active.line;
+        assert.strictEqual(precise, vscode.workspace.getConfiguration('better-git-vscode').get('newFileNavLineJump', 5));
+        const prior = editor.visibleRanges[0];
+        await sleep(4);
+        await tick();
+        const landing = editor.selection.active.line;
+        assert.ok(landing > 2 * precise && landing < prior.end.line, `page from ${precise} to ${landing}, old screen ends at ${prior.end.line}`);
+        assert.ok(editor.visibleRanges[0].start.line <= prior.end.line, 'old and new screens overlap');
+        await sleep(220);
+        assert.strictEqual(editor.selection.active.line, landing, 'stopping the spin leaves the editor still');
+        await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', {source, direction:'next'});
+        assert.strictEqual(git('diff --cached --name-only'), '');
+    });
+
+    test('two-speed Eyes wheel skips only presented changes and resets on a reversal or pause', async () => {
+        const rel = 'committed/mod_a.txt';
+        const edits = [2, 5, 8, 11, 14, 17, 20];
+        const content = lines(40, 'mod_a').split('\n');
+        for (const line of edits) { content[line] += ' changed'; }
+        write(rel, content.join('\n') + '\n');
+        await refreshUntil(() => inWorkingTree(rel), 'several nearby changes');
+        const editor = await openWorkingDiffAt(rel, 0);
+        await focusIsolatedTestWindow();
+        const source = 'razer';
+        await vscode.commands.executeCommand('better-git-vscode.begin-mouse-navigation-hold',
+            {source, direction:'next', initialMode:'changes', navigateOnButtonDown:false});
+        await vscode.commands.executeCommand('better-git-vscode.stage-hold-ready', source);
+        const tick = (direction: string) => extensionApi.sampleReviewUri!(vscode.Uri.parse(
+            `vscode://ethansk.better-git-vscode/mouse-stage-preview/${direction}?source=${source}&wheelAtMs=${Date.now()}`));
+        // Feed real-time samples while the first movement is in flight, as a spinning mouse does.
+        // They may describe speed but may never produce movements once that operation settles.
+        const step = async (direction: string) => {
+            await sleep(4);
+            const first = tick(direction);
+            const busy = setInterval(() => { void tick(direction); }, 30);
+            try { await first; } finally { clearInterval(busy); }
+        };
+        await step('next');
+        assert.strictEqual(editor.selection.active.line, edits[0], 'first tick advances one change');
+        const visible = edits.filter(line => lineIsVisible(editor, line));
+        assert.ok(visible.length >= 4, 'fixture presents multiple changes on one screen');
+        await step('next');
+        assert.strictEqual(editor.selection.active.line, visible[visible.length - 1], 'fast tick selects the furthest visible change');
+        await step('previous');
+        assert.strictEqual(editor.selection.active.line, visible[visible.length - 2], 'first reverse tick advances only one change');
+        await step('previous');
+        assert.strictEqual(editor.selection.active.line, visible[0], 'continued fast reverse reaches the first visible change');
+        await step('next');
+        await sleep(210);
+        await step('next');
+        assert.strictEqual(editor.selection.active.line, visible[2], 'first tick after stopping stays precise');
+        assert.strictEqual(git('diff --cached --name-only'), '', 'a spin within one file never stages it');
+        await vscode.commands.executeCommand('better-git-vscode.finish-mouse-navigation-hold', {source, direction:'next'});
+        assert.strictEqual(git('diff --cached --name-only'), '', 'release with only an Eyes preview stages nothing');
+    });
 
     for (const [source, route, mode] of [
         ['corsair', 'mouse-stage-preview/next', 'changes'],

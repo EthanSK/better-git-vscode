@@ -85,6 +85,7 @@ fs.writeFileSync(workspace, JSON.stringify({ folders: (testSingleRepository ? [r
     'better-git-vscode.experimentalScmTreeStateManagement': false,
     // The dedicated Mini uses Dvorak - QWERTY Cmd. Physical X is therefore the contributed Shift+Option+Q
     // binding while still reporting hardware key code 7 to the release monitor.
+    ...(testStagedGroupGuard ? { 'better-git-vscode.revealStagedInSourceControl': true } : {}), // legacy profile
     'better-git-vscode.dvorakMode': testKeyboardRepeat,
     'better-git-vscode.debugLogging': testLookahead || testUsage || testKeyboardRepeat || process.env.BGV_NATIVE_DEBUG === '1',
 } }));
@@ -331,6 +332,10 @@ try {
             // selected. Otherwise native Auto Reveal's same-focus shortcut masks the reproduction.
             await request('command', {command:'workbench.scm.focus'});
             await request('command', {command:'list.focusFirst'});
+            // An existing profile may still contain the retired row-highlighting preference.
+            await request('command', {command:'better-git-vscode.next-changed-file'});
+            await pause(400);
+            assert.ok(await stagedCollapsed(), mode + ': reviewing an Index diff must never expand its group');
             await request('command', {command:'workbench.action.closeSidebar'});
             await request('command', {command:'workbench.view.scm'});
             await pause(400);

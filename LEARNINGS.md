@@ -1,3 +1,11 @@
+## 2026-11-19 — Two-speed Eyes wheel and staged row highlighting
+
+Only Agentic Mouse’s timestamped physical Eyes wheel uses the faster step. A fresh same-direction detent within 150 ms of a continuing spin can select the furthest fully presented change in the current visible range. During editor work, a detent can update the measured speed but cannot enqueue movement. A pause, reversal or new hold starts with a precise step. The existing file boundary and release paths still own marking and Undo.
+
+Better Git’s experimental staged-row highlighting briefly activated a working file, deliberately triggering native SCM Auto Reveal. Removing that path lets old profiles with the setting enabled navigate directly to Index diffs. The two mouse releases nearest this report marked zero files. The trace does not identify what opened the reported group. VS Code 1.147.0 still expands newly created groups and auto-reveals matching active files itself. Ethan asked to leave those native behaviors alone.
+
+The Mini passed nine focused navigation tests, including fast/slow transitions, reversal, overlap, late input, deliberate presses, release and Undo. In a separate native SCM tree with the retired preference set to true, navigating a staged diff kept Staged Changes collapsed after staging in place, advancing or finishing a batch. Manual expansion persisted in all three cases. Local and release packages used identical production JavaScript and native helper bytes.
+
 ## 2026-11-19 — Restart Extensions with a debugger attached
 
 VS Code 1.147.0 on macOS exposes the Extensions sidebar control, **Restart Extensions** and the debug-session confirmation **Restart Anyway** through Accessibility. Pressing those controls with `AXPress` in the existing workbench completed the update without another foreground request. The sidebar label could contain the same Extensions title twice, so match its role and the restart status. The renderer recorded the debug-session veto before confirmation, then replaced extension host 38157 with 46740. Better Git 1.2.185 logged fresh activation in that same working window at 15:39:52 UTC.

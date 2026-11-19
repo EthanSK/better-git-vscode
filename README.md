@@ -415,7 +415,7 @@ A few behaviours are configurable under **Settings → Better Git VS Code**:
 - **List vs Tree view** in Source Control (`better-git-vscode.treeView`).
 - Whether the Source Control panel opens on navigation (`shouldOpenScmView`).
 - The badge shown on the file you're currently reviewing (`currentFileBadge`, default 🔥🔥). Staged/index reviews show 🧯 instead, so they cannot be mistaken for unstaged changes. This includes text, image, binary and notebook reviews. Setting the badge to empty hides both; eyes and explosion mode retain their existing markers.
-- Experimental staged-file highlighting (`revealStagedInSourceControl`, off by default). Selecting a staged row this way deliberately expands **Staged Changes**.
+- Reviewing a staged file opens its Index diff directly, without asking Source Control to highlight its row.
 
 **Keep Staged Changes closed.** After staging in place, or staging the final file with Stage + Next or a held batch, Better Git keeps the same file and review position on its staged (Index) side. This prevents Source Control's Auto Reveal from expanding Staged Changes later for the leftover working-file view. Manual staged review still works.
 
