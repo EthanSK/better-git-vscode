@@ -1335,9 +1335,8 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         // Ethan wants to distinguish a delivered link from interrupted SCM expansion. Report receipt
         // before queued loading/focus work, with a distinct number for repeat clicks. Never await the
         // toast's dismissal, and do not notify for palette opens or mouse/wand review commands.
-        // Ethan (2026-11-15): include the target, not just an opaque request number. Use the
-        // decoded request path directly, so names/paths are visible even before Git can load it.
-        // Put the name first: VS Code clips compact toasts, with the full path in the expanded message.
+        // Ethan wants the action first, then the decoded worktree name, then Better Git.
+        // VS Code clips compact toasts; keep the full path in the expanded message.
         const targetPath = root?.fsPath;
         const targetName = targetPath ? path.basename(targetPath) || targetPath : "selected worktree";
         const showLinkProgress = vscode.workspace.getConfiguration("better-git-vscode").get<boolean>("worktreeLinkNotifications", false);
@@ -1345,7 +1344,7 @@ export function activate(context: vscode.ExtensionContext): BetterGitExtensionAp
         const progress = linkProgress = sourceLink ? new WorktreeLinkProgress(targetName, showLinkProgress, presentationExpiresAt,
             message => debugLog("worktree-link", `#${generation} ${message}`)) : undefined;
         if (sourceLink && !forwarded && showLinkProgress) {
-            const receipt = `Better Git: ${targetName} — Worktree link received (#${generation}).`
+            const receipt = `Link received · ${targetName} · Better Git (#${generation})`
                 + (targetPath ? `\nPath: ${targetPath}` : "");
             void vscode.window.showInformationMessage(receipt)
                 .then(undefined, error => debugLog("worktree-link", `Receipt notification unavailable: ${String(error)}`));

@@ -41,7 +41,7 @@ export class WorktreeLinkProgress {
     private render(): void {
         if (this.item) {
             const seconds = Math.floor((this.now() - this.started) / 1000);
-            this.item.text = `${this.ended ? "$(git-branch)" : "$(sync~spin)"} ${this.target} · ${this.phase} · ${seconds}s`;
+            this.item.text = `${this.ended ? "$(git-branch)" : "$(sync~spin)"} ${this.phase} · ${this.target} · ${seconds}s`;
         }
     }
 

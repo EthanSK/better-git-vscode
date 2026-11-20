@@ -10,7 +10,7 @@ exports.run = async () => {
   fs.writeFileSync(path.join(root, 'link-receipts.json'), '[]');
   // Observe the actual notification API and leave its unresolved dismissal promise intact.
   vscode.window.showInformationMessage = function(message, ...args) {
-   if (message.startsWith('Better Git: ') && message.includes(' — Worktree link received (#')) {
+   if (/link received/i.test(message) && message.includes('\nPath: ')) {
     linkReceipts.push(message);
     fs.writeFileSync(path.join(root, 'link-receipts.json'), JSON.stringify(linkReceipts));
    }

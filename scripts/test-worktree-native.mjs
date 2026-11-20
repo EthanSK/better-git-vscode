@@ -247,7 +247,7 @@ try {
             await until(() => JSON.parse(fs.readFileSync(path.join(root, 'handoff-events.json'), 'utf8')),
                 events => events.includes('idle-clear'), 'idle Corsair cleanup during worktree loading');
             await until(() => evaluate(`document.querySelector('.part.statusbar')?.textContent ?? ''`),
-                text => text.includes(path.basename(roots[repo])) && /Reading Git status · [1-9]\d*s/.test(text),
+                text => text.includes(path.basename(roots[repo])) && /Reading Git status · [^·]+ · [1-9]\d*s/.test(text),
                 'elapsed time and current step visible during slow Git status');
         } finally { fs.writeFileSync(path.join(root, 'release-status'), 'release'); }
         await opening;
@@ -270,11 +270,14 @@ try {
             await until(receipts, rows => rows.length === 1, 'receipt before blocked repository loading');
             await until(() => JSON.parse(fs.readFileSync(path.join(root, 'handoff-events.json'), 'utf8')),
                 events => events.includes('status-start'), 'real Git status remains blocked');
-            assert.ok(receipts()[0].startsWith(`Better Git: ${path.basename(roots[1])} — `), 'receipt puts the decoded target before the compact-toast cutoff');
-            assert.ok(receipts()[0].includes(`\nPath: ${roots[1]}`), 'receipt includes its exact full path');
+            const headline = `Link received · ${path.basename(roots[1])} · Better Git`;
+            const [firstLine, detail] = receipts()[0].split('\n');
+            assert.equal(firstLine.replace(/ \(#\d+\)$/, ''), headline, 'compact receipt puts the action before the decoded worktree and extension name');
+            assert.match(firstLine, /\(#\d+\)$/);
+            assert.equal(detail, `Path: ${roots[1]}`, 'receipt includes its exact full path');
             await until(() => evaluate(`document.querySelector('.notifications-toasts')?.textContent ?? ''`),
-                text => text.includes(path.basename(roots[1])) && text.includes(`Path: ${roots[1]}`),
-                'actual target name and full path rendered');
+                text => text.includes(headline) && text.includes(`Path: ${roots[1]}`),
+                'action-first toast and full path rendered');
             await capture('link-receipt-before-loading');
             // Exercise VS Code's own expander: compact toasts clip long messages, but the
             // target path must remain readable without dismissing or delaying the link.
@@ -299,7 +302,7 @@ try {
         assert.equal(receipts().length, 2, 'palette commands are not external link deliveries');
         await request('uri', {uri:'vscode://ethansk.better-git-vscode/open-worktree?path=%2Fdoes-not-exist-bgv'});
         assert.equal(receipts().length, 3, 'received link is acknowledged even when its filesystem path fails');
-        assert.ok(receipts()[2].startsWith('Better Git: does-not-exist-bgv — ')
+        assert.ok(receipts()[2].startsWith('Link received · does-not-exist-bgv · Better Git (#')
             && receipts()[2].includes('\nPath: /does-not-exist-bgv'), 'failed paths still identify their target');
         assert.deepEqual(roots.map(repo => git(repo, 'status', '--porcelain=v1')), baseline, 'diagnostics never change Git');
         fs.writeFileSync(path.join(evidence, 'link-receipts.json'), JSON.stringify(receipts(), null, 2));

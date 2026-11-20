@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.2.189
+
+- Worktree link notifications show the action first, followed by the worktree name and Better Git. The status bar shows the current step first.
+
 ## 1.2.187
 
 - Spin the held Stage wheel in Eyes mode to review several changes already on screen or page through a tall change. The first tick after a pause or reversal advances one change.
